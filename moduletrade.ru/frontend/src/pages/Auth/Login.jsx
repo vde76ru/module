@@ -28,7 +28,7 @@ const Login = () => {
   const [form] = Form.useForm();
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  
+
   const { loading, error, isAuthenticated } = useSelector((state) => state.auth);
 
   // Перенаправляем авторизованного пользователя
@@ -51,7 +51,7 @@ const Login = () => {
         email: values.email,
         password: values.password,
       })).unwrap();
-      
+
       navigate('/dashboard');
     } catch (error) {
       console.error('Login error:', error);
@@ -63,7 +63,7 @@ const Login = () => {
       email: 'admin@demo.com',
       password: 'admin123',
     });
-    
+
     handleSubmit({
       email: 'admin@demo.com',
       password: 'admin123',
@@ -77,9 +77,9 @@ const Login = () => {
           {/* Левая часть - информация */}
           <div className="login-info">
             <div className="logo-section">
-              <img 
-                src="/logo.png" 
-                alt="ModuleTrade" 
+              <img
+                src="/logo.png"
+                alt="ModuleTrade"
                 className="login-logo"
               />
               <Title level={1} className="brand-title">
@@ -98,7 +98,7 @@ const Login = () => {
                   <Text>Ozon, Wildberries, Yandex Market</Text>
                 </div>
               </div>
-              
+
               <div className="feature-item">
                 <div className="feature-icon">📦</div>
                 <div>
@@ -106,7 +106,7 @@ const Login = () => {
                   <Text>PIM система с нормализацией данных</Text>
                 </div>
               </div>
-              
+
               <div className="feature-item">
                 <div className="feature-icon">🏭</div>
                 <div>
@@ -174,7 +174,7 @@ const Login = () => {
                     prefix={<LockOutlined />}
                     placeholder="admin123"
                     autoComplete="current-password"
-                    iconRender={(visible) => 
+                    iconRender={(visible) =>
                       visible ? <EyeTwoTone /> : <EyeInvisibleOutlined />
                     }
                   />
@@ -217,7 +217,7 @@ const Login = () => {
 
               <div className="login-footer">
                 <Text type="secondary">
-                  Нет аккаунта? <Link href="#register">Зарегистрироваться</Link>
+                  Нет аккаунта? <Link to="/register">Зарегистрироваться</Link>
                 </Text>
               </div>
             </Card>

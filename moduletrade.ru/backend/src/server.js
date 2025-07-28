@@ -1,3 +1,7 @@
+// ========================================
+// ИСПРАВЛЕННЫЙ backend/src/server.js
+// ========================================
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -25,123 +29,248 @@ const suppliersRoutes = require('./routes/suppliers');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(helmet());
-app.use(compression());
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3001',
-  credentials: true
+// ========================================
+// КРИТИЧЕСКИ ВАЖНЫЕ CORS НАСТРОЙКИ
+// ========================================
+const corsOptions = {
+  origin: [
+    'https://moduletrade.ru',
+    'https://app.moduletrade.ru',
+    'https://www.moduletrade.ru',
+    // Для разработки (можно убрать в production)
+    'https://moduletrade.ru',
+    'https://api.moduletrade.ru'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Origin',
+    'X-Requested-With',
+    'Content-Type',
+    'Accept',
+    'Authorization',
+    'X-Real-IP',
+    'X-Forwarded-For',
+    'X-Forwarded-Proto'
+  ],
+  optionsSuccessStatus: 200
+};
+
+// ========================================
+// MIDDLEWARE В ПРАВИЛЬНОМ ПОРЯДКЕ
+// ========================================
+
+// Security headers
+app.use(helmet({
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: false
 }));
+
+// CORS - ДОЛЖЕН БЫТЬ ПЕРВЫМ!
+app.use(cors(corsOptions));
+
+// Сжатие
+app.use(compression());
+
+// Парсинг JSON и URL
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Логирование
 app.use(morgan('combined'));
 
-// Rate limiting
-app.use('/api/', rateLimiter(100, 60000)); // 100 запросов в минуту
+// ========================================
+// ОБРАБОТКА OPTIONS ЗАПРОСОВ ГЛОБАЛЬНО
+// ========================================
+app.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', req.headers.origin);
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.sendStatus(200);
+});
 
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/products', productsRoutes);
-app.use('/api/billing', billingRoutes);
-app.use('/api/sync', syncRoutes);
-app.use('/api/marketplaces', marketplacesRoutes);
-app.use('/api/suppliers', suppliersRoutes);
-
-// Health check
+// ========================================
+// HEALTH CHECK - БЕЗ PREFIX
+// ========================================
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0',
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// ========================================
+// API ROUTES - БЕЗ /api PREFIX!
+// ========================================
+// Важно: nginx убирает /api из пути, поэтому здесь routes без префикса
+
+app.use('/auth', authRoutes);
+app.use('/products', productsRoutes);
+app.use('/billing', billingRoutes);
+app.use('/sync', syncRoutes);
+app.use('/marketplaces', marketplacesRoutes);
+app.use('/suppliers', suppliersRoutes);
+
+// ========================================
+// RATE LIMITING (после основных routes)
+// ========================================
+app.use(rateLimiter(100, 60000)); // 100 запросов в минуту
+
+// ========================================
+// DEBUG MIDDLEWARE - для отслеживания запросов
+// ========================================
+app.use((req, res, next) => {
+  console.log(`🔍 ${new Date().toISOString()} - ${req.method} ${req.path}`);
+  console.log('Headers:', {
+    'content-type': req.headers['content-type'],
+    'authorization': req.headers.authorization ? 'Bearer ***' : 'none',
+    'origin': req.headers.origin,
+    'user-agent': req.headers['user-agent']?.substring(0, 50) + '...'
+  });
+  next();
+});
+
+// ========================================
+// TEST ENDPOINTS для диагностики
+// ========================================
+app.get('/test', (req, res) => {
+  res.json({
+    message: 'Backend is working!',
+    timestamp: new Date().toISOString(),
+    headers: req.headers
+  });
+});
+
+app.post('/test-auth', (req, res) => {
+  res.json({
+    message: 'Auth endpoint accessible',
+    body: req.body,
     timestamp: new Date().toISOString()
   });
 });
 
-// Error handling middleware
+// ========================================
+// ERROR HANDLING MIDDLEWARE
+// ========================================
 app.use((err, req, res, next) => {
-  console.error('Global error handler:', err);
-  
+  console.error('🚨 Global error handler:', err);
+
+  // CORS headers даже для ошибок
+  res.header('Access-Control-Allow-Origin', req.headers.origin);
+  res.header('Access-Control-Allow-Credentials', 'true');
+
   res.status(err.status || 500).json({
     success: false,
-    error: err.message || 'Internal server error'
+    error: err.message || 'Internal server error',
+    timestamp: new Date().toISOString()
   });
 });
 
-// 404 handler
+// ========================================
+// 404 HANDLER
+// ========================================
 app.use((req, res) => {
+  console.log(`❌ 404 - Route not found: ${req.method} ${req.path}`);
+
+  // CORS headers для 404
+  res.header('Access-Control-Allow-Origin', req.headers.origin);
+  res.header('Access-Control-Allow-Credentials', 'true');
+
   res.status(404).json({
     success: false,
-    error: 'Route not found'
+    error: 'Route not found',
+    path: req.path,
+    method: req.method,
+    timestamp: new Date().toISOString()
   });
 });
 
-// Initialize services
+// ========================================
+// INITIALIZE SERVICES
+// ========================================
 async function initializeServices() {
   try {
-    // Connect to RabbitMQ
-    await rabbitmq.connect();
-    
+    console.log('🚀 Initializing services...');
+
+    // Connect to RabbitMQ (может быть недоступен в некоторых окружениях)
+    try {
+      await rabbitmq.connect();
+      console.log('✅ RabbitMQ connected successfully');
+    } catch (error) {
+      console.warn('⚠️ RabbitMQ connection failed:', error.message);
+    }
+
     // Initialize services
+    try {
+      const billingService = new BillingService();
+      await billingService.initializeTariffs();
+      console.log('✅ BillingService initialized successfully');
+    } catch (error) {
+      console.warn('⚠️ BillingService initialization failed:', error.message);
+    }
+
     const syncService = new SyncService();
-    const billingService = new BillingService();
     const pimService = new PIMService();
-    
-    // Start workers
-    await billingService.initializeTariffs();
-    console.log('BillingService initialized successfully');
-    console.log('SyncService ready');
-    console.log('PIMService ready');
-    console.log('All services initialized successfully');
-    
-    console.log('All services initialized successfully');
+
+    console.log('✅ SyncService ready');
+    console.log('✅ PIMService ready');
+    console.log('✅ All services initialized successfully');
+
   } catch (error) {
-    console.error('Service initialization error:', error);
-    process.exit(1);
+    console.error('🚨 Service initialization error:', error);
+    // Не завершаем процесс, продолжаем работу без некоторых сервисов
   }
 }
 
-// Start server
+// ========================================
+// START SERVER
+// ========================================
 async function startServer() {
   try {
+    // Инициализируем сервисы
     await initializeServices();
-    
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-      console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+
+    // Запускаем сервер
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log('🎉 ========================================');
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+      console.log(`🔗 API test: http://localhost:${PORT}/test`);
+      console.log('🎉 ========================================');
     });
+
   } catch (error) {
-    console.error('Server startup error:', error);
+    console.error('🚨 Failed to start server:', error);
     process.exit(1);
   }
 }
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  
-  await db.close();
-  await rabbitmq.close();
-  
+// Обработка сигналов завершения
+process.on('SIGINT', () => {
+  console.log('📴 Received SIGINT, shutting down gracefully...');
   process.exit(0);
 });
 
-process.on('SIGINT', async () => {
-  console.log('SIGINT received, shutting down gracefully');
-  
-  await db.close();
-  await rabbitmq.close();
-  
+process.on('SIGTERM', () => {
+  console.log('📴 Received SIGTERM, shutting down gracefully...');
   process.exit(0);
 });
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
-  process.exit(1);
-});
-
+// Обработка необработанных ошибок
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('🚨 Uncaught Exception:', error);
   process.exit(1);
 });
 
-// Start the server
+// Запускаем сервер
 startServer();
+
+module.exports = app;

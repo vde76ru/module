@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { DndContext, DragOverlay, useDraggable, useDroppable } from '@dnd-kit/core';
-import { 
-    Card, Tree, Input, Button, Space, Tag, Modal, 
-    message, Tooltip, Badge, Divider, Select 
+import {
+    Card, Tree, Input, Button, Space, Tag, Modal,
+    message, Tooltip, Badge, Divider, Select
 } from 'antd';
-import { 
-    FolderOutlined, LinkOutlined, DeleteOutlined, 
-    PlusOutlined, SearchOutlined 
+import {
+    FolderOutlined, LinkOutlined, DeleteOutlined,
+    PlusOutlined, SearchOutlined
 } from '@ant-design/icons';
 import axios from 'utils/axios';
 
@@ -24,7 +24,7 @@ const CategoryMapping = () => {
 
     // API клиент
     const api = axios.create({
-        baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3000/api/v1',
+        baseURL: process.env.REACT_APP_API_URL || 'https://api.moduletrade.ru/api/v1',
         headers: {
             'Authorization': `Bearer ${localStorage.getItem('token')}`,
             'Content-Type': 'application/json'
@@ -147,7 +147,7 @@ const CategoryMapping = () => {
 
         const mappedSupplierCategories = Object.entries(mappings)
             .filter(([supplierId, systemId]) => systemId === category.key)
-            .map(([supplierId]) => 
+            .map(([supplierId]) =>
                 supplierCategories.find(cat => cat.id === supplierId)
             )
             .filter(Boolean);
@@ -183,7 +183,7 @@ const CategoryMapping = () => {
                         </Space>
                     </Space>
                 </div>
-                
+
                 {mappedSupplierCategories.length > 0 && (
                     <div style={{ marginTop: 8 }}>
                         <Divider style={{ margin: '8px 0' }} />
@@ -237,7 +237,7 @@ const CategoryMapping = () => {
     const removeMapping = async (supplierCategoryId) => {
         try {
             await api.delete(`/mapping/categories/${supplierCategoryId}`);
-            
+
             setMappings(prev => {
                 const newMappings = { ...prev };
                 delete newMappings[supplierCategoryId];
@@ -320,7 +320,7 @@ const CategoryMapping = () => {
 
     return (
         <div style={{ padding: '24px' }}>
-            <Card 
+            <Card
                 title="Маппинг категорий"
                 extra={
                     <Space>
@@ -351,8 +351,8 @@ const CategoryMapping = () => {
                     <DndContext onDragEnd={handleDragEnd} onDragStart={(event) => setDraggedItem(event.active.data.current)}>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                             {/* Категории поставщика */}
-                            <Card 
-                                title="Категории поставщика" 
+                            <Card
+                                title="Категории поставщика"
                                 size="small"
                                 extra={
                                     <Search
@@ -365,7 +365,7 @@ const CategoryMapping = () => {
                             >
                                 <div style={{ maxHeight: 600, overflowY: 'auto' }}>
                                     {supplierCategories
-                                        .filter(cat => 
+                                        .filter(cat =>
                                             cat.name.toLowerCase().includes(searchTerm.toLowerCase())
                                         )
                                         .map(category => (

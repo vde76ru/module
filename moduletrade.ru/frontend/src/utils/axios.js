@@ -2,7 +2,7 @@
 import axios from 'axios';
 import { notification } from 'antd';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3000/api';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://api.moduletrade.ru/api';
 
 // Создаем экземпляр axios
 const axiosInstance = axios.create({
@@ -20,7 +20,7 @@ axiosInstance.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-    
+
     // Добавляем tenant_id из токена если есть
     try {
       if (token) {
@@ -32,7 +32,7 @@ axiosInstance.interceptors.request.use(
     } catch (error) {
       console.warn('Error parsing token:', error);
     }
-    
+
     return config;
   },
   (error) => {
@@ -47,63 +47,63 @@ axiosInstance.interceptors.response.use(
   },
   async (error) => {
     const { config, response } = error;
-    
+
     // Если получили 401 (Unauthorized)
     if (response?.status === 401) {
       // Пытаемся обновить токен
       const refreshToken = localStorage.getItem('refreshToken');
-      
+
       if (refreshToken && !config.__isRetryRequest) {
         try {
           config.__isRetryRequest = true;
-          
+
           const refreshResponse = await axios.post(
             `${API_BASE_URL}/auth/refresh`,
             { refreshToken }
           );
-          
+
           const { token: newToken } = refreshResponse.data;
           localStorage.setItem('token', newToken);
-          
+
           // Повторяем оригинальный запрос с новым токеном
           config.headers.Authorization = `Bearer ${newToken}`;
           return axiosInstance(config);
-          
+
         } catch (refreshError) {
           // Если обновление токена не удалось, очищаем хранилище и перенаправляем на логин
           localStorage.removeItem('token');
           localStorage.removeItem('refreshToken');
-          
+
           notification.warning({
             message: 'Сессия истекла',
             description: 'Пожалуйста, войдите в систему заново',
             duration: 4,
           });
-          
+
           // Перенаправляем на страницу логина
           setTimeout(() => {
             window.location.href = '/login';
           }, 1000);
-          
+
           return Promise.reject(refreshError);
         }
       } else {
         // Нет refresh токена или уже пытались обновить
         localStorage.removeItem('token');
         localStorage.removeItem('refreshToken');
-        
+
         notification.warning({
           message: 'Требуется авторизация',
           description: 'Пожалуйста, войдите в систему',
           duration: 4,
         });
-        
+
         setTimeout(() => {
           window.location.href = '/login';
         }, 1000);
       }
     }
-    
+
     // Обработка других ошибок
     if (response?.status >= 500) {
       notification.error({
@@ -127,7 +127,7 @@ axiosInstance.interceptors.response.use(
       // Ошибки валидации
       const errors = response.data?.errors || {};
       const errorMessages = Object.values(errors).flat();
-      
+
       notification.error({
         message: 'Ошибка валидации',
         description: errorMessages.join(', ') || 'Проверьте правильность заполнения полей',
@@ -136,14 +136,14 @@ axiosInstance.interceptors.response.use(
     } else if (response?.status >= 400 && response?.status < 500) {
       // Клиентские ошибки
       const message = response.data?.message || response.data?.error || 'Ошибка запроса';
-      
+
       notification.error({
         message: 'Ошибка',
         description: message,
         duration: 4,
       });
     }
-    
+
     // Сетевые ошибки
     if (!response && error.code === 'NETWORK_ERROR') {
       notification.error({
@@ -152,7 +152,7 @@ axiosInstance.interceptors.response.use(
         duration: 4,
       });
     }
-    
+
     // Timeout ошибки
     if (error.code === 'ECONNABORTED') {
       notification.error({
@@ -161,7 +161,7 @@ axiosInstance.interceptors.response.use(
         duration: 4,
       });
     }
-    
+
     return Promise.reject(error);
   }
 );

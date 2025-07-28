@@ -25,7 +25,7 @@ const AttributeMapping = () => {
 
     // API клиент
     const api = axios.create({
-        baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3000/api/v1',
+        baseURL: process.env.REACT_APP_API_URL || 'https://api.moduletrade.ru/api/v1',
         headers: {
             'Authorization': `Bearer ${localStorage.getItem('token')}`,
             'Content-Type': 'application/json'
@@ -189,7 +189,7 @@ const AttributeMapping = () => {
     const showModal = (attribute, mapping = null) => {
         setEditingMapping(mapping);
         form.resetFields();
-        
+
         if (mapping) {
             form.setFieldsValue({
                 source_name: mapping.source_name,
@@ -296,7 +296,7 @@ const AttributeMapping = () => {
             onOk: async () => {
                 try {
                     const values = await form.validateFields();
-                    
+
                     const data = {
                         attribute_id: attribute.id,
                         supplier_id: selectedSupplier,

@@ -49,7 +49,7 @@ const { Option } = Select;
 const NotificationCenter = ({ visible, onClose }) => {
   const dispatch = useDispatch();
   const user = useSelector(state => state.auth.user);
-  
+
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -74,7 +74,7 @@ const NotificationCenter = ({ visible, onClose }) => {
     if (user?.id) {
       initializeWebSocket();
     }
-    
+
     return () => {
       if (window.notificationWs) {
         window.notificationWs.close();
@@ -83,39 +83,39 @@ const NotificationCenter = ({ visible, onClose }) => {
   }, [user]);
 
   const initializeWebSocket = () => {
-    const wsUrl = `${process.env.REACT_APP_WS_URL || 'ws://localhost:3000'}/notifications`;
+    const wsUrl = `${process.env.REACT_APP_WS_URL || 'ws://api.moduletrade.ru'}/notifications`;
     const ws = new WebSocket(wsUrl);
-    
+
     ws.onopen = () => {
       ws.send(JSON.stringify({
         type: 'auth',
         token: localStorage.getItem('token')
       }));
     };
-    
+
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'notification') {
         handleNewNotification(data.payload);
       }
     };
-    
+
     ws.onerror = (error) => {
       console.error('WebSocket error:', error);
     };
-    
+
     window.notificationWs = ws;
   };
 
   const handleNewNotification = useCallback((notification) => {
     setNotifications(prev => [notification, ...prev]);
     setUnreadCount(prev => prev + 1);
-    
+
     // Показываем браузерное уведомление
     if (settings.push && 'Notification' in window && Notification.permission === 'granted') {
       showBrowserNotification(notification);
     }
-    
+
     // Воспроизводим звук
     if (settings.sound) {
       playNotificationSound(notification.type);
@@ -130,7 +130,7 @@ const NotificationCenter = ({ visible, onClose }) => {
       tag: notification.id,
       requireInteraction: notification.priority === 'high'
     });
-    
+
     browserNotification.onclick = () => {
       window.focus();
       handleNotificationClick(notification);
@@ -145,7 +145,7 @@ const NotificationCenter = ({ visible, onClose }) => {
       success: '/sounds/success.mp3',
       info: '/sounds/info.mp3'
     };
-    
+
     const audio = new Audio(soundMap[type] || soundMap.info);
     audio.volume = 0.3;
     audio.play().catch(() => {}); // Игнорируем ошибки воспроизведения
@@ -176,7 +176,7 @@ const NotificationCenter = ({ visible, onClose }) => {
   const markAsRead = async (id) => {
     try {
       await axios.patch(`/api/notifications/${id}/read`);
-      setNotifications(prev => 
+      setNotifications(prev =>
         prev.map(n => n.id === id ? { ...n, read: true } : n)
       );
       setUnreadCount(prev => Math.max(0, prev - 1));
@@ -238,7 +238,7 @@ const NotificationCenter = ({ visible, onClose }) => {
 
   const handleNotificationClick = (notification) => {
     markAsRead(notification.id);
-    
+
     // Навигация в зависимости от типа уведомления
     if (notification.action_url) {
       window.location.href = notification.action_url;
@@ -256,7 +256,7 @@ const NotificationCenter = ({ visible, onClose }) => {
       sync: <SyncOutlined style={{ color: '#eb2f96' }} />,
       billing: <DollarOutlined style={{ color: '#faad14' }} />
     };
-    
+
     return iconMap[type] || iconMap.info;
   };
 
@@ -271,20 +271,20 @@ const NotificationCenter = ({ visible, onClose }) => {
       sync: 'magenta',
       billing: 'gold'
     };
-    
+
     return colorMap[type] || 'blue';
   };
 
   const filteredNotifications = notifications.filter(notification => {
-    const matchesFilter = filter === 'all' || 
+    const matchesFilter = filter === 'all' ||
       (filter === 'unread' && !notification.read) ||
       (filter === 'read' && notification.read) ||
       (filter === notification.type);
-    
-    const matchesSearch = !searchQuery || 
+
+    const matchesSearch = !searchQuery ||
       notification.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       notification.message.toLowerCase().includes(searchQuery.toLowerCase());
-    
+
     return matchesFilter && matchesSearch;
   });
 
@@ -342,7 +342,7 @@ const NotificationCenter = ({ visible, onClose }) => {
                 onChange={(e) => setSearchQuery(e.target.value)}
                 style={{ width: '100%' }}
               />
-              
+
               <Space style={{ width: '100%', justifyContent: 'space-between' }}>
                 <Select
                   value={filter}
@@ -355,7 +355,7 @@ const NotificationCenter = ({ visible, onClose }) => {
                     </Option>
                   ))}
                 </Select>
-                
+
                 {notifications.length > 0 && (
                   <Popconfirm
                     title="Удалить все уведомления?"
@@ -416,7 +416,7 @@ const NotificationCenter = ({ visible, onClose }) => {
                   avatar={
                     <Avatar
                       icon={getNotificationIcon(notification.type)}
-                      style={{ 
+                      style={{
                         backgroundColor: 'transparent',
                         border: `2px solid ${getNotificationColor(notification.type)}`
                       }}
@@ -458,7 +458,7 @@ const NotificationCenter = ({ visible, onClose }) => {
         <TabPane tab="Настройки" key="settings">
           <div style={{ padding: '24px' }}>
             <Title level={4}>Настройки уведомлений</Title>
-            
+
             <Card style={{ marginBottom: '16px' }}>
               <Space direction="vertical" style={{ width: '100%' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -479,9 +479,9 @@ const NotificationCenter = ({ visible, onClose }) => {
                     }}
                   />
                 </div>
-                
+
                 <Divider />
-                
+
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <Text strong>Email уведомления</Text>
@@ -495,9 +495,9 @@ const NotificationCenter = ({ visible, onClose }) => {
                     onChange={(checked) => updateSettings({ ...settings, email: checked })}
                   />
                 </div>
-                
+
                 <Divider />
-                
+
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <Text strong>SMS уведомления</Text>
@@ -511,9 +511,9 @@ const NotificationCenter = ({ visible, onClose }) => {
                     onChange={(checked) => updateSettings({ ...settings, sms: checked })}
                   />
                 </div>
-                
+
                 <Divider />
-                
+
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
                     <Text strong>Звуковые уведомления</Text>

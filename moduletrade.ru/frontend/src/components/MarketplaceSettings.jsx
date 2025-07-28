@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import {
-    Card, Table, Button, Modal, Form, Input, Select, 
+    Card, Table, Button, Modal, Form, Input, Select,
     InputNumber, Space, Tag, Switch, Tabs, message,
     Collapse, Alert, Divider, Tooltip, Popconfirm
 } from 'antd';
-import { 
-    PlusOutlined, EditOutlined, DeleteOutlined, 
+import {
+    PlusOutlined, EditOutlined, DeleteOutlined,
     SettingOutlined, ApiOutlined, CheckCircleOutlined,
     CloseCircleOutlined, InfoCircleOutlined
 } from '@ant-design/icons';
@@ -24,7 +24,7 @@ const MarketplaceSettings = () => {
 
     // API клиент
     const api = axios.create({
-        baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3000/api/v1',
+        baseURL: process.env.REACT_APP_API_URL || 'https://api.moduletrade.ru/api/v1',
         headers: {
             'Authorization': `Bearer ${localStorage.getItem('token')}`,
             'Content-Type': 'application/json'
@@ -114,7 +114,7 @@ const MarketplaceSettings = () => {
                     showIcon
                     style={{ marginBottom: 16 }}
                 />
-                
+
                 {editMode && (
                     <Form.Item label="Базовая комиссия (%)">
                         <InputNumber
@@ -288,7 +288,7 @@ const MarketplaceSettings = () => {
                 }}
             >
                 <Form.Item name="api_type" label="Тип маркетплейса" rules={[{ required: true }]}>
-                    <Select 
+                    <Select
                         placeholder="Выберите маркетплейс"
                         onChange={setSelectedType}
                     >
@@ -319,9 +319,9 @@ const MarketplaceSettings = () => {
                         />
 
                         {marketplaceTypes[selectedType].fields.includes('client_id') && (
-                            <Form.Item 
-                                name={['api_config', 'client_id']} 
-                                label="Client ID" 
+                            <Form.Item
+                                name={['api_config', 'client_id']}
+                                label="Client ID"
                                 rules={[{ required: true }]}
                             >
                                 <Input placeholder="Введите Client ID" />
@@ -329,9 +329,9 @@ const MarketplaceSettings = () => {
                         )}
 
                         {marketplaceTypes[selectedType].fields.includes('api_key') && (
-                            <Form.Item 
-                                name={['api_config', 'api_key']} 
-                                label="API Key" 
+                            <Form.Item
+                                name={['api_config', 'api_key']}
+                                label="API Key"
                                 rules={[{ required: true }]}
                             >
                                 <Input.Password placeholder="Введите API ключ" />
@@ -339,9 +339,9 @@ const MarketplaceSettings = () => {
                         )}
 
                         {marketplaceTypes[selectedType].fields.includes('campaign_id') && (
-                            <Form.Item 
-                                name={['api_config', 'campaign_id']} 
-                                label="Campaign ID" 
+                            <Form.Item
+                                name={['api_config', 'campaign_id']}
+                                label="Campaign ID"
                                 rules={[{ required: true }]}
                             >
                                 <Input placeholder="Введите Campaign ID" />
@@ -349,9 +349,9 @@ const MarketplaceSettings = () => {
                         )}
 
                         {marketplaceTypes[selectedType].fields.includes('oauth_token') && (
-                            <Form.Item 
-                                name={['api_config', 'oauth_token']} 
-                                label="OAuth Token" 
+                            <Form.Item
+                                name={['api_config', 'oauth_token']}
+                                label="OAuth Token"
                                 rules={[{ required: true }]}
                             >
                                 <Input.Password placeholder="Введите OAuth токен" />
@@ -359,9 +359,9 @@ const MarketplaceSettings = () => {
                         )}
 
                         {marketplaceTypes[selectedType].fields.includes('merchant_id') && (
-                            <Form.Item 
-                                name={['api_config', 'merchant_id']} 
-                                label="Merchant ID" 
+                            <Form.Item
+                                name={['api_config', 'merchant_id']}
+                                label="Merchant ID"
                                 rules={[{ required: true }]}
                             >
                                 <Input placeholder="Введите Merchant ID" />
@@ -372,15 +372,15 @@ const MarketplaceSettings = () => {
 
                 <Divider>Настройки комиссий</Divider>
 
-                <Form.Item 
-                    name={['commission_rules', 'default']} 
+                <Form.Item
+                    name={['commission_rules', 'default']}
                     label="Базовая комиссия (%)"
                     rules={[{ required: true }]}
                     initialValue={15}
                 >
-                    <InputNumber 
-                        min={0} 
-                        max={100} 
+                    <InputNumber
+                        min={0}
+                        max={100}
                         style={{ width: '100%' }}
                         formatter={value => `${value}%`}
                         parser={value => value.replace('%', '')}
@@ -508,13 +508,13 @@ const MarketplaceSettings = () => {
                         expandedRowRender: (record) => (
                             <Tabs defaultActiveKey="commissions">
                                 <TabPane tab="Комиссии" key="commissions">
-                                    <CommissionSettings 
-                                        marketplace={record} 
+                                    <CommissionSettings
+                                        marketplace={record}
                                         onUpdate={loadMarketplaces}
                                     />
                                 </TabPane>
                                 <TabPane tab="Склады" key="warehouses">
-                                    <WarehouseSettings 
+                                    <WarehouseSettings
                                         marketplace={record}
                                         onUpdate={loadMarketplaces}
                                     />

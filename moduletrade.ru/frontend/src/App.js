@@ -19,6 +19,7 @@ import SyncPage from 'pages/Sync/SyncPage';
 import AnalyticsPage from 'pages/Analytics/AnalyticsPage';
 import OrderList from 'pages/OrderList';
 import OrderDetails from 'pages/OrderDetails';
+import Register from 'pages/Auth/Register';
 
 import './App.css';
 
@@ -33,7 +34,7 @@ function App() {
             {/* --- Публичный маршрут --- */}
             {/* Страница входа доступна всем */}
             <Route path="/login" element={<Login />} />
-            
+
             {/* --- Защищенные маршруты --- */}
             {/* Все остальные пути (/*) ведут на защищенную часть приложения */}
             <Route
@@ -49,27 +50,30 @@ function App() {
                       {/* При заходе на корень сайта, перенаправляем на /dashboard */}
                       <Route path="/" element={<Navigate to="/dashboard" replace />} />
                       <Route path="/dashboard" element={<Dashboard />} />
-                      
+
                       {/* Товары */}
                       <Route path="/products" element={<ProductsPage />} />
                       <Route path="/products/:id" element={<ProductDetailsPage />} />
-                      
+
                       {/* Склады */}
                       <Route path="/warehouses" element={<WarehousesPage />} />
-                      
+
                       {/* Заказы */}
                       <Route path="/orders" element={<OrderList />} />
                       <Route path="/orders/:orderId" element={<OrderDetails />} />
-                      
+
                       {/* Синхронизация */}
                       <Route path="/sync" element={<SyncPage />} />
-                      
+
                       {/* Аналитика */}
                       <Route path="/analytics" element={<AnalyticsPage />} />
-                      
+
+                      {/* Регистрация */}
+                      <Route path="/register" element={<Register />} />
+
                       {/* Настройки (раскомментируйте, когда страница будет создана) */}
                       {/* <Route path="/settings" element={<SettingsPage />} /> */}
-                      
+
                       {/* Если страница не найдена, перенаправляем на /dashboard */}
                       <Route path="*" element={<Navigate to="/dashboard" replace />} />
                     </Routes>
