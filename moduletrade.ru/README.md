@@ -65,8 +65,8 @@ docker compose exec backend npm run seed
 
 ### Доступ к приложению
 
-- **Frontend**: http://localhost:3001
-- **Backend API**: http://localhost:3000
+- **Frontend**: https://moduletrade.ru
+- **Backend API**: https://api.moduletrade.ru
 - **PostgreSQL**: localhost:5432
 - **Redis**: localhost:6379
 - **RabbitMQ Management**: http://localhost:15672
@@ -189,7 +189,7 @@ pm cache clean --force\
 
 ## 📚 API Документация
 
-API документация доступна по адресу: http://localhost:3000/api-docs
+API документация доступна по адресу: https://api.moduletrade.ru/api-docs
 
 ### Основные эндпоинты
 
