@@ -1,5 +1,6 @@
 // ========================================
 // ИСПРАВЛЕННЫЙ backend/src/server.js
+// CORS дублирование полностью убрано!
 // ========================================
 
 const express = require('express');
@@ -30,16 +31,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ========================================
-// КРИТИЧЕСКИ ВАЖНЫЕ CORS НАСТРОЙКИ
+// CORS КОНФИГУРАЦИЯ - ЕДИНСТВЕННОЕ МЕСТО!
 // ========================================
 const corsOptions = {
   origin: [
     'https://moduletrade.ru',
     'https://app.moduletrade.ru',
-    'https://www.moduletrade.ru',
-    // Для разработки (можно убрать в production)
-    'https://moduletrade.ru',
-    'https://api.moduletrade.ru'
+    'https://www.moduletrade.ru'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -66,7 +64,7 @@ app.use(helmet({
   contentSecurityPolicy: false
 }));
 
-// CORS - ДОЛЖЕН БЫТЬ ПЕРВЫМ!
+// CORS - ЕДИНСТВЕННОЕ МЕСТО УСТАНОВКИ CORS!
 app.use(cors(corsOptions));
 
 // Сжатие
@@ -78,17 +76,6 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Логирование
 app.use(morgan('combined'));
-
-// ========================================
-// ОБРАБОТКА OPTIONS ЗАПРОСОВ ГЛОБАЛЬНО
-// ========================================
-app.options('*', (req, res) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin);
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.sendStatus(200);
-});
 
 // ========================================
 // HEALTH CHECK - БЕЗ PREFIX
@@ -158,9 +145,7 @@ app.post('/test-auth', (req, res) => {
 app.use((err, req, res, next) => {
   console.error('🚨 Global error handler:', err);
 
-  // CORS headers даже для ошибок
-  res.header('Access-Control-Allow-Origin', req.headers.origin);
-  res.header('Access-Control-Allow-Credentials', 'true');
+  // НЕ УСТАНАВЛИВАЕМ CORS headers здесь - middleware уже их установил!
 
   res.status(err.status || 500).json({
     success: false,
@@ -175,9 +160,7 @@ app.use((err, req, res, next) => {
 app.use((req, res) => {
   console.log(`❌ 404 - Route not found: ${req.method} ${req.path}`);
 
-  // CORS headers для 404
-  res.header('Access-Control-Allow-Origin', req.headers.origin);
-  res.header('Access-Control-Allow-Credentials', 'true');
+  // НЕ УСТАНАВЛИВАЕМ CORS headers здесь - middleware уже их установил!
 
   res.status(404).json({
     success: false,
