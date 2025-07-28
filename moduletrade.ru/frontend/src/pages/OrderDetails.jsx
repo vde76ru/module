@@ -30,7 +30,7 @@ import {
   TruckOutlined,
   CloseCircleOutlined
 } from '@ant-design/icons';
-import axios from '../../utils/axios';
+import axios from '../utils/axios';
 import moment from 'moment';
 
 const { Title, Text } = Typography;

@@ -26,7 +26,7 @@ import {
   ClockCircleOutlined,
   CloseCircleOutlined
 } from '@ant-design/icons';
-import axios from '../../utils/axios';
+import axios from '../utils/axios';
 import moment from 'moment';
 
 const { Search } = Input;

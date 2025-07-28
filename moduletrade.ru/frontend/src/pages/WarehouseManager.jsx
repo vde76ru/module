@@ -16,7 +16,7 @@ import {
     SwapOutlined, InfoCircleOutlined, ReloadOutlined,
     ArrowRightOutlined, WarningOutlined
 } from '@ant-design/icons';
-import axios from '../../utils/axios';
+import axios from '../utils/axios';
 
 const { Option } = Select;
 const { TabPane } = Tabs;
