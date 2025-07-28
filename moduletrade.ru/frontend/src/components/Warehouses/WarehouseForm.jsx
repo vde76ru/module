@@ -25,8 +25,8 @@ import {
   CloudOutlined,
   ApartmentOutlined
 } from '@ant-design/icons';
-import { createWarehouse, updateWarehouse } from '../../store/warehousesSlice';
-import axios from '../utils/axios';
+import { createWarehouse, updateWarehouse } from 'store/warehousesSlice';
+import axios from 'utils/axios';
 
 const { Option } = Select;
 const { TextArea } = Input;

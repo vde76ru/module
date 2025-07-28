@@ -30,8 +30,8 @@ import {
   UploadOutlined,
 } from '@ant-design/icons';
 import { useDispatch } from 'react-redux';
-import { updateProduct, createProduct } from '../../store/productsSlice';
-import axios from '../utils/axios';
+import { updateProduct, createProduct } from 'store/productsSlice';
+import axios from 'utils/axios';
 
 const { TextArea } = Input;
 const { Option } = Select;

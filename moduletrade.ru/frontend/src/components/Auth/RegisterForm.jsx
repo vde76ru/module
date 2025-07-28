@@ -24,7 +24,7 @@ import {
   PhoneOutlined,
   BankOutlined
 } from '@ant-design/icons';
-import { registerUser, clearError } from '../../store/authSlice';
+import { registerUser, clearError } from 'store/authSlice';
 
 const { Title, Text } = Typography;
 const { Option } = Select;

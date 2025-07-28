@@ -9,7 +9,7 @@ import {
   EditOutlined, DeleteOutlined, SyncOutlined,
   SearchOutlined, FilterOutlined
 } from '@ant-design/icons';
-import axios from '../utils/axios';
+import axios from 'utils/axios';
 
 const { Option } = Select;
 const { Search } = Input;

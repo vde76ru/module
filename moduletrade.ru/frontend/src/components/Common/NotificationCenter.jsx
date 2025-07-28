@@ -37,7 +37,7 @@ import {
   SyncOutlined,
   DollarOutlined
 } from '@ant-design/icons';
-import axios from '../utils/axios';
+import axios from 'utils/axios';
 import { formatDistanceToNow } from 'date-fns';
 import { ru } from 'date-fns/locale';
 

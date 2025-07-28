@@ -1,6 +1,6 @@
 // backend/src/routes/auth.js
 const express = require('express');
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { authenticate } = require('../middleware/auth');
 const db = require('../config/database');

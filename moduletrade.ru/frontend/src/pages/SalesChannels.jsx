@@ -42,7 +42,7 @@ import {
   CheckCircle as CheckCircleIcon,
   Cancel as CancelIcon
 } from '@mui/icons-material';
-import axios from 'axios';
+import axios from 'utils/axios';
 import { useSnackbar } from 'notistack';
 
 const SalesChannels = () => {

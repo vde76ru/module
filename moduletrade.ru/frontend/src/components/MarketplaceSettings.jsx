@@ -9,7 +9,7 @@ import {
     SettingOutlined, ApiOutlined, CheckCircleOutlined,
     CloseCircleOutlined, InfoCircleOutlined
 } from '@ant-design/icons';
-import axios from 'axios';
+import axios from 'utils/axios';
 
 const { TabPane } = Tabs;
 const { Panel } = Collapse;

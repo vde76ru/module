@@ -30,8 +30,8 @@ import {
   TruckOutlined,
   CloseCircleOutlined
 } from '@ant-design/icons';
-import axios from '../utils/axios';
-import moment from 'moment';
+import axios from 'utils/axios';
+import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 
@@ -287,7 +287,7 @@ const OrderDetails = () => {
                 <Tag color="blue">{order.marketplace?.name}</Tag>
               </Descriptions.Item>
               <Descriptions.Item label="Дата создания">
-                {moment(order.created_at).format('DD.MM.YYYY HH:mm')}
+                {dayjs(order.created_at).format('DD.MM.YYYY HH:mm')}
               </Descriptions.Item>
               <Descriptions.Item label="Статус">
                 <Tag color={order.status === 'delivered' ? 'green' : 'blue'}>
@@ -452,7 +452,7 @@ const OrderDetails = () => {
               <Space direction="vertical" size={0}>
                 <Text strong>{item.status}</Text>
                 <Text type="secondary">
-                  {moment(item.created_at).format('DD.MM.YYYY HH:mm')}
+                  {dayjs(item.created_at).format('DD.MM.YYYY HH:mm')}
                 </Text>
                 {item.comment && <Text>{item.comment}</Text>}
               </Space>

@@ -19,7 +19,7 @@ import {
   EyeInvisibleOutlined,
   EyeTwoTone
 } from '@ant-design/icons';
-import { loginUser, clearError } from 'store/authSlice.js';
+import { loginUser, clearError } from 'store/authSlice';
 import './Login.css';
 
 const { Title, Text, Link } = Typography;

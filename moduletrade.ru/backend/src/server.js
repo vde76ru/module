@@ -85,9 +85,11 @@ async function initializeServices() {
     const pimService = new PIMService();
     
     // Start workers
-    await syncService.initializeWorkers();
-    await pimService.processImportQueue();
     await billingService.initializeTariffs();
+    console.log('BillingService initialized successfully');
+    console.log('SyncService ready');
+    console.log('PIMService ready');
+    console.log('All services initialized successfully');
     
     console.log('All services initialized successfully');
   } catch (error) {

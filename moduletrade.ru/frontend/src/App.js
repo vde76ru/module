@@ -7,22 +7,18 @@ import { Provider } from 'react-redux';
 import { ConfigProvider } from 'antd';
 import ruRU from 'antd/locale/ru_RU';
 
-// Импортируем Redux store и компоненты
-import { store } from './store';
-import ProtectedRoute from './components/Auth/ProtectedRoute';
-import Layout from './components/Layout/Layout'; // Главный шаблон страниц (с меню и шапкой)
-
-// Импортируем все страницы приложения
-import Login from './pages/Auth/Login';
-import Dashboard from './pages/Dashboard/Dashboard';
-import ProductsPage from './pages/Products/ProductsPage';
-import ProductDetailsPage from './pages/Products/ProductDetailsPage';
-import WarehousesPage from './pages/Warehouses/WarehousesPage';
-import SyncPage from './pages/Sync/SyncPage';
-import AnalyticsPage from './pages/Analytics/AnalyticsPage';
-// import SettingsPage from './pages/Settings/SettingsPage'; // Раскомментируйте, когда страница будет создана
-import OrderList from './pages/OrderList';
-import OrderDetails from './pages/OrderDetails';
+import { store } from 'store';
+import ProtectedRoute from 'components/Auth/ProtectedRoute';
+import Layout from 'components/Layout/Layout';
+import Login from 'pages/Auth/Login';
+import Dashboard from 'pages/Dashboard/Dashboard';
+import ProductsPage from 'pages/Products/ProductsPage';
+import ProductDetailsPage from 'pages/Products/ProductDetailsPage';
+import WarehousesPage from 'pages/Warehouses/WarehousesPage';
+import SyncPage from 'pages/Sync/SyncPage';
+import AnalyticsPage from 'pages/Analytics/AnalyticsPage';
+import OrderList from 'pages/OrderList';
+import OrderDetails from 'pages/OrderDetails';
 
 import './App.css';
 

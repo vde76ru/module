@@ -8,7 +8,7 @@ import {
     FolderOutlined, LinkOutlined, DeleteOutlined, 
     PlusOutlined, SearchOutlined 
 } from '@ant-design/icons';
-import axios from 'axios';
+import axios from 'utils/axios';
 
 const { Search } = Input;
 

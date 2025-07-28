@@ -9,7 +9,7 @@ import {
   RiseOutlined, FallOutlined, SyncOutlined
 } from '@ant-design/icons';
 import { loadStripe } from '@stripe/stripe-js';
-import axios from '../utils/axios';
+import axios from 'utils/axios';
 
 const stripePromise = loadStripe(process.env.REACT_APP_STRIPE_PUBLIC_KEY);
 

@@ -26,8 +26,8 @@ import {
   ClockCircleOutlined,
   CloseCircleOutlined
 } from '@ant-design/icons';
-import axios from '../utils/axios';
-import moment from 'moment';
+import axios from 'utils/axios';
+import dayjs from 'dayjs';
 
 const { Search } = Input;
 const { Option } = Select;
@@ -217,7 +217,7 @@ const OrderList = () => {
       title: 'Дата',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (date) => moment(date).format('DD.MM.YYYY HH:mm'),
+      render: (date) => dayjs(date).format('DD.MM.YYYY HH:mm'),
       sorter: true
     },
     {

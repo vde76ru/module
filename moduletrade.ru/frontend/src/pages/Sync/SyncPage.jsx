@@ -39,8 +39,8 @@ import {
   fetchSyncStatus,
   fetchMarketplaces,
   fetchSuppliers,
-} from '../../store/syncSlice';
-import moment from 'moment';
+} from 'store/syncSlice';
+import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 const { TabPane } = Tabs;
@@ -118,7 +118,7 @@ const SyncPage = () => {
       title: 'Последняя синхронизация',
       dataIndex: 'last_sync',
       key: 'last_sync',
-      render: (value) => value ? moment(value).fromNow() : 'Никогда',
+      render: (value) => value ? dayjs(value).fromNow() : 'Никогда',
     },
     {
       title: 'Товары',
@@ -210,7 +210,7 @@ const SyncPage = () => {
       title: 'Последний импорт',
       dataIndex: 'last_import',
       key: 'last_import',
-      render: (value) => value ? moment(value).fromNow() : 'Никогда',
+      render: (value) => value ? dayjs(value).fromNow() : 'Никогда',
     },
     {
       title: 'Товары',
@@ -250,7 +250,7 @@ const SyncPage = () => {
       dataIndex: 'created_at',
       key: 'created_at',
       width: 150,
-      render: (value) => moment(value).format('DD.MM.YY HH:mm'),
+      render: (value) => dayjs(value).format('DD.MM.YY HH:mm'),
     },
     {
       title: 'Тип',
@@ -353,7 +353,7 @@ const SyncPage = () => {
                 <Statistic
                   title="Синхронизаций сегодня"
                   value={logs.filter(log => 
-                    moment(log.created_at).isSame(moment(), 'day')
+                    dayjs(log.created_at).isSame(dayjs(), 'day')
                   ).length}
                   valueStyle={{ color: '#722ed1' }}
                 />
@@ -365,7 +365,7 @@ const SyncPage = () => {
                   title="Успешных"
                   value={logs.filter(log => 
                     log.status === 'success' &&
-                    moment(log.created_at).isSame(moment(), 'day')
+                    dayjs(log.created_at).isSame(dayjs(), 'day')
                   ).length}
                   valueStyle={{ color: '#52c41a' }}
                 />
@@ -394,7 +394,7 @@ const SyncPage = () => {
                       <Tag color="blue">{log.type}</Tag>
                       <Text strong>{log.source}</Text>
                       <Text type="secondary">
-                        {moment(log.created_at).fromNow()}
+                        {dayjs(log.created_at).fromNow()}
                       </Text>
                     </Space>
                     <div>

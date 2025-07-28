@@ -6,7 +6,7 @@ const { authenticate, checkPermission } = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
 
-const pimService = new PIMService();
+const pimService = PIMService;
 const billingService = new BillingService();
 
 // Настройка загрузки файлов

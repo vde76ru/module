@@ -35,8 +35,8 @@ import {
   deleteProduct,
   importProducts,
   setFilters,
-} from '../../store/productsSlice';
-import moment from 'moment';
+} from 'store/productsSlice';
+import dayjs from 'dayjs';
 
 const { Search } = Input;
 const { Option } = Select;
@@ -208,7 +208,7 @@ const ProductsPage = () => {
       dataIndex: 'updated_at',
       key: 'updated_at',
       width: 120,
-      render: (value) => moment(value).format('DD.MM.YY'),
+      render: (value) => dayjs(value).format('DD.MM.YY'),
     },
     {
       title: 'Действия',

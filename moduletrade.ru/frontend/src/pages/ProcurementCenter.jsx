@@ -62,7 +62,7 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import ruLocale from 'date-fns/locale/ru';
-import axios from 'axios';
+import axios from 'utils/axios';
 import { useSnackbar } from 'notistack';
 import { format } from 'date-fns';
 

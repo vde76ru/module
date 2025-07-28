@@ -24,7 +24,7 @@ import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
-  WarehouseOutlined,
+  ShopOutlined,
   SwapOutlined,
   SettingOutlined,
 } from '@ant-design/icons';
@@ -34,7 +34,7 @@ import {
   updateWarehouse,
   deleteWarehouse,
   transferProduct,
-} from '../../store/warehousesSlice';
+} from 'store/warehousesSlice';
 
 const { Option } = Select;
 const { Title } = Typography;
@@ -265,7 +265,7 @@ const WarehousesPage = () => {
             <Statistic
               title="Всего складов"
               value={warehouses.length}
-              prefix={<WarehouseOutlined />}
+              prefix={<ShopOutlined />}
             />
           </Card>
         </Col>

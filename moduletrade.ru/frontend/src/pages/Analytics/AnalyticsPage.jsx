@@ -34,13 +34,13 @@ import {
 import {
   DollarOutlined,
   ShoppingCartOutlined,
-  TrendingUpOutlined,
-  TrendingDownOutlined,
+  RiseOutlined,
+  FallOutlined,
   PercentageOutlined,
   DownloadOutlined,
 } from '@ant-design/icons';
-import axios from '../utils/axios';
-import moment from 'moment';
+import axios from 'utils/axios';
+import dayjs from 'dayjs';
 
 const { Title } = Typography;
 const { Option } = Select;
@@ -49,8 +49,8 @@ const { RangePicker } = DatePicker;
 const AnalyticsPage = () => {
   const [loading, setLoading] = useState(false);
   const [dateRange, setDateRange] = useState([
-    moment().subtract(30, 'days'),
-    moment(),
+    dayjs().subtract(30, 'days'),
+    dayjs(),
   ]);
   const [selectedMarketplace, setSelectedMarketplace] = useState(null);
   
@@ -239,7 +239,7 @@ const AnalyticsPage = () => {
               suffix="₽"
             />
             <div style={{ marginTop: 8 }}>
-              <TrendingUpOutlined style={{ color: '#3f8600' }} />
+              <RiseOutlined style={{ color: '#3f8600' }} />
               <span style={{ color: '#3f8600', marginLeft: 4 }}>+12.5%</span>
               <span style={{ color: '#666', marginLeft: 8 }}>к прошлому периоду</span>
             </div>
@@ -254,7 +254,7 @@ const AnalyticsPage = () => {
               prefix={<ShoppingCartOutlined />}
             />
             <div style={{ marginTop: 8 }}>
-              <TrendingUpOutlined style={{ color: '#3f8600' }} />
+              <RiseOutlined style={{ color: '#3f8600' }} />
               <span style={{ color: '#3f8600', marginLeft: 4 }}>+8.2%</span>
               <span style={{ color: '#666', marginLeft: 8 }}>к прошлому периоду</span>
             </div>
@@ -271,7 +271,7 @@ const AnalyticsPage = () => {
               suffix="₽"
             />
             <div style={{ marginTop: 8 }}>
-              <TrendingDownOutlined style={{ color: '#cf1322' }} />
+              <FallOutlined style={{ color: '#cf1322' }} />
               <span style={{ color: '#cf1322', marginLeft: 4 }}>-2.1%</span>
               <span style={{ color: '#666', marginLeft: 8 }}>к прошлому периоду</span>
             </div>
@@ -288,7 +288,7 @@ const AnalyticsPage = () => {
               suffix="%"
             />
             <div style={{ marginTop: 8 }}>
-              <TrendingUpOutlined style={{ color: '#3f8600' }} />
+              <RiseOutlined style={{ color: '#3f8600' }} />
               <span style={{ color: '#3f8600', marginLeft: 4 }}>+1.2%</span>
               <span style={{ color: '#666', marginLeft: 8 }}>к прошлому периоду</span>
             </div>

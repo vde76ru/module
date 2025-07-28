@@ -30,8 +30,8 @@ import {
   ReloadOutlined,
   SettingOutlined
 } from '@ant-design/icons';
-import { importProducts, fetchProducts } from '../../store/productsSlice';
-import axios from '../utils/axios';
+import { importProducts, fetchProducts } from 'store/productsSlice';
+import axios from 'utils/axios';
 
 const { Step } = Steps;
 const { Option } = Select;

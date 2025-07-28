@@ -8,7 +8,7 @@ import {
     PlusOutlined, EditOutlined, DeleteOutlined, SyncOutlined,
     QuestionCircleOutlined, SettingOutlined, SwapOutlined
 } from '@ant-design/icons';
-import axios from 'axios';
+import axios from 'utils/axios';
 
 const { Panel } = Collapse;
 const { TabPane } = Tabs;

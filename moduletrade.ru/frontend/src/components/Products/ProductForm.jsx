@@ -30,8 +30,8 @@ import {
   TagOutlined,
   DollarOutlined
 } from '@ant-design/icons';
-import { createProduct, updateProduct } from '../../store/productsSlice';
-import axios from '../utils/axios';
+import { createProduct, updateProduct } from 'store/productsSlice';
+import axios from 'utils/axios';
 
 const { Option } = Select;
 const { TextArea } = Input;

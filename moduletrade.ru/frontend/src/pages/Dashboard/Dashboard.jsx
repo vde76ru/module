@@ -18,7 +18,7 @@ import {
 } from 'antd';
 import {
   ShoppingOutlined,
-  WarehouseOutlined,
+  ShopOutlined,
   DollarOutlined,
   SyncOutlined,
   ArrowUpOutlined,
@@ -29,8 +29,8 @@ import {
   ClockCircleOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import axios from '../utils/axios';
-import moment from 'moment';
+import axios from 'utils/axios';
+import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 
@@ -114,7 +114,7 @@ const Dashboard = () => {
       title: 'Дата',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (value) => moment(value).format('DD.MM.YYYY HH:mm'),
+      render: (value) => dayjs(value).format('DD.MM.YYYY HH:mm'),
     },
   ];
 
@@ -139,7 +139,7 @@ const Dashboard = () => {
             <Statistic
               title="Активных складов"
               value={statistics.active_warehouses || 0}
-              prefix={<WarehouseOutlined />}
+              prefix={<ShopOutlined />}
               valueStyle={{ color: '#52c41a' }}
             />
           </Card>
@@ -210,7 +210,7 @@ const Dashboard = () => {
                     title={item.name}
                     description={
                       item.last_sync
-                        ? `Последняя синхронизация: ${moment(item.last_sync).fromNow()}`
+                        ? `Последняя синхронизация: ${dayjs(item.last_sync).fromNow()}`
                         : 'Синхронизация не выполнялась'
                     }
                   />
