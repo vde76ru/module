@@ -27,7 +27,7 @@ router.post('/login', async (req, res) => {
       SELECT u.*, t.name as tenant_name, t.tariff_id 
       FROM users u
       JOIN tenants t ON u.tenant_id = t.id
-      WHERE u.email = $1 AND u.active = true
+      WHERE u.email = $1 AND u.is_active = true
     `, [email.toLowerCase()]);
 
     if (userResult.rows.length === 0) {
