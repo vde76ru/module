@@ -64,7 +64,7 @@ const WarehouseForm = ({ warehouse, visible, onClose, onSuccess }) => {
       is_active: warehouse.is_active !== false
     });
     setWarehouseType(warehouse.type || 'physical');
-    
+
     if (warehouse.components) {
       setSelectedComponents(warehouse.components.map(c => c.id));
     }
@@ -72,23 +72,23 @@ const WarehouseForm = ({ warehouse, visible, onClose, onSuccess }) => {
 
   const fetchAvailableWarehouses = async () => {
     try {
-      const response = await axios.get('/api/warehouses', {
+      const response = await axios.get('/warehouses', {
         params: { type: 'physical,virtual', exclude: warehouse?.id }
       });
-      
-      const warehouses = response.data.filter(w => 
+
+      const warehouses = response.data.filter(w =>
         w.type !== 'multi' && w.id !== warehouse?.id
       );
-      
+
       setAvailableWarehouses(warehouses);
-      
+
       const transferData = warehouses.map(w => ({
         key: w.id,
         title: w.name,
         description: `${w.type === 'physical' ? 'Физический' : 'Виртуальный'} склад`,
         chosen: warehouse?.components?.some(c => c.id === w.id) || false
       }));
-      
+
       setTransferData(transferData);
     } catch (error) {
       message.error('Ошибка загрузки складов');
@@ -298,7 +298,7 @@ const WarehouseForm = ({ warehouse, visible, onClose, onSuccess }) => {
               showIcon
               style={{ marginBottom: 16 }}
             />
-            
+
             {transferData.length > 0 ? (
               <Transfer
                 dataSource={transferData}

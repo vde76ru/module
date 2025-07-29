@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Card, Row, Col, Button, Tag, Progress, Statistic, 
+import {
+  Card, Row, Col, Button, Tag, Progress, Statistic,
   Alert, Modal, message, Descriptions, Badge, Space,
   Table, Timeline
 } from 'antd';
-import { 
+import {
   CrownOutlined, CheckCircleOutlined, CloseCircleOutlined,
   RiseOutlined, FallOutlined, SyncOutlined
 } from '@ant-design/icons';
@@ -31,7 +31,7 @@ const SubscriptionManager = () => {
 
   const fetchUserData = async () => {
     try {
-      const response = await axios.get('/api/auth/me');
+      const response = await axios.get('/auth/me');
       setCurrentTariff({
         name: response.data.data.tariff_name,
         limits: response.data.data.tariff_limits,
@@ -44,7 +44,7 @@ const SubscriptionManager = () => {
 
   const fetchTariffs = async () => {
     try {
-      const response = await axios.get('/api/billing/tariffs');
+      const response = await axios.get('/billing/tariffs');
       setAvailableTariffs(response.data.data);
     } catch (error) {
       message.error('Ошибка загрузки тарифов');
@@ -53,7 +53,7 @@ const SubscriptionManager = () => {
 
   const fetchUsage = async () => {
     try {
-      const response = await axios.get('/api/billing/usage');
+      const response = await axios.get('/billing/usage');
       setUsage(response.data.data);
     } catch (error) {
       message.error('Ошибка загрузки статистики использования');
@@ -62,7 +62,7 @@ const SubscriptionManager = () => {
 
   const fetchTransactions = async () => {
     try {
-      const response = await axios.get('/api/billing/transactions?limit=10');
+      const response = await axios.get('/billing/transactions?limit=10');
       setTransactions(response.data.data.items);
     } catch (error) {
       message.error('Ошибка загрузки транзакций');
@@ -75,7 +75,7 @@ const SubscriptionManager = () => {
     setLoading(true);
     try {
       const stripe = await stripePromise;
-      
+
       // Создаем сессию оплаты
       const response = await axios.post('/api/billing/create-checkout-session', {
         tariff_code: selectedTariff.code
@@ -167,7 +167,7 @@ const SubscriptionManager = () => {
         <Row gutter={[24, 24]}>
           <Col span={8}>
             <h4>Товары</h4>
-            <Progress 
+            <Progress
               percent={getUsagePercent(usage.products?.used || 0, usage.products?.limit)}
               status={getUsageStatus(getUsagePercent(usage.products?.used || 0, usage.products?.limit))}
             />
@@ -175,7 +175,7 @@ const SubscriptionManager = () => {
           </Col>
           <Col span={8}>
             <h4>Заказы в месяц</h4>
-            <Progress 
+            <Progress
               percent={getUsagePercent(usage.orders?.used || 0, usage.orders?.limit)}
               status={getUsageStatus(getUsagePercent(usage.orders?.used || 0, usage.orders?.limit))}
             />
@@ -183,7 +183,7 @@ const SubscriptionManager = () => {
           </Col>
           <Col span={8}>
             <h4>API вызовы</h4>
-            <Progress 
+            <Progress
               percent={getUsagePercent(usage.api_calls?.used || 0, usage.api_calls?.limit)}
               status={getUsageStatus(getUsagePercent(usage.api_calls?.used || 0, usage.api_calls?.limit))}
             />
@@ -197,7 +197,7 @@ const SubscriptionManager = () => {
         <Row gutter={24}>
           {availableTariffs.map(tariff => (
             <Col span={8} key={tariff.id}>
-              <Card 
+              <Card
                 hoverable
                 className={currentTariff?.name === tariff.name ? 'current-tariff' : ''}
               >
@@ -206,7 +206,7 @@ const SubscriptionManager = () => {
                   <span className="amount">₽{tariff.price.toLocaleString()}</span>
                   <span className="period">/месяц</span>
                 </div>
-                
+
                 <Descriptions column={1} size="small">
                   <Descriptions.Item label="Товары">
                     {tariff.limits.products || 'Без ограничений'}
@@ -229,8 +229,8 @@ const SubscriptionManager = () => {
                 </div>
 
                 {currentTariff?.name !== tariff.name && (
-                  <Button 
-                    type="primary" 
+                  <Button
+                    type="primary"
                     block
                     onClick={() => {
                       setSelectedTariff(tariff);
@@ -240,7 +240,7 @@ const SubscriptionManager = () => {
                     {tariff.price > (currentTariff?.price || 0) ? 'Повысить' : 'Понизить'}
                   </Button>
                 )}
-                
+
                 {currentTariff?.name === tariff.name && (
                   <Badge status="success" text="Текущий тариф" />
                 )}
@@ -254,7 +254,7 @@ const SubscriptionManager = () => {
       <Card title="История платежей">
         <Timeline>
           {transactions.map(transaction => (
-            <Timeline.Item 
+            <Timeline.Item
               key={transaction.id}
               color={transaction.amount > 0 ? 'green' : 'red'}
             >
@@ -269,7 +269,7 @@ const SubscriptionManager = () => {
                     value={Math.abs(transaction.amount)}
                     prefix={transaction.amount > 0 ? '+' : '-'}
                     suffix="₽"
-                    valueStyle={{ 
+                    valueStyle={{
                       color: transaction.amount > 0 ? '#3f8600' : '#cf1322',
                       fontSize: '16px'
                     }}
@@ -279,7 +279,7 @@ const SubscriptionManager = () => {
             </Timeline.Item>
           ))}
         </Timeline>
-        
+
         <Button type="link" block>
           Показать все транзакции
         </Button>
@@ -306,7 +306,7 @@ const SubscriptionManager = () => {
               showIcon
               className="mb-16"
             />
-            
+
             <Row gutter={24}>
               <Col span={12}>
                 <Card title="Текущий план">
@@ -321,7 +321,7 @@ const SubscriptionManager = () => {
                 </Card>
               </Col>
             </Row>
-            
+
             <h4 className="mt-16">Сравнение возможностей:</h4>
             <Table
               dataSource={[

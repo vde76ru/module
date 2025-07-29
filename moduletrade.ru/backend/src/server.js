@@ -1,113 +1,63 @@
-// ========================================
-// ИСПРАВЛЕННЫЙ backend/src/server.js
-// CORS дублирование полностью убрано!
-// ========================================
-
+// backend/src/server.js
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const compression = require('compression');
-const morgan = require('morgan');
-require('dotenv').config();
+const { DatabaseManager } = require('./services/DatabaseManager');
 
-const db = require('./config/database');
-const rabbitmq = require('./config/rabbitmq');
-const { rateLimiter } = require('./middleware/auth');
+const app = express();
 
-// Services
-const SyncService = require('./services/SyncService');
-const BillingService = require('./services/BillingService');
-const PIMService = require('./services/PIMService');
+// ========================================
+// MIDDLEWARE
+// ========================================
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-eval'"], // Разрешаем eval для решения CSP проблемы
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+  },
+}));
 
-// Routes
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'https://moduletrade.ru',
+  credentials: true
+}));
+
+app.use(compression());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 минут
+  max: 100 // лимит 100 запросов с IP за 15 минут
+});
+app.use(limiter);
+
+// ========================================
+// IMPORT ROUTES
+// ========================================
 const authRoutes = require('./routes/auth');
 const productsRoutes = require('./routes/products');
+const ordersRoutes = require('./routes/orders');
+const analyticsRoutes = require('./routes/analytics');
+const warehousesRoutes = require('./routes/warehouses');
 const billingRoutes = require('./routes/billing');
 const syncRoutes = require('./routes/sync');
 const marketplacesRoutes = require('./routes/marketplaces');
 const suppliersRoutes = require('./routes/suppliers');
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-
 // ========================================
-// CORS КОНФИГУРАЦИЯ - ЕДИНСТВЕННОЕ МЕСТО!
-// ========================================
-const corsOptions = {
-  origin: [
-    'https://moduletrade.ru',
-    'https://app.moduletrade.ru',
-    'https://www.moduletrade.ru'
-  ],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: [
-    'Origin',
-    'X-Requested-With',
-    'Content-Type',
-    'Accept',
-    'Authorization',
-    'X-Real-IP',
-    'X-Forwarded-For',
-    'X-Forwarded-Proto'
-  ],
-  optionsSuccessStatus: 200
-};
-
-// ========================================
-// MIDDLEWARE В ПРАВИЛЬНОМ ПОРЯДКЕ
-// ========================================
-
-// Security headers
-app.use(helmet({
-  crossOriginEmbedderPolicy: false,
-  contentSecurityPolicy: false
-}));
-
-// CORS - ЕДИНСТВЕННОЕ МЕСТО УСТАНОВКИ CORS!
-app.use(cors(corsOptions));
-
-// Сжатие
-app.use(compression());
-
-// Парсинг JSON и URL
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-// Логирование
-app.use(morgan('combined'));
-
-// ========================================
-// HEALTH CHECK - БЕЗ PREFIX
-// ========================================
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    version: '1.0.0',
-    environment: process.env.NODE_ENV || 'development'
-  });
-});
-
-// ========================================
-// API ROUTES - БЕЗ /api PREFIX!
-// ========================================
-// Важно: nginx убирает /api из пути, поэтому здесь routes без префикса
-
-app.use('/auth', authRoutes);
-app.use('/products', productsRoutes);
-app.use('/billing', billingRoutes);
-app.use('/sync', syncRoutes);
-app.use('/marketplaces', marketplacesRoutes);
-app.use('/suppliers', suppliersRoutes);
-
-// ========================================
-// RATE LIMITING (после основных routes)
-// ========================================
-app.use(rateLimiter(100, 60000)); // 100 запросов в минуту
-
-// ========================================
-// DEBUG MIDDLEWARE - для отслеживания запросов
+// DEBUG MIDDLEWARE - ДО МАРШРУТОВ!
 // ========================================
 app.use((req, res, next) => {
   console.log(`🔍 ${new Date().toISOString()} - ${req.method} ${req.path}`);
@@ -121,31 +71,92 @@ app.use((req, res, next) => {
 });
 
 // ========================================
-// TEST ENDPOINTS для диагностики
+// API ROUTES - С ПРЕФИКСОМ /api
+// ========================================
+app.use('/api/auth', authRoutes);
+app.use('/api/products', productsRoutes);
+app.use('/api/orders', ordersRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/warehouses', warehousesRoutes);
+app.use('/api/billing', billingRoutes);
+app.use('/api/sync', syncRoutes);
+app.use('/api/marketplaces', marketplacesRoutes);
+app.use('/api/suppliers', suppliersRoutes);
+
+// ========================================
+// LEGACY ROUTES (БЕЗ ПРЕФИКСА) - для обратной совместимости
+// ========================================
+app.use('/auth', authRoutes);
+app.use('/products', productsRoutes);
+app.use('/orders', ordersRoutes);
+app.use('/analytics', analyticsRoutes);
+app.use('/warehouses', warehousesRoutes);
+app.use('/billing', billingRoutes);
+app.use('/sync', syncRoutes);
+app.use('/marketplaces', marketplacesRoutes);
+app.use('/suppliers', suppliersRoutes);
+
+// ========================================
+// HEALTH CHECK
+// ========================================
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+// ========================================
+// TEST ENDPOINTS
 // ========================================
 app.get('/test', (req, res) => {
   res.json({
     message: 'Backend is working!',
     timestamp: new Date().toISOString(),
-    headers: req.headers
+    available_routes: [
+      '/api/auth',
+      '/api/products',
+      '/api/orders',
+      '/api/analytics',
+      '/api/billing',
+      '/api/sync',
+      '/api/marketplaces',
+      '/api/suppliers'
+    ]
   });
 });
 
-app.post('/test-auth', (req, res) => {
+app.get('/api/test', (req, res) => {
   res.json({
-    message: 'Auth endpoint accessible',
-    body: req.body,
-    timestamp: new Date().toISOString()
+    message: 'API Backend is working!',
+    timestamp: new Date().toISOString(),
+    available_routes: [
+      '/api/auth',
+      '/api/products',
+      '/api/orders',
+      '/api/analytics',
+      '/api/billing',
+      '/api/sync',
+      '/api/marketplaces',
+      '/api/suppliers'
+    ]
   });
 });
 
 // ========================================
-// ERROR HANDLING MIDDLEWARE
+// ERROR HANDLING
 // ========================================
 app.use((err, req, res, next) => {
   console.error('🚨 Global error handler:', err);
-
-  // НЕ УСТАНАВЛИВАЕМ CORS headers здесь - middleware уже их установил!
 
   res.status(err.status || 500).json({
     success: false,
@@ -160,100 +171,67 @@ app.use((err, req, res, next) => {
 app.use((req, res) => {
   console.log(`❌ 404 - Route not found: ${req.method} ${req.path}`);
 
-  // НЕ УСТАНАВЛИВАЕМ CORS headers здесь - middleware уже их установил!
-
   res.status(404).json({
     success: false,
     error: 'Route not found',
     path: req.path,
     method: req.method,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    available_routes: [
+      '/api/auth',
+      '/api/products', 
+      '/api/orders',
+      '/api/analytics',
+      '/api/billing',
+      '/api/sync',
+      '/api/marketplaces',
+      '/api/suppliers'
+    ]
   });
 });
 
 // ========================================
-// INITIALIZE SERVICES
+// SERVER STARTUP
 // ========================================
-async function initializeServices() {
-  try {
-    console.log('🚀 Initializing services...');
+const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
 
-    // Connect to RabbitMQ (может быть недоступен в некоторых окружениях)
-    try {
-      await rabbitmq.connect();
-      console.log('✅ RabbitMQ connected successfully');
-    } catch (error) {
-      console.warn('⚠️ RabbitMQ connection failed:', error.message);
-    }
-
-    // Initialize services
-    try {
-      const billingService = new BillingService();
-      await billingService.initializeTariffs();
-      console.log('✅ BillingService initialized successfully');
-    } catch (error) {
-      console.warn('⚠️ BillingService initialization failed:', error.message);
-    }
-
-    const syncService = new SyncService();
-    const pimService = new PIMService();
-
-    console.log('✅ SyncService ready');
-    console.log('✅ PIMService ready');
-    console.log('✅ All services initialized successfully');
-
-  } catch (error) {
-    console.error('🚨 Service initialization error:', error);
-    // Не завершаем процесс, продолжаем работу без некоторых сервисов
-  }
-}
-
-// ========================================
-// START SERVER
-// ========================================
 async function startServer() {
   try {
-    // Инициализируем сервисы
-    await initializeServices();
+    // Инициализация базы данных
+    console.log('🚀 Initializing services...');
+    
+    const db = new DatabaseManager();
+    await db.initialize();
+    console.log('✅ Database initialized');
 
-    // Запускаем сервер
-    app.listen(PORT, '0.0.0.0', () => {
+    // Запуск сервера
+    app.listen(PORT, HOST, () => {
       console.log('🎉 ========================================');
-      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`🚀 Server running on ${HOST}:${PORT}`);
       console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`🔗 Health check: http://localhost:${PORT}/health`);
-      console.log(`🔗 API test: http://localhost:${PORT}/test`);
+      console.log(`🔗 Health check: http://${HOST}:${PORT}/health`);
+      console.log(`🔗 API Health check: http://${HOST}:${PORT}/api/health`);
+      console.log(`🔗 API test: http://${HOST}:${PORT}/api/test`);
+      console.log('📋 Available API routes:');
+      console.log('   - /api/auth/* (authentication)');
+      console.log('   - /api/products/* (products management)');
+      console.log('   - /api/orders/* (orders management)');
+      console.log('   - /api/analytics/* (analytics & reports)');
+      console.log('   - /api/warehouses/* (warehouse management)');
+      console.log('   - /api/billing/* (billing & tariffs)');
+      console.log('   - /api/sync/* (synchronization)');
+      console.log('   - /api/marketplaces/* (marketplace integrations)');
+      console.log('   - /api/suppliers/* (supplier management)');
       console.log('🎉 ========================================');
     });
 
   } catch (error) {
-    console.error('🚨 Failed to start server:', error);
+    console.error('❌ Failed to start server:', error);
     process.exit(1);
   }
 }
 
-// Обработка сигналов завершения
-process.on('SIGINT', () => {
-  console.log('📴 Received SIGINT, shutting down gracefully...');
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  console.log('📴 Received SIGTERM, shutting down gracefully...');
-  process.exit(0);
-});
-
-// Обработка необработанных ошибок
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('🚨 Unhandled Rejection at:', promise, 'reason:', reason);
-});
-
-process.on('uncaughtException', (error) => {
-  console.error('🚨 Uncaught Exception:', error);
-  process.exit(1);
-});
-
-// Запускаем сервер
 startServer();
 
 module.exports = app;

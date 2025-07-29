@@ -65,10 +65,10 @@ const ProductDetailsPage = () => {
   const fetchDictionaries = async () => {
     try {
       const [categoriesRes, brandsRes, suppliersRes, warehousesRes] = await Promise.all([
-        axios.get('/api/dictionaries/categories'),
-        axios.get('/api/dictionaries/brands'),
-        axios.get('/api/dictionaries/suppliers'),
-        axios.get('/api/warehouses'),
+        axios.get('/dictionaries/categories'),
+        axios.get('/dictionaries/brands'),
+        axios.get('/dictionaries/suppliers'),
+        axios.get('/warehouses'),
       ]);
 
       setCategories(categoriesRes.data);
@@ -112,7 +112,7 @@ const ProductDetailsPage = () => {
   const handleSave = async (values) => {
     try {
       setLoading(true);
-      
+
       if (isNewProduct) {
         await dispatch(createProduct(values)).unwrap();
         message.success('Товар создан успешно');
@@ -133,7 +133,7 @@ const ProductDetailsPage = () => {
     try {
       const formData = new FormData();
       formData.append('image', file);
-      
+
       await axios.post(`/api/products/${id}/images`, formData);
       message.success('Изображение загружено');
       fetchProduct();
@@ -381,7 +381,7 @@ const ProductDetailsPage = () => {
                       </Text>
                     )}
                   </div>
-                  
+
                   {product?.images && product.images.length > 0 && (
                     <Image.PreviewGroup>
                       <Row gutter={[16, 16]}>

@@ -154,7 +154,7 @@ const NotificationCenter = ({ visible, onClose }) => {
   const fetchNotifications = async () => {
     try {
       setLoading(true);
-      const response = await axios.get('/api/notifications');
+      const response = await axios.get('/notifications');
       setNotifications(response.data.notifications);
       setUnreadCount(response.data.unreadCount);
     } catch (error) {
@@ -166,7 +166,7 @@ const NotificationCenter = ({ visible, onClose }) => {
 
   const fetchSettings = async () => {
     try {
-      const response = await axios.get('/api/notifications/settings');
+      const response = await axios.get('/notifications/settings');
       setSettings(response.data);
     } catch (error) {
       console.error('Error fetching notification settings:', error);

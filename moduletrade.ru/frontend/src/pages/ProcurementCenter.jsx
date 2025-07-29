@@ -115,18 +115,18 @@ const ProcurementCenter = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      
+
       const [suppliersRes] = await Promise.all([
-        axios.get('/api/suppliers')
+        axios.get('/suppliers')
       ]);
-      
+
       setSuppliers(suppliersRes.data);
 
       if (activeTab === 0) {
-        const draftsRes = await axios.get('/api/procurement/draft-orders');
+        const draftsRes = await axios.get('/procurement/draft-orders');
         setDraftOrders(draftsRes.data);
       } else {
-        const historyRes = await axios.get('/api/procurement/order-history', {
+        const historyRes = await axios.get('/procurement/order-history', {
           params: {
             search: searchQuery,
             supplier: filterSupplier,
@@ -232,8 +232,8 @@ const ProcurementCenter = () => {
 
   const handleSendOrders = async () => {
     try {
-      const ordersToSend = selectedOrders.length > 0 
-        ? selectedOrders 
+      const ordersToSend = selectedOrders.length > 0
+        ? selectedOrders
         : draftOrders.map(o => o.id);
 
       if (ordersToSend.length === 0) {
@@ -271,9 +271,9 @@ const ProcurementCenter = () => {
   const getStatusChip = (status) => {
     const statusConfig = orderStatuses.find(s => s.value === status) || orderStatuses[0];
     return (
-      <Chip 
-        label={statusConfig.label} 
-        color={statusConfig.color} 
+      <Chip
+        label={statusConfig.label}
+        color={statusConfig.color}
         size="small"
       />
     );
@@ -408,16 +408,16 @@ const ProcurementCenter = () => {
                                 </TableCell>
                                 <TableCell align="center">
                                   {item.procurement_status === 'excluded' ? (
-                                    <Chip 
-                                      label="Исключено" 
-                                      color="error" 
+                                    <Chip
+                                      label="Исключено"
+                                      color="error"
                                       size="small"
                                       icon={<BlockIcon />}
                                     />
                                   ) : (
-                                    <Chip 
-                                      label="В заказе" 
-                                      color="success" 
+                                    <Chip
+                                      label="В заказе"
+                                      color="success"
                                       size="small"
                                     />
                                   )}
@@ -566,7 +566,7 @@ const ProcurementCenter = () => {
                   {order.sent_at ? format(new Date(order.sent_at), 'dd.MM.yyyy HH:mm') : '-'}
                 </TableCell>
                 <TableCell>
-                  <Chip 
+                  <Chip
                     label={order.procurement_type === 'auto' ? 'Авто' : 'Ручная'}
                     size="small"
                     variant="outlined"
@@ -595,7 +595,7 @@ const ProcurementCenter = () => {
         <Typography variant="h4" gutterBottom>
           Центр закупок
         </Typography>
-        
+
         <Grid container spacing={3} sx={{ mb: 3 }}>
           <Grid item xs={12} md={3}>
             <Card>
@@ -621,7 +621,7 @@ const ProcurementCenter = () => {
                   <AttachMoneyIcon color="success" />
                   <Box>
                     <Typography variant="h6">
-                      {draftOrders.reduce((sum, order) => 
+                      {draftOrders.reduce((sum, order) =>
                         sum + calculateOrderTotal(order.items), 0
                       ).toLocaleString('ru-RU')} ₽
                     </Typography>
@@ -670,8 +670,8 @@ const ProcurementCenter = () => {
         </Grid>
 
         <Paper sx={{ width: '100%' }}>
-          <Tabs 
-            value={activeTab} 
+          <Tabs
+            value={activeTab}
             onChange={handleTabChange}
             indicatorColor="primary"
             textColor="primary"

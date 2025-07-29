@@ -11,7 +11,7 @@ import {
     Tooltip, Empty, Spin, Divider
 } from 'antd';
 import {
-    PlusOutlined, EditOutlined, DeleteOutlined, 
+    PlusOutlined, EditOutlined, DeleteOutlined,
     ShopOutlined, CloudOutlined, ApartmentOutlined,
     SwapOutlined, InfoCircleOutlined, ReloadOutlined,
     ArrowRightOutlined, WarningOutlined
@@ -31,12 +31,12 @@ const WarehouseManager = () => {
     const [selectedWarehouse, setSelectedWarehouse] = useState(null);
     const [form] = Form.useForm();
     const [transferForm] = Form.useForm();
-    
+
     // Состояние для управления компонентами мульти-склада
     const [availableWarehouses, setAvailableWarehouses] = useState([]);
     const [selectedComponents, setSelectedComponents] = useState([]);
     const [isComponentModalVisible, setIsComponentModalVisible] = useState(false);
-    
+
     // Статистика
     const [warehouseStats, setWarehouseStats] = useState({});
     const [movements, setMovements] = useState([]);
@@ -48,7 +48,7 @@ const WarehouseManager = () => {
     const fetchWarehouses = async () => {
         setLoading(true);
         try {
-            const response = await axios.get('/api/warehouses');
+            const response = await axios.get('/warehouses');
             setWarehouses(response.data);
         } catch (error) {
             message.error('Ошибка загрузки складов');
@@ -62,15 +62,15 @@ const WarehouseManager = () => {
             const response = await axios.get(`/api/warehouses/${warehouseId}`);
             setSelectedWarehouse(response.data);
             setWarehouseStats(response.data.statistics || {});
-            
+
             if (response.data.type === 'multi') {
                 setSelectedComponents(response.data.components?.map(c => c.source_warehouse_id) || []);
             }
-            
+
             // Загружаем историю движений
             const movementsResponse = await axios.get(`/api/warehouses/${warehouseId}/movements`);
             setMovements(movementsResponse.data);
-            
+
         } catch (error) {
             message.error('Ошибка загрузки деталей склада');
         }
@@ -116,23 +116,23 @@ const WarehouseManager = () => {
 
     const handleManageComponents = async (warehouse) => {
         setSelectedWarehouse(warehouse);
-        
+
         // Загружаем доступные склады для добавления
-        const response = await axios.get('/api/warehouses', {
+        const response = await axios.get('/warehouses', {
             params: { type: 'physical,virtual' }
         });
-        
-        const available = response.data.filter(w => 
-            w.id !== warehouse.id && 
+
+        const available = response.data.filter(w =>
+            w.id !== warehouse.id &&
             w.type !== 'multi'
         );
-        
+
         setAvailableWarehouses(available);
-        
+
         // Загружаем текущие компоненты
         const detailsResponse = await axios.get(`/api/warehouses/${warehouse.id}`);
         setSelectedComponents(detailsResponse.data.components?.map(c => c.source_warehouse_id) || []);
-        
+
         setIsComponentModalVisible(true);
     };
 
@@ -141,11 +141,11 @@ const WarehouseManager = () => {
             // Получаем текущие компоненты
             const currentResponse = await axios.get(`/api/warehouses/${selectedWarehouse.id}`);
             const currentComponents = currentResponse.data.components?.map(c => c.source_warehouse_id) || [];
-            
+
             // Определяем, какие добавить и какие удалить
             const toAdd = selectedComponents.filter(id => !currentComponents.includes(id));
             const toRemove = currentComponents.filter(id => !selectedComponents.includes(id));
-            
+
             // Добавляем новые компоненты
             for (const warehouseId of toAdd) {
                 await axios.post(`/api/warehouses/${selectedWarehouse.id}/components`, {
@@ -153,16 +153,16 @@ const WarehouseManager = () => {
                     priority: 0
                 });
             }
-            
+
             // Удаляем ненужные компоненты
             for (const warehouseId of toRemove) {
                 await axios.delete(`/api/warehouses/${selectedWarehouse.id}/components/${warehouseId}`);
             }
-            
+
             message.success('Состав мульти-склада обновлен');
             setIsComponentModalVisible(false);
             fetchWarehouses();
-            
+
         } catch (error) {
             message.error('Ошибка обновления состава склада');
         }
@@ -471,7 +471,7 @@ const WarehouseManager = () => {
                     showIcon
                     style={{ marginBottom: 16 }}
                 />
-                
+
                 <Transfer
                     dataSource={availableWarehouses}
                     titles={['Доступные склады', 'Компоненты мульти-склада']}
@@ -616,8 +616,8 @@ const WarehouseManager = () => {
                             <p><strong>Описание:</strong> {selectedWarehouse.description || '-'}</p>
                             <p><strong>Адрес:</strong> {selectedWarehouse.address || '-'}</p>
                             <p><strong>Приоритет:</strong> {selectedWarehouse.priority}</p>
-                            <p><strong>Статус:</strong> {selectedWarehouse.is_active ? 
-                                <Tag color="green">Активен</Tag> : 
+                            <p><strong>Статус:</strong> {selectedWarehouse.is_active ?
+                                <Tag color="green">Активен</Tag> :
                                 <Tag color="red">Неактивен</Tag>
                             }</p>
 

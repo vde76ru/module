@@ -49,7 +49,7 @@ router.get('/', authenticate, async (req, res) => {
             offset: parseInt(req.query.offset) || 0
         };
 
-        const products = await pimService.getProducts(req.user.tenantId, filters);
+        const products = await pimService.getAllProducts(req.user.tenantId, filters);
 
         res.json({
             success: true,
@@ -67,7 +67,7 @@ router.get('/', authenticate, async (req, res) => {
 // Получение одного товара
 router.get('/:id', authenticate, async (req, res) => {
     try {
-        const products = await pimService.getProducts(req.user.tenantId, {
+        const products = await pimService.getAllProducts(req.user.tenantId, {
             id: req.params.id,
             limit: 1
         });
@@ -96,7 +96,7 @@ router.get('/:id', authenticate, async (req, res) => {
 router.post('/', authenticate, checkPermission('products.create'), async (req, res) => {
     try {
         // Проверяем лимит тарифа
-        const currentProducts = await pimService.getProducts(req.user.tenantId, {
+        const currentProducts = await pimService.getAllProducts(req.user.tenantId, {
             source_type: 'internal'
         });
 
@@ -285,8 +285,8 @@ router.post('/:id/marketplace-mapping', authenticate, checkPermission('products.
                 product_id, marketplace_id, marketplace_product_id,
                 mapping_data, is_active
             ) VALUES ($1, $2, $3, $4, true)
-            ON CONFLICT (product_id, marketplace_id) 
-            DO UPDATE SET 
+            ON CONFLICT (product_id, marketplace_id)
+            DO UPDATE SET
                 marketplace_product_id = EXCLUDED.marketplace_product_id,
                 mapping_data = EXCLUDED.mapping_data,
                 updated_at = CURRENT_TIMESTAMP

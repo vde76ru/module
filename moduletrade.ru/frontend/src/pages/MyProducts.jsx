@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Table, Button, Input, Select, Modal, Upload, 
+import {
+  Table, Button, Input, Select, Modal, Upload,
   message, Space, Tag, Drawer, Form, InputNumber,
   Popconfirm, Tooltip, Badge
 } from 'antd';
-import { 
+import {
   PlusOutlined, UploadOutlined, DownloadOutlined,
   EditOutlined, DeleteOutlined, SyncOutlined,
   SearchOutlined, FilterOutlined
@@ -24,11 +24,11 @@ const MyProducts = () => {
     limit: 50,
     offset: 0
   });
-  
+
   const [isDrawerVisible, setIsDrawerVisible] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const [form] = Form.useForm();
-  
+
   const [isImportModalVisible, setIsImportModalVisible] = useState(false);
   const [fileList, setFileList] = useState([]);
   const [importing, setImporting] = useState(false);
@@ -40,7 +40,7 @@ const MyProducts = () => {
   const fetchProducts = async () => {
     setLoading(true);
     try {
-      const response = await axios.get('/api/products', { params: filters });
+      const response = await axios.get('/products', { params: filters });
       setProducts(response.data.data.items);
       setTotal(response.data.data.total);
     } catch (error) {
@@ -54,8 +54,8 @@ const MyProducts = () => {
   const fetchDictionaries = async () => {
     try {
       const [brandsRes, categoriesRes] = await Promise.all([
-        axios.get('/api/dictionaries/brands'),
-        axios.get('/api/dictionaries/categories')
+        axios.get('/dictionaries/brands'),
+        axios.get('/dictionaries/categories')
       ]);
       setBrands(brandsRes.data.data);
       setCategories(categoriesRes.data.data);
@@ -117,7 +117,7 @@ const MyProducts = () => {
       message.success(`Импорт запущен. Обрабатывается ${response.data.data.total} товаров`);
       setIsImportModalVisible(false);
       setFileList([]);
-      
+
       // Обновляем список через несколько секунд
       setTimeout(() => fetchProducts(), 3000);
     } catch (error) {
@@ -325,9 +325,9 @@ const MyProducts = () => {
           total,
           pageSize: filters.limit,
           current: (filters.offset / filters.limit) + 1,
-          onChange: (page) => setFilters({ 
-            ...filters, 
-            offset: (page - 1) * filters.limit 
+          onChange: (page) => setFilters({
+            ...filters,
+            offset: (page - 1) * filters.limit
           }),
           showSizeChanger: true,
           showTotal: (total) => `Всего: ${total} товаров`
@@ -371,7 +371,7 @@ const MyProducts = () => {
           >
             <Input />
           </Form.Item>
-          
+
           <Form.Item
             name="name"
             label="Название"
@@ -379,7 +379,7 @@ const MyProducts = () => {
           >
             <Input />
           </Form.Item>
-          
+
           <Form.Item
             name="brand_id"
             label="Бренд"
@@ -392,7 +392,7 @@ const MyProducts = () => {
               ))}
             </Select>
           </Form.Item>
-          
+
           <Form.Item
             name="category_id"
             label="Категория"
@@ -405,7 +405,7 @@ const MyProducts = () => {
               ))}
             </Select>
           </Form.Item>
-          
+
           <Form.Item
             name="quantity"
             label="Остаток"
@@ -413,20 +413,20 @@ const MyProducts = () => {
           >
             <InputNumber min={0} style={{ width: '100%' }} />
           </Form.Item>
-          
+
           <Form.Item
             name="price"
             label="Цена"
             rules={[{ required: true, message: 'Введите цену' }]}
           >
-            <InputNumber 
-              min={0} 
+            <InputNumber
+              min={0}
               style={{ width: '100%' }}
               formatter={value => `₽ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
               parser={value => value.replace(/\₽\s?|(,*)/g, '')}
             />
           </Form.Item>
-          
+
           <Form.Item
             name="is_active"
             label="Статус"

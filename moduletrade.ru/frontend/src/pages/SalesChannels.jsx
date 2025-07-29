@@ -93,9 +93,9 @@ const SalesChannels = () => {
     try {
       setLoading(true);
       const [channelsRes, warehousesRes, marketplacesRes] = await Promise.all([
-        axios.get('/api/sales-channels'),
-        axios.get('/api/warehouses'),
-        axios.get('/api/marketplaces')
+        axios.get('/sales-channels'),
+        axios.get('/warehouses'),
+        axios.get('/marketplaces')
       ]);
 
       setChannels(channelsRes.data);
@@ -171,7 +171,7 @@ const SalesChannels = () => {
     const newDays = currentDays.includes(day)
       ? currentDays.filter(d => d !== day)
       : [...currentDays, day];
-    
+
     handleScheduleChange('days', newDays);
   };
 
@@ -198,8 +198,8 @@ const SalesChannels = () => {
       handleCloseDialog();
       fetchData();
     } catch (error) {
-      enqueueSnackbar(error.response?.data?.message || 'Ошибка сохранения', { 
-        variant: 'error' 
+      enqueueSnackbar(error.response?.data?.message || 'Ошибка сохранения', {
+        variant: 'error'
       });
     }
   };
@@ -212,8 +212,8 @@ const SalesChannels = () => {
       setSelectedChannel(null);
       fetchData();
     } catch (error) {
-      enqueueSnackbar(error.response?.data?.message || 'Ошибка удаления', { 
-        variant: 'error' 
+      enqueueSnackbar(error.response?.data?.message || 'Ошибка удаления', {
+        variant: 'error'
       });
     }
   };
@@ -535,7 +535,7 @@ const SalesChannels = () => {
             Вы уверены, что хотите удалить канал продаж "{selectedChannel?.name}"?
           </Typography>
           <Alert severity="warning" sx={{ mt: 2 }}>
-            Все заказы, связанные с этим каналом, останутся в системе, но не будут 
+            Все заказы, связанные с этим каналом, останутся в системе, но не будут
             привязаны к каналу продаж.
           </Alert>
         </DialogContent>

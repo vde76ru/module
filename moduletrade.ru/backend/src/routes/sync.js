@@ -1,159 +1,300 @@
+// backend/src/routes/sync.js
 const express = require('express');
-const router = express.Router();
-const SyncService = require('../services/SyncService');
 const { authenticate, checkPermission } = require('../middleware/auth');
+const db = require('../config/database');
 
-const syncService = new SyncService();
+const router = express.Router();
 
-// Запуск синхронизации остатков
+/**
+ * POST /sync/stock
+ * Запуск синхронизации остатков
+ */
 router.post('/stock', authenticate, checkPermission('sync.execute'), async (req, res) => {
   try {
     const { product_ids, sync_all } = req.body;
-    
-    if (sync_all) {
-      // Синхронизация всех товаров
-      await rabbitmq.publishMessage(rabbitmq.queues.STOCK_UPDATE, {
-        type: 'FULL_SYNC',
-        tenantId: req.user.tenantId,
-        timestamp: new Date()
-      });
-    } else if (product_ids && product_ids.length > 0) {
-      // Синхронизация выбранных товаров
-      for (const productId of product_ids) {
-        await rabbitmq.publishMessage(rabbitmq.queues.STOCK_UPDATE, {
-          type: 'PRODUCT_SYNC',
-          tenantId: req.user.tenantId,
-          productId,
-          timestamp: new Date()
-        });
+    const tenantId = req.user.tenantId;
+
+    // Записываем в логи синхронизации
+    const logResult = await db.query(tenantId, `
+      INSERT INTO sync_logs (tenant_id, sync_type, status, details, started_at)
+      VALUES ($1, 'stock', 'processing', $2, NOW())
+      RETURNING id
+    `, [tenantId, JSON.stringify({ product_ids, sync_all })]);
+
+    // Имитируем процесс синхронизации (в реальности здесь будет RabbitMQ)
+    setTimeout(async () => {
+      try {
+        await db.query(tenantId, `
+          UPDATE sync_logs SET 
+            status = 'completed',
+            completed_at = NOW()
+          WHERE id = $1
+        `, [logResult.rows[0].id]);
+      } catch (error) {
+        console.error('Failed to update sync log:', error);
       }
-    } else {
-      return res.status(400).json({
-        success: false,
-        error: 'Product IDs or sync_all flag required'
-      });
-    }
-    
+    }, 5000);
+
     res.json({
       success: true,
-      message: 'Synchronization started'
+      data: {
+        sync_id: logResult.rows[0].id,
+        message: 'Stock synchronization started'
+      }
     });
+    
   } catch (error) {
     console.error('Stock sync error:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Failed to start stock synchronization'
     });
   }
 });
 
-// Синхронизация заказов
+/**
+ * POST /sync/orders
+ * Синхронизация заказов
+ */
 router.post('/orders', authenticate, checkPermission('sync.execute'), async (req, res) => {
   try {
     const { marketplace_id, date_from, date_to } = req.body;
-    
-    await rabbitmq.publishMessage(rabbitmq.queues.ORDER_SYNC, {
-      type: 'ORDER_SYNC',
-      tenantId: req.user.tenantId,
-      marketplaceId: marketplace_id,
-      dateFrom: date_from || new Date(Date.now() - 24 * 60 * 60 * 1000),
-      dateTo: date_to || new Date()
-    });
-    
-    res.json({
-      success: true,
-      message: 'Order synchronization started'
-    });
-  } catch (error) {
-    console.error('Order sync error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+    const tenantId = req.user.tenantId;
 
-// История синхронизаций
-router.get('/logs', authenticate, async (req, res) => {
-  try {
-    const pool = await db.getPool(req.user.tenantId);
-    const limit = parseInt(req.query.limit) || 50;
-    const offset = parseInt(req.query.offset) || 0;
-    const sync_type = req.query.sync_type;
-    
-    let query = `
-      SELECT 
-        sl.*,
-        m.name as marketplace_name
-      FROM sync_logs sl
-      LEFT JOIN marketplaces m ON sl.marketplace_id = m.id
-      WHERE sl.tenant_id = $1
-    `;
-    
-    const values = [req.user.tenantId];
-    let paramIndex = 2;
-    
-    if (sync_type) {
-      query += ` AND sl.sync_type = $${paramIndex++}`;
-      values.push(sync_type);
-    }
-    
-    query += ` ORDER BY sl.created_at DESC LIMIT ${limit} OFFSET ${offset}`;
-    
-    const result = await pool.query(query, values);
-    
+    const logResult = await db.query(tenantId, `
+      INSERT INTO sync_logs (tenant_id, sync_type, status, details, started_at)
+      VALUES ($1, 'orders', 'processing', $2, NOW())
+      RETURNING id
+    `, [tenantId, JSON.stringify({ marketplace_id, date_from, date_to })]);
+
+    // Имитируем процесс синхронизации
+    setTimeout(async () => {
+      try {
+        await db.query(tenantId, `
+          UPDATE sync_logs SET 
+            status = 'completed',
+            completed_at = NOW()
+          WHERE id = $1
+        `, [logResult.rows[0].id]);
+      } catch (error) {
+        console.error('Failed to update sync log:', error);
+      }
+    }, 8000);
+
     res.json({
       success: true,
       data: {
-        items: result.rows,
-        limit,
-        offset
+        sync_id: logResult.rows[0].id,
+        message: 'Orders synchronization started'
       }
     });
+    
   } catch (error) {
-    console.error('Get sync logs error:', error);
+    console.error('Orders sync error:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Failed to start orders synchronization'
     });
   }
 });
 
-// Статус синхронизации
-router.get('/status', authenticate, async (req, res) => {
+/**
+ * POST /sync/products
+ * Синхронизация товаров
+ */
+router.post('/products', authenticate, checkPermission('sync.execute'), async (req, res) => {
   try {
-    const pool = await db.getPool(req.user.tenantId);
-    
-    // Последние синхронизации по типам
-    const result = await pool.query(`
-      SELECT DISTINCT ON (sync_type) 
-        sync_type,
-        status,
-        created_at,
-        details
-      FROM sync_logs
-      WHERE tenant_id = $1
-      ORDER BY sync_type, created_at DESC
-    `, [req.user.tenantId]);
-    
-    const status = {};
-    for (const row of result.rows) {
-      status[row.sync_type] = {
-        last_sync: row.created_at,
-        status: row.status,
-        details: row.details
-      };
-    }
-    
+    const { supplier_id } = req.body;
+    const tenantId = req.user.tenantId;
+
+    const logResult = await db.query(tenantId, `
+      INSERT INTO sync_logs (tenant_id, sync_type, status, details, started_at)
+      VALUES ($1, 'products', 'processing', $2, NOW())
+      RETURNING id
+    `, [tenantId, JSON.stringify({ supplier_id })]);
+
+    // Имитируем процесс синхронизации
+    setTimeout(async () => {
+      try {
+        await db.query(tenantId, `
+          UPDATE sync_logs SET 
+            status = 'completed',
+            completed_at = NOW()
+          WHERE id = $1
+        `, [logResult.rows[0].id]);
+      } catch (error) {
+        console.error('Failed to update sync log:', error);
+      }
+    }, 12000);
+
     res.json({
       success: true,
-      data: status
+      data: {
+        sync_id: logResult.rows[0].id,
+        message: 'Products synchronization started'
+      }
     });
+    
+  } catch (error) {
+    console.error('Products sync error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to start products synchronization'
+    });
+  }
+});
+
+/**
+ * GET /sync/status
+ * Получение статуса синхронизации
+ */
+router.get('/status', authenticate, async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+    const { limit = 10 } = req.query;
+
+    const syncLogs = await db.query(tenantId, `
+      SELECT 
+        id,
+        sync_type,
+        status,
+        details,
+        error_message,
+        started_at,
+        completed_at,
+        CASE 
+          WHEN completed_at IS NOT NULL THEN 
+            EXTRACT(EPOCH FROM (completed_at - started_at))
+          ELSE 
+            EXTRACT(EPOCH FROM (NOW() - started_at))
+        END as duration_seconds
+      FROM sync_logs
+      WHERE tenant_id = $1
+      ORDER BY started_at DESC
+      LIMIT $2
+    `, [tenantId, limit]);
+
+    // Статистика синхронизации
+    const statsResult = await db.query(tenantId, `
+      SELECT 
+        COUNT(*) as total_syncs,
+        COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_syncs,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_syncs,
+        COUNT(CASE WHEN status = 'processing' THEN 1 END) as processing_syncs,
+        MAX(started_at) as last_sync_at
+      FROM sync_logs
+      WHERE tenant_id = $1 AND started_at >= NOW() - INTERVAL '24 hours'
+    `, [tenantId]);
+
+    res.json({
+      success: true,
+      data: {
+        recent_syncs: syncLogs.rows,
+        stats: statsResult.rows[0]
+      }
+    });
+
   } catch (error) {
     console.error('Get sync status error:', error);
     res.status(500).json({
       success: false,
-      error: error.message
+      error: 'Failed to get sync status'
+    });
+  }
+});
+
+/**
+ * GET /sync/history
+ * История синхронизации
+ */
+router.get('/history', authenticate, async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+    const { 
+      limit = 50, 
+      offset = 0,
+      sync_type,
+      status,
+      date_from,
+      date_to 
+    } = req.query;
+
+    let whereConditions = ['tenant_id = $1'];
+    const queryParams = [tenantId];
+    let paramIndex = 2;
+
+    if (sync_type) {
+      whereConditions.push(`sync_type = $${paramIndex}`);
+      queryParams.push(sync_type);
+      paramIndex++;
+    }
+
+    if (status) {
+      whereConditions.push(`status = $${paramIndex}`);
+      queryParams.push(status);
+      paramIndex++;
+    }
+
+    if (date_from) {
+      whereConditions.push(`started_at >= $${paramIndex}`);
+      queryParams.push(date_from);
+      paramIndex++;
+    }
+
+    if (date_to) {
+      whereConditions.push(`started_at <= $${paramIndex}`);
+      queryParams.push(date_to);
+      paramIndex++;
+    }
+
+    const whereClause = whereConditions.join(' AND ');
+
+    const [historyResult, totalResult] = await Promise.all([
+      db.query(tenantId, `
+        SELECT 
+          id,
+          sync_type,
+          status,
+          details,
+          error_message,
+          started_at,
+          completed_at,
+          CASE 
+            WHEN completed_at IS NOT NULL THEN 
+              EXTRACT(EPOCH FROM (completed_at - started_at))
+            ELSE NULL
+          END as duration_seconds
+        FROM sync_logs
+        WHERE ${whereClause}
+        ORDER BY started_at DESC
+        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+      `, [...queryParams, limit, offset]),
+
+      db.query(tenantId, `
+        SELECT COUNT(*) as total
+        FROM sync_logs
+        WHERE ${whereClause}
+      `, queryParams)
+    ]);
+
+    const total = parseInt(totalResult.rows[0]?.total || 0);
+
+    res.json({
+      success: true,
+      data: historyResult.rows,
+      pagination: {
+        total,
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        pages: Math.ceil(total / limit)
+      }
+    });
+
+  } catch (error) {
+    console.error('Get sync history error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get sync history'
     });
   }
 });

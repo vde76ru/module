@@ -70,9 +70,9 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
   const fetchDictionaries = async () => {
     try {
       const [categoriesRes, brandsRes, suppliersRes] = await Promise.all([
-        axios.get('/api/dictionaries/categories'),
-        axios.get('/api/dictionaries/brands'),
-        axios.get('/api/dictionaries/suppliers')
+        axios.get('/dictionaries/categories'),
+        axios.get('/dictionaries/brands'),
+        axios.get('/dictionaries/suppliers')
       ]);
 
       setCategories(categoriesRes.data);
@@ -156,7 +156,7 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
   };
 
   const updateAttribute = (id, field, value) => {
-    setAttributes(attributes.map(attr => 
+    setAttributes(attributes.map(attr =>
       attr.id === id ? { ...attr, [field]: value } : attr
     ));
   };
@@ -177,7 +177,7 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
   };
 
   const updateSupplierPrice = (id, field, value) => {
-    setSupplierPrices(supplierPrices.map(price => 
+    setSupplierPrices(supplierPrices.map(price =>
       price.id === id ? { ...price, [field]: value } : price
     ));
   };

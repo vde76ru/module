@@ -1,505 +1,400 @@
 // backend/src/services/PIMService.js
-const db = require('../models');
-const { Op, Sequelize } = require('sequelize');
-const WarehouseService = require('./WarehouseService');
-const NormalizationService = require('./NormalizationService');
-const PriceCalculationService = require('./PriceCalculationService');
-const { parseStringPromise } = require('xml2js');
-const csv = require('csv-parser');
-const fs = require('fs');
-const path = require('path');
+const db = require('../config/database');
+const logger = require('../utils/logger');
+const { v4: uuidv4 } = require('uuid');
 
-/**
- * PIMService - Сервис управления товарами
- * Полностью переработан для работы с новой архитектурой складов и цен
- * Все операции со складами делегируются в WarehouseService
- */
 class PIMService {
-  
   /**
-   * Обработка очереди импорта товаров
-   * ДОБАВЛЕН НЕДОСТАЮЩИЙ МЕТОД
+   * Получение всех товаров с фильтрацией
    */
-  async processImportQueue() {
+  async getAllProducts(tenantId, options = {}) {
     try {
-      console.log('Starting import queue processor...');
-      
-      // Здесь можно добавить обработчик очереди импорта
-      // для асинхронной обработки загруженных файлов
-      
-      // Пример инициализации обработчика очереди
-      // this.setupImportQueueWorker();
-      
-      console.log('Import queue processor started successfully');
-      return true;
+      const {
+        limit = 50,
+        offset = 0,
+        search = '',
+        source_type = 'all',
+        low_stock = false,
+        category_id = null,
+        brand_id = null,
+        is_active = null
+      } = options;
+
+      let whereConditions = ['p.tenant_id = $1'];
+      const queryParams = [tenantId];
+      let paramIndex = 2;
+
+      // Поиск по названию или артикулу
+      if (search) {
+        whereConditions.push(`(p.name ILIKE $${paramIndex} OR p.internal_code ILIKE $${paramIndex})`);
+        queryParams.push(`%${search}%`);
+        paramIndex++;
+      }
+
+      // Фильтр по типу источника
+      if (source_type && source_type !== 'all') {
+        whereConditions.push(`p.source_type = $${paramIndex}`);
+        queryParams.push(source_type);
+        paramIndex++;
+      }
+
+      // Фильтр по категории
+      if (category_id) {
+        whereConditions.push(`p.category_id = $${paramIndex}`);
+        queryParams.push(category_id);
+        paramIndex++;
+      }
+
+      // Фильтр по бренду
+      if (brand_id) {
+        whereConditions.push(`p.brand_id = $${paramIndex}`);
+        queryParams.push(brand_id);
+        paramIndex++;
+      }
+
+      // Фильтр по активности
+      if (is_active !== null) {
+        whereConditions.push(`p.is_active = $${paramIndex}`);
+        queryParams.push(is_active);
+        paramIndex++;
+      }
+
+      const whereClause = whereConditions.join(' AND ');
+
+      // Основной запрос
+      let query = `
+        SELECT 
+          p.id,
+          p.internal_code,
+          p.name,
+          p.source_type,
+          p.is_active,
+          p.base_unit,
+          p.popularity_score,
+          p.weight,
+          p.created_at,
+          p.updated_at,
+          b.canonical_name as brand_name,
+          c.canonical_name as category_name,
+          COALESCE(stock.total_stock, 0) as total_stock,
+          COALESCE(suppliers.suppliers_count, 0) as suppliers_count,
+          COALESCE(suppliers.min_price, 0) as min_price
+        FROM products p
+        LEFT JOIN brands b ON p.brand_id = b.id
+        LEFT JOIN categories c ON p.category_id = c.id
+        LEFT JOIN (
+          SELECT 
+            product_id, 
+            SUM(quantity) as total_stock 
+          FROM warehouse_product_links 
+          GROUP BY product_id
+        ) stock ON p.id = stock.product_id
+        LEFT JOIN (
+          SELECT 
+            product_id,
+            COUNT(*) as suppliers_count,
+            MIN(normalized_price) as min_price
+          FROM product_suppliers
+          WHERE quantity > 0
+          GROUP BY product_id
+        ) suppliers ON p.id = suppliers.product_id
+        WHERE ${whereClause}
+      `;
+
+      // Добавляем фильтр по низким остаткам
+      if (low_stock) {
+        query += ` AND COALESCE(stock.total_stock, 0) <= 10`;
+      }
+
+      query += ` ORDER BY p.updated_at DESC`;
+
+      // Добавляем LIMIT и OFFSET
+      query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      queryParams.push(limit, offset);
+
+      const result = await db.query(tenantId, query, queryParams);
+
+      // Запрос для подсчета общего количества
+      let countQuery = `
+        SELECT COUNT(*) as total
+        FROM products p
+        LEFT JOIN (
+          SELECT 
+            product_id, 
+            SUM(quantity) as total_stock 
+          FROM warehouse_product_links 
+          GROUP BY product_id
+        ) stock ON p.id = stock.product_id
+        WHERE ${whereClause}
+      `;
+
+      if (low_stock) {
+        countQuery += ` AND COALESCE(stock.total_stock, 0) <= 10`;
+      }
+
+      const countResult = await db.query(tenantId, countQuery, queryParams.slice(0, -2));
+      const total = parseInt(countResult.rows[0]?.total || 0);
+
+      return {
+        data: result.rows,
+        pagination: {
+          total,
+          limit,
+          offset,
+          pages: Math.ceil(total / limit)
+        }
+      };
+
     } catch (error) {
-      console.error('Error starting import queue processor:', error);
-      throw error;
-    }
-  }
-  /**
-   * Обработка очереди импорта товаров
-   */
-  async processImportQueue() {
-    try {
-      console.log('Starting import queue processor...');
-      
-      // Здесь можно добавить обработчик очереди импорта
-      // для асинхронной обработки загруженных файлов
-      
-      console.log('Import queue processor started successfully');
-      return true;
-    } catch (error) {
-      console.error('Error starting import queue processor:', error);
+      logger.error('Error in getAllProducts:', error);
       throw error;
     }
   }
 
   /**
-   * Настройка воркера для обработки очереди импорта
-   * Дополнительный метод для будущего расширения
+   * Получение товара по ID
    */
-  async setupImportQueueWorker() {
-    // Будущая реализация RabbitMQ воркера для обработки импорта
-    console.log('Setting up import queue worker...');
+  async getProductById(tenantId, productId) {
+    try {
+      const query = `
+        SELECT 
+          p.*,
+          b.canonical_name as brand_name,
+          c.canonical_name as category_name,
+          s.name as main_supplier_name
+        FROM products p
+        LEFT JOIN brands b ON p.brand_id = b.id
+        LEFT JOIN categories c ON p.category_id = c.id
+        LEFT JOIN suppliers s ON p.main_supplier_id = s.id
+        WHERE p.id = $1 AND p.tenant_id = $2
+      `;
+
+      const result = await db.query(tenantId, query, [productId, tenantId]);
+      
+      if (result.rows.length === 0) {
+        return null;
+      }
+
+      const product = result.rows[0];
+
+      // Получаем информацию о поставщиках
+      const suppliersQuery = `
+        SELECT 
+          ps.*,
+          s.name as supplier_name
+        FROM product_suppliers ps
+        JOIN suppliers s ON ps.supplier_id = s.id
+        WHERE ps.product_id = $1
+        ORDER BY ps.normalized_price ASC
+      `;
+
+      const suppliersResult = await db.query(tenantId, suppliersQuery, [productId]);
+      product.suppliers = suppliersResult.rows;
+
+      // Получаем информацию о складских остатках
+      const stockQuery = `
+        SELECT 
+          wpl.*,
+          w.name as warehouse_name
+        FROM warehouse_product_links wpl
+        JOIN warehouses w ON wpl.warehouse_id = w.id
+        WHERE wpl.product_id = $1
+        ORDER BY w.priority DESC
+      `;
+
+      const stockResult = await db.query(tenantId, stockQuery, [productId]);
+      product.stock = stockResult.rows;
+
+      return product;
+
+    } catch (error) {
+      logger.error('Error in getProductById:', error);
+      throw error;
+    }
   }
 
   /**
    * Создание нового товара
-   * @param {Object} productData - Данные товара
-   * @param {Object} warehouseData - Данные для складов (остатки и цены)
-   * @returns {Promise<Object>} Созданный товар
    */
-  async createProduct(productData, warehouseData = []) {
-    const transaction = await db.sequelize.transaction();
-    
+  async createProduct(tenantId, productData, userId) {
     try {
-      // Создаем основную запись товара
-      const product = await db.Product.create({
-        sku: productData.sku,
-        name: productData.name,
-        description: productData.description,
-        category_id: productData.category_id,
-        brand_id: productData.brand_id,
-        weight: productData.weight,
-        length: productData.length,
-        width: productData.width,
-        height: productData.height,
-        images: productData.images || [],
-        attributes: productData.attributes || {},
-        barcode: productData.barcode,
-        status: productData.status || 'active',
-        created_by: productData.created_by
-      }, { transaction });
+      const productId = uuidv4();
 
-      // Если переданы данные по складам, создаем связи через WarehouseService
-      if (warehouseData && warehouseData.length > 0) {
-        for (const warehouse of warehouseData) {
-          // Нормализуем данные перед сохранением
-          const normalizedData = await this._normalizeWarehouseData(warehouse);
-          
-          await WarehouseService.updateProductStock(
-            warehouse.warehouse_id,
-            product.id,
-            normalizedData.stock,
-            normalizedData.reserved || 0,
-            normalizedData.purchase_price,
-            transaction
-          );
-        }
-      }
+      const query = `
+        INSERT INTO products (
+          id, tenant_id, internal_code, name, brand_id, category_id,
+          attributes, source_type, base_unit, is_divisible, 
+          min_order_quantity, weight, volume, dimensions,
+          created_at, updated_at
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
+          CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+        ) RETURNING *
+      `;
 
-      await transaction.commit();
-      return product;
+      const values = [
+        productId,
+        tenantId,
+        productData.internal_code,
+        productData.name,
+        productData.brand_id || null,
+        productData.category_id || null,
+        JSON.stringify(productData.attributes || {}),
+        productData.source_type || 'manual',
+        productData.base_unit || 'шт',
+        productData.is_divisible !== false,
+        productData.min_order_quantity || 1,
+        productData.weight || null,
+        productData.volume || null,
+        JSON.stringify(productData.dimensions || {})
+      ];
+
+      const result = await db.query(tenantId, query, values);
+      
+      logger.info(`Product created: ${productId} by user ${userId}`);
+      
+      return result.rows[0];
+
     } catch (error) {
-      await transaction.rollback();
+      logger.error('Error in createProduct:', error);
       throw error;
     }
   }
 
   /**
-   * Получение списка товаров с фильтрацией
-   * @param {string} tenantId - ID тенанта
-   * @param {Object} filters - Фильтры
-   * @returns {Promise<Object>} Список товаров
-   */
-  async getProducts(tenantId, filters = {}) {
-    const where = { tenant_id: tenantId };
-    const include = [];
-
-    // Применяем фильтры
-    if (filters.source_type) {
-      where.source_type = filters.source_type;
-    }
-
-    if (filters.brand_id) {
-      where.brand_id = filters.brand_id;
-    }
-
-    if (filters.category_id) {
-      where.category_id = filters.category_id;
-    }
-
-    if (filters.is_active !== undefined) {
-      where.is_active = filters.is_active;
-    }
-
-    if (filters.search) {
-      where[Op.or] = [
-        { name: { [Op.iLike]: `%${filters.search}%` } },
-        { sku: { [Op.iLike]: `%${filters.search}%` } },
-        { description: { [Op.iLike]: `%${filters.search}%` } }
-      ];
-    }
-
-    // Добавляем связанные данные
-    include.push(
-      { model: db.Brand, as: 'brand' },
-      { model: db.Category, as: 'category' }
-    );
-
-    const { count, rows } = await db.Product.findAndCountAll({
-      where,
-      include,
-      limit: filters.limit || 50,
-      offset: filters.offset || 0,
-      order: [['created_at', 'DESC']]
-    });
-
-    return {
-      items: rows,
-      total: count,
-      limit: filters.limit || 50,
-      offset: filters.offset || 0
-    };
-  }
-
-  /**
    * Обновление товара
-   * @param {string} tenantId - ID тенанта
-   * @param {string} productId - ID товара
-   * @param {Object} updateData - Данные для обновления
-   * @returns {Promise<Object>} Обновленный товар
    */
-  async updateProduct(tenantId, productId, updateData) {
-    const transaction = await db.sequelize.transaction();
-    
+  async updateProduct(tenantId, productId, productData, userId) {
     try {
-      const product = await db.Product.findOne({
-        where: { id: productId, tenant_id: tenantId },
-        transaction
-      });
+      const query = `
+        UPDATE products SET
+          name = $3,
+          brand_id = $4,
+          category_id = $5,
+          attributes = $6,
+          base_unit = $7,
+          is_divisible = $8,
+          min_order_quantity = $9,
+          weight = $10,
+          volume = $11,
+          dimensions = $12,
+          is_active = $13,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1 AND tenant_id = $2
+        RETURNING *
+      `;
 
-      if (!product) {
+      const values = [
+        productId,
+        tenantId,
+        productData.name,
+        productData.brand_id || null,
+        productData.category_id || null,
+        JSON.stringify(productData.attributes || {}),
+        productData.base_unit || 'шт',
+        productData.is_divisible !== false,
+        productData.min_order_quantity || 1,
+        productData.weight || null,
+        productData.volume || null,
+        JSON.stringify(productData.dimensions || {}),
+        productData.is_active !== false
+      ];
+
+      const result = await db.query(tenantId, query, values);
+      
+      if (result.rows.length === 0) {
         throw new Error('Product not found');
       }
 
-      // Обновляем основные данные товара
-      await product.update(updateData, { transaction });
+      logger.info(`Product updated: ${productId} by user ${userId}`);
+      
+      return result.rows[0];
 
-      // Если есть данные по складам, обновляем их
-      if (updateData.warehouse_data) {
-        for (const warehouseData of updateData.warehouse_data) {
-          const normalizedData = await this._normalizeWarehouseData(warehouseData);
-          
-          await WarehouseService.updateProductStock(
-            warehouseData.warehouse_id,
-            productId,
-            normalizedData.stock,
-            normalizedData.reserved || 0,
-            normalizedData.purchase_price,
-            transaction
-          );
-        }
-      }
-
-      await transaction.commit();
-      return product;
     } catch (error) {
-      await transaction.rollback();
+      logger.error('Error in updateProduct:', error);
       throw error;
     }
   }
 
   /**
    * Удаление товара
-   * @param {string} tenantId - ID тенанта
-   * @param {string} productId - ID товара
-   * @returns {Promise<boolean>} Результат удаления
    */
-  async deleteProduct(tenantId, productId) {
-    const transaction = await db.sequelize.transaction();
-    
+  async deleteProduct(tenantId, productId, userId) {
     try {
-      const product = await db.Product.findOne({
-        where: { id: productId, tenant_id: tenantId },
-        transaction
-      });
+      const query = `
+        DELETE FROM products 
+        WHERE id = $1 AND tenant_id = $2
+        RETURNING *
+      `;
 
-      if (!product) {
+      const result = await db.query(tenantId, query, [productId, tenantId]);
+      
+      if (result.rows.length === 0) {
         throw new Error('Product not found');
       }
 
-      // Удаляем связанные данные со складов
-      await WarehouseService.deleteProductFromAllWarehouses(productId, transaction);
+      logger.info(`Product deleted: ${productId} by user ${userId}`);
+      
+      return result.rows[0];
 
-      // Мягкое удаление товара
-      await product.update({ is_active: false, deleted_at: new Date() }, { transaction });
-
-      await transaction.commit();
-      return true;
     } catch (error) {
-      await transaction.rollback();
+      logger.error('Error in deleteProduct:', error);
       throw error;
     }
   }
 
   /**
-   * Импорт товаров из файла
-   * @param {string} tenantId - ID тенанта
-   * @param {string} filePath - Путь к файлу
-   * @param {string} fileType - Тип файла (csv, xml, xlsx)
-   * @returns {Promise<Object>} Результат импорта
+   * Массовое обновление товаров
    */
-  async importFromFile(tenantId, filePath, fileType) {
-    switch (fileType.toLowerCase()) {
-      case 'csv':
-        return await this.importFromCSV(filePath, tenantId);
-      case 'xml':
-      case 'yml':
-        return await this.importFromXML(filePath, tenantId);
-      case 'xlsx':
-      case 'xls':
-        return await this.importFromExcel(filePath, tenantId);
-      default:
-        throw new Error(`Unsupported file type: ${fileType}`);
-    }
-  }
-
-  /**
-   * Импорт товаров из XML
-   * @param {string} filePath - Путь к XML файлу
-   * @param {string} tenantId - ID тенанта
-   * @returns {Promise<Object>} Результат импорта
-   */
-  async importFromXML(filePath, tenantId) {
-    const transaction = await db.sequelize.transaction();
-    
+  async bulkUpdateProducts(tenantId, productIds, updateData, userId) {
     try {
-      const xmlData = fs.readFileSync(filePath, 'utf8');
-      const result = await parseStringPromise(xmlData);
-      
-      const products = result.yml_catalog?.shop?.[0]?.offers?.[0]?.offer || [];
-      
-      const imported = [];
-      const errors = [];
+      const updates = [];
+      const values = [tenantId];
+      let paramIndex = 2;
 
-      for (const productData of products) {
-        try {
-          const sku = productData.$.id;
-          const name = productData.name?.[0] || '';
-          const price = parseFloat(productData.price?.[0] || 0);
-          const categoryId = productData.categoryId?.[0];
-
-          // Нормализуем данные
-          const normalizedPrice = await NormalizationService.normalizePriceToBase(price, 'RUB');
-          const normalizedStock = parseInt(productData.stock?.[0] || 0);
-
-          // Создаем товар
-          const product = await this.createProduct({
-            tenant_id: tenantId,
-            sku,
-            name,
-            description: productData.description?.[0] || '',
-            weight: parseFloat(productData.weight?.[0] || 0),
-            created_by: tenantId
-          }, [{
-            warehouse_id: 1, // Основной склад
-            stock: normalizedStock,
-            purchase_price: normalizedPrice
-          }]);
-
-          imported.push({ sku, name, status: 'imported' });
-        } catch (error) {
-          errors.push({ 
-            sku: productData.$.id, 
-            error: error.message 
-          });
-        }
+      if (updateData.is_active !== undefined) {
+        updates.push(`is_active = $${paramIndex}`);
+        values.push(updateData.is_active);
+        paramIndex++;
       }
 
-      await transaction.commit();
+      if (updateData.brand_id !== undefined) {
+        updates.push(`brand_id = $${paramIndex}`);
+        values.push(updateData.brand_id);
+        paramIndex++;
+      }
+
+      if (updateData.category_id !== undefined) {
+        updates.push(`category_id = $${paramIndex}`);
+        values.push(updateData.category_id);
+        paramIndex++;
+      }
+
+      if (updates.length === 0) {
+        throw new Error('No update fields provided');
+      }
+
+      const placeholders = productIds.map((_, index) => `$${paramIndex + index}`).join(',');
+      values.push(...productIds);
+
+      const query = `
+        UPDATE products SET
+          ${updates.join(',')},
+          updated_at = CURRENT_TIMESTAMP
+        WHERE tenant_id = $1 AND id IN (${placeholders})
+        RETURNING id, name
+      `;
+
+      const result = await db.query(tenantId, query, values);
       
-      return {
-        total: products.length,
-        imported: imported.length,
-        errors: errors.length,
-        details: { imported, errors }
-      };
+      logger.info(`Bulk updated ${result.rows.length} products by user ${userId}`);
+      
+      return result.rows;
+
     } catch (error) {
-      await transaction.rollback();
-      throw new Error(`Ошибка импорта XML: ${error.message}`);
+      logger.error('Error in bulkUpdateProducts:', error);
+      throw error;
     }
-  }
-
-  /**
-   * Импорт товаров из CSV
-   * @param {string} filePath - Путь к CSV файлу
-   * @param {string} tenantId - ID тенанта
-   * @returns {Promise<Object>} Результат импорта
-   */
-  async importFromCSV(filePath, tenantId) {
-    return new Promise((resolve, reject) => {
-      const results = [];
-      const errors = [];
-      
-      fs.createReadStream(filePath)
-        .pipe(csv())
-        .on('data', (data) => results.push(data))
-        .on('end', async () => {
-          const transaction = await db.sequelize.transaction();
-          
-          try {
-            const imported = [];
-            
-            for (const row of results) {
-              try {
-                const sku = row.sku || row.SKU;
-                const name = row.name || row.Name;
-                const price = parseFloat(row.price || row.Price || 0);
-                const unit = row.unit || row.Unit || 'шт';
-                const stock = parseFloat(row.stock || row.Stock || 0);
-
-                // Нормализуем данные
-                const normalizedPrice = await NormalizationService.normalizePriceToBase(price, unit);
-                const normalizedStock = await NormalizationService.normalizeQuantityToBase(stock, unit);
-
-                // Создаем товар
-                const product = await this.createProduct({
-                  tenant_id: tenantId,
-                  sku,
-                  name,
-                  description: row.description || row.Description || '',
-                  weight: parseFloat(row.weight || row.Weight || 0),
-                  created_by: tenantId
-                }, [{
-                  warehouse_id: 1, // Основной склад
-                  stock: normalizedStock,
-                  purchase_price: normalizedPrice
-                }]);
-
-                imported.push({ sku, name, status: 'imported' });
-              } catch (error) {
-                errors.push({ 
-                  sku: row.sku || row.SKU, 
-                  error: error.message 
-                });
-              }
-            }
-
-            await transaction.commit();
-            
-            resolve({
-              total: results.length,
-              imported: imported.length,
-              errors: errors.length,
-              details: { imported, errors }
-            });
-          } catch (error) {
-            await transaction.rollback();
-            reject(new Error(`Ошибка импорта CSV: ${error.message}`));
-          }
-        })
-        .on('error', (error) => {
-          reject(new Error(`Ошибка чтения CSV файла: ${error.message}`));
-        });
-    });
-  }
-
-  /**
-   * Импорт товаров из Excel
-   * @param {string} filePath - Путь к Excel файлу
-   * @param {string} tenantId - ID тенанта
-   * @returns {Promise<Object>} Результат импорта
-   */
-  async importFromExcel(filePath, tenantId) {
-    // Будущая реализация импорта из Excel
-    throw new Error('Excel import not implemented yet');
-  }
-
-  /**
-   * Экспорт товаров
-   * @param {string} tenantId - ID тенанта
-   * @param {string} format - Формат экспорта (csv, xml, xlsx)
-   * @param {Object} filters - Фильтры для экспорта
-   * @returns {Promise<string>} Путь к файлу экспорта
-   */
-  async exportProducts(tenantId, format, filters = {}) {
-    const products = await this.getProducts(tenantId, filters);
-    
-    switch (format.toLowerCase()) {
-      case 'csv':
-        return await this._exportToCSV(products.items);
-      case 'xml':
-        return await this._exportToXML(products.items);
-      case 'xlsx':
-        return await this._exportToExcel(products.items);
-      default:
-        throw new Error(`Unsupported export format: ${format}`);
-    }
-  }
-
-  /**
-   * Нормализация данных склада
-   * @private
-   */
-  async _normalizeWarehouseData(warehouseData) {
-    const normalizedData = { ...warehouseData };
-    
-    // Нормализуем количество
-    if (normalizedData.stock) {
-      normalizedData.stock = await NormalizationService.normalizeQuantityToBase(
-        normalizedData.stock,
-        normalizedData.unit || 'шт'
-      );
-    }
-    
-    // Нормализуем цену
-    if (normalizedData.purchase_price) {
-      normalizedData.purchase_price = await NormalizationService.normalizePriceToBase(
-        normalizedData.purchase_price,
-        normalizedData.currency || 'RUB'
-      );
-    }
-    
-    return normalizedData;
-  }
-
-  /**
-   * Экспорт в CSV
-   * @private
-   */
-  async _exportToCSV(products) {
-    // Будущая реализация экспорта в CSV
-    throw new Error('CSV export not implemented yet');
-  }
-
-  /**
-   * Экспорт в XML
-   * @private
-   */
-  async _exportToXML(products) {
-    // Будущая реализация экспорта в XML
-    throw new Error('XML export not implemented yet');
-  }
-
-  /**
-   * Экспорт в Excel
-   * @private
-   */
-  async _exportToExcel(products) {
-    // Будущая реализация экспорта в Excel
-    throw new Error('Excel export not implemented yet');
   }
 }
 

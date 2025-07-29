@@ -67,8 +67,8 @@ const ProductImport = ({ visible, onClose }) => {
   const fetchDictionaries = async () => {
     try {
       const [suppliersRes, categoriesRes] = await Promise.all([
-        axios.get('/api/dictionaries/suppliers'),
-        axios.get('/api/dictionaries/categories')
+        axios.get('/dictionaries/suppliers'),
+        axios.get('/dictionaries/categories')
       ]);
       setSuppliers(suppliersRes.data);
       setCategories(categoriesRes.data);
@@ -85,18 +85,18 @@ const ProductImport = ({ visible, onClose }) => {
       try {
         const formData = new FormData();
         formData.append('file', file);
-        
+
         const response = await axios.post('/api/products/import/preview', formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         });
 
         setUploadedFile(file);
         setPreviewData(response.data.preview);
-        
+
         // Автоматическое определение колонок
         const autoMapping = {};
         const headers = response.data.headers;
-        
+
         const mappingRules = {
           'название': 'name',
           'наименование': 'name',
@@ -148,14 +148,14 @@ const ProductImport = ({ visible, onClose }) => {
   const validateMapping = () => {
     const requiredFields = ['name', 'sku'];
     const mappedFields = Object.values(mappingConfig);
-    
+
     const missingFields = requiredFields.filter(field => !mappedFields.includes(field));
-    
+
     if (missingFields.length > 0) {
       message.error(`Необходимо указать соответствие для полей: ${missingFields.join(', ')}`);
       return false;
     }
-    
+
     return true;
   };
 
@@ -165,7 +165,7 @@ const ProductImport = ({ visible, onClose }) => {
       message.error('Выберите поставщика');
       return;
     }
-    
+
     setCurrentStep(2);
     performImport();
   };
@@ -191,12 +191,12 @@ const ProductImport = ({ visible, onClose }) => {
       }, 500);
 
       const response = await dispatch(importProducts(importData)).unwrap();
-      
+
       clearInterval(progressInterval);
       setImportProgress(100);
       setImportResults(response);
       setCurrentStep(3);
-      
+
       message.success('Импорт завершен успешно');
     } catch (error) {
       setImportProgress(0);
@@ -263,9 +263,9 @@ const ProductImport = ({ visible, onClose }) => {
     width: 200,
     render: (text) => (
       <Tooltip title={text}>
-        <div style={{ 
-          maxWidth: 150, 
-          overflow: 'hidden', 
+        <div style={{
+          maxWidth: 150,
+          overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap'
         }}>
@@ -300,7 +300,7 @@ const ProductImport = ({ visible, onClose }) => {
             showIcon
             style={{ marginBottom: 24 }}
           />
-          
+
           <Row gutter={24}>
             <Col span={16}>
               <Dragger {...handleFileUpload} style={{ minHeight: 200 }}>

@@ -74,7 +74,7 @@ const OrderList = () => {
    */
   const fetchMarketplaces = async () => {
     try {
-      const response = await axios.get('/api/marketplaces');
+      const response = await axios.get('/marketplaces');
       setMarketplaces(response.data);
     } catch (error) {
       message.error('Ошибка загрузки маркетплейсов');
@@ -95,8 +95,8 @@ const OrderList = () => {
         end_date: filters.date_range ? filters.date_range[1].format('YYYY-MM-DD') : undefined
       };
 
-      const response = await axios.get('/api/orders', { params });
-      
+      const response = await axios.get('/orders', { params });
+
       setOrders(response.data.orders);
       setPagination({
         ...pagination,
