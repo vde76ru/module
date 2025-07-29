@@ -1,126 +1,340 @@
 // backend/src/routes/auth.js
 const express = require('express');
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const { authenticate } = require('../middleware/auth');
+const { v4: uuidv4 } = require('uuid');
+const { body, validationResult } = require('express-validator');
+
 const db = require('../config/database');
+const {
+  authenticate,
+  generateToken,
+  generateRefreshToken,
+  verifyRefreshToken,
+  rateLimiter
+} = require('../middleware/auth');
 
 const router = express.Router();
 
+// ========================================
+// VALIDATION RULES
+// ========================================
+
+const registerValidation = [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Valid email is required'),
+  body('password')
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters long')
+    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
+    .withMessage('Password must contain at least one uppercase letter, one lowercase letter, and one number'),
+  body('name')
+    .trim()
+    .isLength({ min: 2, max: 100 })
+    .withMessage('Name must be between 2 and 100 characters'),
+  body('tenantName')
+    .trim()
+    .isLength({ min: 2, max: 100 })
+    .withMessage('Company name must be between 2 and 100 characters')
+];
+
+const loginValidation = [
+  body('email')
+    .isEmail()
+    .normalizeEmail()
+    .withMessage('Valid email is required'),
+  body('password')
+    .notEmpty()
+    .withMessage('Password is required')
+];
+
+// ========================================
+// AUTHENTICATION ROUTES
+// ========================================
+
+/**
+ * POST /api/auth/register
+ * Регистрация нового пользователя и тенанта
+ */
+router.post('/register',
+  rateLimiter(5, 15 * 60 * 1000), // 5 попыток за 15 минут
+  registerValidation,
+  async (req, res) => {
+    try {
+      // Проверяем валидацию
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation failed',
+          details: errors.array()
+        });
+      }
+
+      const { email, password, name, tenantName } = req.body;
+
+      // Проверяем, существует ли пользователь
+      const existingUser = await db.query(
+        'SELECT id FROM users WHERE email = $1',
+        [email]
+      );
+
+      if (existingUser.rows.length > 0) {
+        return res.status(409).json({
+          success: false,
+          error: 'User already exists',
+          code: 'USER_EXISTS'
+        });
+      }
+
+      // Хэшируем пароль
+      const saltRounds = 12;
+      const passwordHash = await bcrypt.hash(password, saltRounds);
+
+      // Создаем tenant и пользователя в транзакции
+      const result = await db.transaction(async (client) => {
+        // Создаем тенанта
+        const tenantResult = await client.query(`
+          INSERT INTO tenants (
+            id, name, domain, db_schema, status, tariff_id
+          ) VALUES ($1, $2, $3, $4, 'active', (
+            SELECT id FROM tariffs WHERE code = 'free' LIMIT 1
+          ))
+          RETURNING *
+        `, [
+          uuidv4(),
+          tenantName,
+          `${tenantName.toLowerCase().replace(/[^a-z0-9]/g, '')}.moduletrade.local`,
+          `tenant_${uuidv4().replace(/-/g, '')}`
+        ]);
+
+        const tenant = tenantResult.rows[0];
+
+        // Создаем пользователя
+        const userResult = await client.query(`
+          INSERT INTO users (
+            id, tenant_id, email, password_hash, role, name, is_active
+          ) VALUES ($1, $2, $3, $4, 'admin', $5, true)
+          RETURNING id, email, role, name, tenant_id, created_at
+        `, [
+          uuidv4(),
+          tenant.id,
+          email,
+          passwordHash,
+          name
+        ]);
+
+        return {
+          user: userResult.rows[0],
+          tenant
+        };
+      });
+
+      // Генерируем токены
+      const tokenPayload = {
+        userId: result.user.id,
+        tenantId: result.tenant.id,
+        role: result.user.role
+      };
+
+      const accessToken = generateToken(tokenPayload, '1h');
+      const refreshToken = generateRefreshToken(tokenPayload);
+
+      // Сохраняем refresh token
+      await db.query(`
+        INSERT INTO user_sessions (user_id, refresh_token, expires_at)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_id)
+        DO UPDATE SET
+          refresh_token = $2,
+          expires_at = $3,
+          updated_at = CURRENT_TIMESTAMP
+      `, [
+        result.user.id,
+        refreshToken,
+        new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 дней
+      ]);
+
+      res.status(201).json({
+        success: true,
+        message: 'Registration successful',
+        data: {
+          user: {
+            id: result.user.id,
+            email: result.user.email,
+            name: result.user.name,
+            role: result.user.role,
+            tenantId: result.tenant.id,
+            tenantName: result.tenant.name
+          },
+          tokens: {
+            accessToken,
+            refreshToken,
+            expiresIn: 3600 // 1 час в секундах
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Registration error:', error);
+
+      if (error.code === '23505') { // PostgreSQL unique violation
+        return res.status(409).json({
+          success: false,
+          error: 'Email already exists',
+          code: 'EMAIL_EXISTS'
+        });
+      }
+
+      res.status(500).json({
+        success: false,
+        error: 'Registration failed',
+        code: 'REGISTRATION_ERROR'
+      });
+    }
+  }
+);
+
 /**
  * POST /api/auth/login
- * Авторизация пользователя
+ * Вход в систему
  */
-router.post('/login', async (req, res) => {
-  try {
-    const { email, password, remember_me } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        error: 'Email and password are required'
-      });
-    }
-
-    // Находим пользователя
-    const userResult = await db.mainPool.query(`
-      SELECT u.*, t.name as tenant_name, t.tariff_id 
-      FROM users u
-      JOIN tenants t ON u.tenant_id = t.id
-      WHERE u.email = $1 AND u.is_active = true
-    `, [email.toLowerCase()]);
-
-    if (userResult.rows.length === 0) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid credentials'
-      });
-    }
-
-    const user = userResult.rows[0];
-
-    // Проверяем пароль
-    const isValidPassword = await bcrypt.compare(password, user.password_hash);
-    if (!isValidPassword) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid credentials'
-      });
-    }
-
-    // Проверяем статус тенанта
-    if (!user.tenant_id) {
-      return res.status(403).json({
-        success: false,
-        error: 'Tenant not found'
-      });
-    }
-
-    // Создаем JWT токен
-    const tokenPayload = {
-      userId: user.id,
-      tenantId: user.tenant_id,
-      email: user.email,
-      role: user.role
-    };
-
-    const accessToken = jwt.sign(
-      tokenPayload,
-      process.env.JWT_SECRET || 'secret',
-      { expiresIn: remember_me ? '7d' : '1d' }
-    );
-
-    const refreshToken = jwt.sign(
-      { userId: user.id, tenantId: user.tenant_id },
-      process.env.JWT_REFRESH_SECRET || 'refresh_secret',
-      { expiresIn: '30d' }
-    );
-
-    // Обновляем last_login
-    await db.mainPool.query(`
-      UPDATE users 
-      SET last_login = NOW(), updated_at = NOW()
-      WHERE id = $1
-    `, [user.id]);
-
-    // Сохраняем refresh token
-    await db.mainPool.query(`
-      INSERT INTO user_sessions (user_id, refresh_token, expires_at, created_at)
-      VALUES ($1, $2, NOW() + INTERVAL '30 days', NOW())
-      ON CONFLICT (user_id) DO UPDATE SET
-        refresh_token = EXCLUDED.refresh_token,
-        expires_at = EXCLUDED.expires_at,
-        updated_at = NOW()
-    `, [user.id, refreshToken]);
-
-    res.json({
-      success: true,
-      data: {
-        token: accessToken,
-        refreshToken: refreshToken,
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-          tenant_id: user.tenant_id,
-          tenant_name: user.tenant_name
-        }
+router.post('/login',
+  rateLimiter(10, 15 * 60 * 1000), // 10 попыток за 15 минут
+  loginValidation,
+  async (req, res) => {
+    try {
+      // Проверяем валидацию
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          error: 'Validation failed',
+          details: errors.array()
+        });
       }
-    });
 
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
+      const { email, password } = req.body;
+
+      // Находим пользователя с информацией о тенанте
+      const userResult = await db.query(`
+        SELECT
+          u.id, u.email, u.password_hash, u.role, u.name,
+          u.is_active, u.tenant_id, u.last_login,
+          t.id as tenant_id, t.name as tenant_name,
+          t.db_schema, t.status as tenant_status
+        FROM users u
+        JOIN tenants t ON u.tenant_id = t.id
+        WHERE u.email = $1
+      `, [email]);
+
+      if (userResult.rows.length === 0) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid credentials',
+          code: 'INVALID_CREDENTIALS'
+        });
+      }
+
+      const user = userResult.rows[0];
+
+      // Проверяем статус пользователя и тенанта
+      if (!user.is_active) {
+        return res.status(401).json({
+          success: false,
+          error: 'Account is deactivated',
+          code: 'ACCOUNT_DEACTIVATED'
+        });
+      }
+
+      if (user.tenant_status !== 'active') {
+        return res.status(401).json({
+          success: false,
+          error: 'Account is suspended',
+          code: 'ACCOUNT_SUSPENDED'
+        });
+      }
+
+      // Проверяем пароль
+      const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+      if (!isPasswordValid) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid credentials',
+          code: 'INVALID_CREDENTIALS'
+        });
+      }
+
+      // Генерируем токены
+      const tokenPayload = {
+        userId: user.id,
+        tenantId: user.tenant_id,
+        role: user.role
+      };
+
+      const accessToken = generateToken(tokenPayload, '1h');
+      const refreshToken = generateRefreshToken(tokenPayload);
+
+      // Обновляем последний вход и сохраняем refresh token
+      await db.transaction(async (client) => {
+        // Обновляем время последнего входа
+        await client.query(
+          'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
+          [user.id]
+        );
+
+        // Сохраняем refresh token
+        await client.query(`
+          INSERT INTO user_sessions (user_id, refresh_token, expires_at)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (user_id)
+          DO UPDATE SET
+            refresh_token = $2,
+            expires_at = $3,
+            updated_at = CURRENT_TIMESTAMP
+        `, [
+          user.id,
+          refreshToken,
+          new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 дней
+        ]);
+      });
+
+      res.json({
+        success: true,
+        message: 'Login successful',
+        data: {
+          user: {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+            tenantId: user.tenant_id,
+            tenantName: user.tenant_name,
+            lastLogin: user.last_login
+          },
+          tokens: {
+            accessToken,
+            refreshToken,
+            expiresIn: 3600 // 1 час в секундах
+          }
+        }
+      });
+
+    } catch (error) {
+      console.error('Login error:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Login failed',
+        code: 'LOGIN_ERROR'
+      });
+    }
   }
-});
+);
 
 /**
  * POST /api/auth/refresh
- * Обновление токена
+ * Обновление access токена
  */
 router.post('/refresh', async (req, res) => {
   try {
@@ -129,95 +343,128 @@ router.post('/refresh', async (req, res) => {
     if (!refreshToken) {
       return res.status(400).json({
         success: false,
-        error: 'Refresh token is required'
+        error: 'Refresh token is required',
+        code: 'REFRESH_TOKEN_REQUIRED'
       });
     }
 
-    // Проверяем refresh token
-    let decoded;
     try {
-      decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET || 'refresh_secret');
-    } catch (error) {
+      // Верифицируем refresh token
+      const decoded = verifyRefreshToken(refreshToken);
+
+      // Проверяем, существует ли сессия
+      const sessionResult = await db.query(`
+        SELECT us.*, u.role, u.is_active, t.status as tenant_status
+        FROM user_sessions us
+        JOIN users u ON us.user_id = u.id
+        JOIN tenants t ON u.tenant_id = t.id
+        WHERE us.user_id = $1 AND us.refresh_token = $2 AND us.expires_at > CURRENT_TIMESTAMP
+      `, [decoded.userId, refreshToken]);
+
+      if (sessionResult.rows.length === 0) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid or expired refresh token',
+          code: 'INVALID_REFRESH_TOKEN'
+        });
+      }
+
+      const session = sessionResult.rows[0];
+
+      // Проверяем статус пользователя и тенанта
+      if (!session.is_active || session.tenant_status !== 'active') {
+        return res.status(401).json({
+          success: false,
+          error: 'Account is not active',
+          code: 'ACCOUNT_INACTIVE'
+        });
+      }
+
+      // Генерируем новый access token
+      const tokenPayload = {
+        userId: decoded.userId,
+        tenantId: decoded.tenantId,
+        role: session.role
+      };
+
+      const newAccessToken = generateToken(tokenPayload, '1h');
+
+      res.json({
+        success: true,
+        data: {
+          accessToken: newAccessToken,
+          expiresIn: 3600
+        }
+      });
+
+    } catch (jwtError) {
       return res.status(401).json({
         success: false,
-        error: 'Invalid refresh token'
+        error: 'Invalid refresh token',
+        code: 'INVALID_REFRESH_TOKEN'
       });
     }
 
-    // Проверяем, существует ли сессия
-    const sessionResult = await db.mainPool.query(`
-      SELECT us.*, u.email, u.role, u.name
-      FROM user_sessions us
-      JOIN users u ON us.user_id = u.id
-      WHERE us.refresh_token = $1 AND us.expires_at > NOW()
-    `, [refreshToken]);
+  } catch (error) {
+    console.error('Token refresh error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Token refresh failed',
+      code: 'REFRESH_ERROR'
+    });
+  }
+});
 
-    if (sessionResult.rows.length === 0) {
-      return res.status(401).json({
-        success: false,
-        error: 'Session expired'
-      });
-    }
-
-    const session = sessionResult.rows[0];
-
-    // Создаем новый access token
-    const tokenPayload = {
-      userId: decoded.userId,
-      tenantId: decoded.tenantId,
-      email: session.email,
-      role: session.role
-    };
-
-    const newAccessToken = jwt.sign(
-      tokenPayload,
-      process.env.JWT_SECRET || 'secret',
-      { expiresIn: '1d' }
+/**
+ * POST /api/auth/logout
+ * Выход из системы
+ */
+router.post('/logout', authenticate, async (req, res) => {
+  try {
+    // Удаляем refresh token из базы
+    await db.query(
+      'DELETE FROM user_sessions WHERE user_id = $1',
+      [req.user.id]
     );
 
     res.json({
       success: true,
-      data: {
-        token: newAccessToken,
-        user: {
-          id: session.user_id,
-          email: session.email,
-          name: session.name,
-          role: session.role,
-          tenant_id: decoded.tenantId
-        }
-      }
+      message: 'Logout successful'
     });
 
   } catch (error) {
-    console.error('Refresh token error:', error);
+    console.error('Logout error:', error);
     res.status(500).json({
       success: false,
-      error: 'Internal server error'
+      error: 'Logout failed',
+      code: 'LOGOUT_ERROR'
     });
   }
 });
 
 /**
  * GET /api/auth/me
- * Получение текущего пользователя
+ * Получение информации о текущем пользователе
  */
 router.get('/me', authenticate, async (req, res) => {
   try {
-    const userResult = await db.mainPool.query(`
-      SELECT u.id, u.email, u.name, u.role, u.tenant_id, u.created_at,
-             t.name as tenant_name, t.tariff_id,
-             tr.name as tariff_name, tr.limits as tariff_limits
+    // Получаем актуальную информацию о пользователе
+    const userResult = await db.query(`
+      SELECT
+        u.id, u.email, u.name, u.role, u.last_login, u.created_at,
+        t.id as tenant_id, t.name as tenant_name, t.db_schema,
+        tar.name as tariff_name, tar.limits, tar.features
       FROM users u
       JOIN tenants t ON u.tenant_id = t.id
-      LEFT JOIN tariffs tr ON t.tariff_id = tr.id
-      WHERE u.id = $1
-    `, [req.user.userId]);
+      LEFT JOIN tariffs tar ON t.tariff_id = tar.id
+      WHERE u.id = $1 AND u.is_active = true
+    `, [req.user.id]);
 
     if (userResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        error: 'User not found'
+        error: 'User not found',
+        code: 'USER_NOT_FOUND'
       });
     }
 
@@ -230,162 +477,27 @@ router.get('/me', authenticate, async (req, res) => {
         email: user.email,
         name: user.name,
         role: user.role,
-        tenant_id: user.tenant_id,
-        tenant_name: user.tenant_name,
-        tariff_name: user.tariff_name,
-        tariff_limits: user.tariff_limits,
-        created_at: user.created_at
+        lastLogin: user.last_login,
+        createdAt: user.created_at,
+        tenant: {
+          id: user.tenant_id,
+          name: user.tenant_name,
+          schema: user.db_schema
+        },
+        tariff: {
+          name: user.tariff_name,
+          limits: user.limits,
+          features: user.features
+        }
       }
     });
 
   } catch (error) {
-    console.error('Get current user error:', error);
+    console.error('Get user info error:', error);
     res.status(500).json({
       success: false,
-      error: 'Internal server error'
-    });
-  }
-});
-
-/**
- * POST /api/auth/logout
- * Выход из системы
- */
-router.post('/logout', authenticate, async (req, res) => {
-  try {
-    // Удаляем сессию пользователя
-    await db.mainPool.query(`
-      DELETE FROM user_sessions 
-      WHERE user_id = $1
-    `, [req.user.userId]);
-
-    res.json({
-      success: true,
-      message: 'Logged out successfully'
-    });
-
-  } catch (error) {
-    console.error('Logout error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
-  }
-});
-
-/**
- * POST /api/auth/register
- * Регистрация нового пользователя
- */
-router.post('/register', async (req, res) => {
-  try {
-    const { email, password, name, company_name } = req.body;
-
-    // Валидация
-    if (!email || !password || !name) {
-      return res.status(400).json({
-        success: false,
-        error: 'Email, password and name are required'
-      });
-    }
-
-    if (password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        error: 'Password must be at least 6 characters'
-      });
-    }
-
-    // Проверяем, существует ли пользователь
-    const existingUser = await db.mainPool.query(`
-      SELECT id FROM users WHERE email = $1
-    `, [email.toLowerCase()]);
-
-    if (existingUser.rows.length > 0) {
-      return res.status(409).json({
-        success: false,
-        error: 'User already exists'
-      });
-    }
-
-    // Хэшируем пароль
-    const passwordHash = await bcrypt.hash(password, 12);
-
-    // Начинаем транзакцию
-    await db.mainPool.query('BEGIN');
-
-    try {
-      // Создаем тенанта
-      const tenantResult = await db.mainPool.query(`
-        INSERT INTO tenants (name, tariff_id, created_at)
-        VALUES ($1, 1, NOW())
-        RETURNING id
-      `, [company_name || `${name} Company`]);
-
-      const tenantId = tenantResult.rows[0].id;
-
-      // Создаем пользователя
-      const userResult = await db.mainPool.query(`
-        INSERT INTO users (tenant_id, email, password_hash, name, role, active, created_at)
-        VALUES ($1, $2, $3, $4, 'admin', true, NOW())
-        RETURNING id, email, name, role
-      `, [tenantId, email.toLowerCase(), passwordHash, name]);
-
-      const user = userResult.rows[0];
-
-      // Создаем JWT токены
-      const tokenPayload = {
-        userId: user.id,
-        tenantId: tenantId,
-        email: user.email,
-        role: user.role
-      };
-
-      const accessToken = jwt.sign(
-        tokenPayload,
-        process.env.JWT_SECRET || 'secret',
-        { expiresIn: '1d' }
-      );
-
-      const refreshToken = jwt.sign(
-        { userId: user.id, tenantId: tenantId },
-        process.env.JWT_REFRESH_SECRET || 'refresh_secret',
-        { expiresIn: '30d' }
-      );
-
-      // Сохраняем refresh token
-      await db.mainPool.query(`
-        INSERT INTO user_sessions (user_id, refresh_token, expires_at, created_at)
-        VALUES ($1, $2, NOW() + INTERVAL '30 days', NOW())
-      `, [user.id, refreshToken]);
-
-      await db.mainPool.query('COMMIT');
-
-      res.status(201).json({
-        success: true,
-        data: {
-          token: accessToken,
-          refreshToken: refreshToken,
-          user: {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            role: user.role,
-            tenant_id: tenantId
-          }
-        }
-      });
-
-    } catch (error) {
-      await db.mainPool.query('ROLLBACK');
-      throw error;
-    }
-
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
+      error: 'Failed to get user info',
+      code: 'USER_INFO_ERROR'
     });
   }
 });

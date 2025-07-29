@@ -1,192 +1,249 @@
 // backend/src/config/database.js
 const { Pool } = require('pg');
-const logger = require('../utils/logger'); // ДОБАВЛЕН ИМПОРТ ЛОГГЕРА
 
-class DatabaseManager {
-  constructor() {
-    logger.info('Инициализация DatabaseManager...');
-    this.pools = new Map();
+// ========================================
+// DATABASE CONFIGURATION
+// ========================================
 
-    try {
-      // Конфигурация вынесена для переиспользования
-      this.poolConfig = {
-        host: process.env.DB_HOST || 'postgres',
-        // Убедимся, что порт является числом
-        port: parseInt(process.env.DB_PORT, 10) || 5432,
-        database: process.env.DB_NAME || 'moduletrade_db',
-        user: process.env.DB_USER || 'user',
-        password: process.env.DB_PASSWORD || 'password',
-        max: 20, // Максимальное количество клиентов в пуле
-        idleTimeoutMillis: 30000, // Время в мс, которое клиент может быть неактивен
-        connectionTimeoutMillis: 5000, // Время в мс на ожидание подключения
-      };
+// Основной пул подключений для public схемы
+const mainPoolConfig = {
+  host: process.env.DB_HOST || 'localhost',
+  port: process.env.DB_PORT || 5432,
+  database: process.env.DB_NAME || 'saas_platform',
+  user: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD || 'password',
 
-      // Создаем главный пул
-      this.mainPool = new Pool(this.poolConfig);
+  // Настройки пула
+  min: 2,
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+  statement_timeout: 30000,
+  query_timeout: 30000,
 
-      // Добавляем глобальный обработчик ошибок для пула
-      this.mainPool.on('error', (err, client) => {
-        logger.error('Критическая ошибка в главном пуле БД', { error: err.message });
-        process.exit(-1); // Завершаем процесс, так как состояние неопределенное
-      });
+  // SSL настройки для production
+  ssl: process.env.NODE_ENV === 'production' ? {
+    rejectUnauthorized: false
+  } : false,
 
-      // **ВАЖНО: Проверяем соединение при старте приложения**
-      this._testConnection();
+  // Дополнительные настройки
+  application_name: 'moduletrade-backend',
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10000
+};
 
-    } catch (error) {
-      logger.error('КРИТИЧЕСКАЯ ОШИБКА: Не удалось создать главный пул для БД.', { error: error.message });
-      process.exit(1);
+const mainPool = new Pool(mainPoolConfig);
+
+// ========================================
+// POOL EVENT HANDLERS
+// ========================================
+
+mainPool.on('connect', (client) => {
+  console.log('✅ Новое подключение к PostgreSQL установлено');
+
+  // Устанавливаем search_path для мультитенантности
+  client.query('SET search_path TO public', (err) => {
+    if (err) {
+      console.error('⚠️ Ошибка установки search_path:', err);
     }
+  });
+});
+
+mainPool.on('error', (err, client) => {
+  console.error('❌ Ошибка PostgreSQL пула:', err);
+  console.error('Client:', client ? 'Connected' : 'Not connected');
+});
+
+mainPool.on('acquire', (client) => {
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('🔗 Клиент получен из пула');
+  }
+});
+
+mainPool.on('release', (err, client) => {
+  if (err) {
+    console.error('⚠️ Ошибка при возврате клиента в пул:', err);
+  } else if (process.env.NODE_ENV !== 'production') {
+    console.log('🔄 Клиент возвращен в пул');
+  }
+});
+
+// ========================================
+// TENANT POOL CACHE
+// ========================================
+
+// Кеш пулов для тенантов
+const tenantPools = new Map();
+
+/**
+ * Получает пул подключений для конкретного тенанта
+ * @param {string} schemaName - Имя схемы тенанта
+ * @returns {Pool} - Пул подключений
+ */
+function getTenantPool(schemaName) {
+  if (!schemaName || schemaName === 'public') {
+    return mainPool;
   }
 
-  /**
-   * Приватный метод для проверки соединения с БД при старте.
-   */
-  async _testConnection() {
-    try {
-      const client = await this.mainPool.connect();
-      logger.info('✅ Главный пул успешно подключен к базе данных.');
-      client.release(); // Возвращаем клиент в пул
-    } catch (error) {
-      logger.error(
-        'КРИТИЧЕСКАЯ ОШИБКА: Не удалось подключиться к БД. Проверьте .env файл и доступность базы.',
-        { error: error.message }
-      );
-      process.exit(1); // Завершаем приложение, если БД недоступна
-    }
+  if (tenantPools.has(schemaName)) {
+    return tenantPools.get(schemaName);
   }
 
-  /**
-   * Получает пул для конкретного тенанта.
-   * Если пул уже существует, возвращает его. Иначе создает новый.
-   */
-  async getPool(tenantId) {
-    // Если tenantId не передан, используем главный пул
-    if (!tenantId) {
-      return this.mainPool;
-    }
+  // Создаем новый пул для тенанта
+  const tenantPoolConfig = {
+    ...mainPoolConfig,
+    application_name: `moduletrade-tenant-${schemaName}`,
+    min: 1,
+    max: 10
+  };
 
-    // Если пул для тенанта уже есть в кэше, возвращаем его
-    if (this.pools.has(tenantId)) {
-      return this.pools.get(tenantId);
-    }
+  const pool = new Pool(tenantPoolConfig);
 
-    // Получаем схему тенанта из таблицы tenants в public схеме
-    const result = await this.mainPool.query(
-      'SELECT db_schema FROM tenants WHERE id = $1',
-      [tenantId]
-    );
-
-    if (result.rows.length === 0) {
-      throw new Error(`Тенант с ID ${tenantId} не найден`);
-    }
-    const schema = result.rows[0].db_schema;
-
-    // Создаем новый пул для тенанта.
-    // Примечание: создание пула на каждого тенанта может быть неэффективным при их большом количестве.
-    // Но для начала это рабочая и понятная схема.
-    const tenantPool = new Pool({
-      ...this.poolConfig,
-      // Можно было бы настроить search_path здесь, но лучше делать это для каждой сессии
-    });
-
-    // Добавляем обработчик ошибок и для пулов тенантов
-    tenantPool.on('error', (err, client) => {
-      logger.error(`Критическая ошибка в пуле для тенанта ${tenantId}`, { error: err.message });
-    });
-
-    this.pools.set(tenantId, tenantPool);
-    logger.info(`Создан и закэширован новый пул для тенанта ${tenantId} (схема: ${schema})`);
-
-    return tenantPool;
-  }
-
-  /**
-   * Выполняет запрос к базе данных, автоматически управляя схемой тенанта.
-   */
-  async query(tenantId, text, params) {
-    const pool = await this.getPool(tenantId);
-    const client = await pool.connect();
-
-    try {
-      // Если это запрос для тенанта, безопасно устанавливаем search_path для этой сессии
-      if (tenantId) {
-        const schemaResult = await this.mainPool.query('SELECT db_schema FROM tenants WHERE id = $1', [tenantId]);
-        if (schemaResult.rows.length > 0) {
-          // Экранируем имя схемы для безопасности
-          const schema = `"${schemaResult.rows[0].db_schema.replace(/"/g, '""')}"`;
-          await client.query(`SET search_path TO ${schema}, public`);
-        }
+  // Устанавливаем search_path для тенанта при подключении
+  pool.on('connect', (client) => {
+    console.log(`✅ Подключение к схеме тенанта: ${schemaName}`);
+    client.query(`SET search_path TO ${schemaName}, public`, (err) => {
+      if (err) {
+        console.error(`⚠️ Ошибка установки search_path для ${schemaName}:`, err);
       }
-      return await client.query(text, params);
-    } finally {
-      client.release(); // Всегда освобождаем клиент
-    }
-  }
+    });
+  });
 
-  async transaction(tenantId, callback) {
-    const pool = await this.getPool(tenantId);
-    const client = await pool.connect();
+  tenantPools.set(schemaName, pool);
+  return pool;
+}
 
-    try {
-      await client.query('BEGIN');
-      const result = await callback(client);
-      await client.query('COMMIT');
-      return result;
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
+// ========================================
+// UTILITY FUNCTIONS
+// ========================================
 
-  async close() {
-    // Закрываем все пулы тенантов
-    for (const [tenantId, pool] of this.pools) {
-      await pool.end();
-    }
-    this.pools.clear();
+/**
+ * Тестирует подключение к базе данных
+ */
+async function testConnection() {
+  try {
+    const client = await mainPool.connect();
+    const result = await client.query('SELECT NOW() as current_time, version() as db_version');
+    client.release();
 
-    // Закрываем главный пул
-    await this.mainPool.end();
-  }
+    console.log('✅ Подключение к БД успешно:');
+    console.log(`   Time: ${result.rows[0].current_time}`);
+    console.log(`   Version: ${result.rows[0].db_version.split(',')[0]}`);
 
-  // Создание схемы для нового тенанта
-  async createTenantSchema(tenantId, schemaName) {
-    const client = await this.mainPool.connect();
-
-    try {
-      await client.query('BEGIN');
-
-      // Создаем схему
-      await client.query(`CREATE SCHEMA IF NOT EXISTS ${schemaName}`);
-
-      // Создаем таблицы в схеме тенанта
-      await client.query(`SET search_path TO ${schemaName}`);
-
-      // Копируем структуру таблиц из публичной схемы
-      const tables = [
-        'suppliers', 'marketplaces', 'products', 'brands', 'categories',
-        'product_suppliers', 'product_marketplaces', 'orders', 'order_items',
-        'supplier_orders', 'supplier_order_items', 'sync_logs'
-      ];
-
-      for (const table of tables) {
-        await client.query(`
-          CREATE TABLE ${schemaName}.${table}
-          (LIKE public.${table} INCLUDING ALL)
-        `);
-      }
-
-      await client.query('COMMIT');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    return true;
+  } catch (error) {
+    console.error('❌ Ошибка подключения к БД:', error.message);
+    throw error;
   }
 }
 
-module.exports = new DatabaseManager();
+/**
+ * Выполняет запрос с логированием (для отладки)
+ */
+async function query(text, params, poolToUse = mainPool) {
+  const start = Date.now();
+
+  try {
+    const result = await poolToUse.query(text, params);
+    const duration = Date.now() - start;
+
+    if (process.env.NODE_ENV !== 'production' && duration > 1000) {
+      console.warn(`⚠️ Медленный запрос (${duration}ms): ${text.substring(0, 100)}...`);
+    }
+
+    return result;
+  } catch (error) {
+    const duration = Date.now() - start;
+    console.error(`❌ Ошибка запроса (${duration}ms):`, error.message);
+    console.error('Query:', text.substring(0, 200));
+    console.error('Params:', params);
+    throw error;
+  }
+}
+
+/**
+ * Выполняет транзакцию
+ */
+async function transaction(callback, poolToUse = mainPool) {
+  const client = await poolToUse.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const result = await callback(client);
+
+    await client.query('COMMIT');
+    return result;
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('❌ Транзакция отменена:', error.message);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Закрывает все подключения
+ */
+async function close() {
+  try {
+    console.log('🔄 Закрытие подключений к базе данных...');
+
+    // Закрываем основной пул
+    await mainPool.end();
+
+    // Закрываем все пулы тенантов
+    for (const [schemaName, pool] of tenantPools.entries()) {
+      console.log(`🔄 Закрытие пула для схемы: ${schemaName}`);
+      await pool.end();
+    }
+
+    tenantPools.clear();
+    console.log('✅ Все подключения к БД закрыты');
+
+  } catch (error) {
+    console.error('❌ Ошибка при закрытии подключений:', error);
+    throw error;
+  }
+}
+
+/**
+ * Получает информацию о пулах подключений
+ */
+function getPoolStats() {
+  const mainStats = {
+    totalCount: mainPool.totalCount,
+    idleCount: mainPool.idleCount,
+    waitingCount: mainPool.waitingCount
+  };
+
+  const tenantStats = {};
+  for (const [schemaName, pool] of tenantPools.entries()) {
+    tenantStats[schemaName] = {
+      totalCount: pool.totalCount,
+      idleCount: pool.idleCount,
+      waitingCount: pool.waitingCount
+    };
+  }
+
+  return {
+    main: mainStats,
+    tenants: tenantStats
+  };
+}
+
+// ========================================
+// EXPORTS
+// ========================================
+
+module.exports = {
+  mainPool,
+  getTenantPool,
+  query,
+  transaction,
+  close,
+  getPoolStats,
+  _testConnection: testConnection
+};
