@@ -1,51 +1,44 @@
 # ===================================================
-# ОБНОВЛЕННЫЙ docker-compose.yml С ИСПРАВЛЕНИЯМИ БЕЗОПАСНОСТИ
+# MODULETRADE - ОБНОВЛЕННЫЙ docker-compose.yml
 # ===================================================
-
-version: '3.8'
 
 services:
   postgres:
     image: postgres:15-alpine
+    container_name: moduletraderu-postgres-1
     environment:
-      POSTGRES_DB: saas_platform
-      POSTGRES_USER: postgres
+      POSTGRES_DB: ${DB_NAME:-saas_platform}
+      POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-SecurePostgresPass2025}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backend/migrations:/docker-entrypoint-initdb.d
-    # ❌ УДАЛЯЕМ ВНЕШНИЙ ПОРТ ДЛЯ БЕЗОПАСНОСТИ
-    # ports:
-    #   - "5432:5432"
-    # ✅ Доступ только внутри Docker-сети
+      - ./backend/migrations:/docker-entrypoint-initdb.d:ro
     expose:
       - "5432"
     networks:
       - moduletrade-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-saas_platform}"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
-    # ✅ ДОБАВЛЯЕМ ПАРОЛЬ И ЗАЩИЩЕННУЮ КОНФИГУРАЦИЮ
+    container_name: moduletraderu-redis-1
     command: >
       redis-server
       --appendonly yes
       --requirepass ${REDIS_PASSWORD:-SecureRedisPass2025}
-      --protected-mode yes
-      --bind 127.0.0.1
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
+      --timeout 0
+      --tcp-keepalive 300
     volumes:
       - redis_data:/data
-      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
-    # ❌ УДАЛЯЕМ ВНЕШНИЙ ПОРТ ДЛЯ БЕЗОПАСНОСТИ
-    # ports:
-    #   - "6379:6379"
-    # ✅ Доступ только внутри Docker-сети
     expose:
       - "6379"
     networks:
@@ -55,16 +48,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 15s
+    restart: unless-stopped
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
+    container_name: moduletraderu-rabbitmq-1
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-moduletrade_admin}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-SecureRabbitPass2025}
       RABBITMQ_DEFAULT_VHOST: /moduletrade
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE:-moduletrade_secret_cookie}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
-    # ✅ Управление доступно только локально через nginx proxy
     expose:
       - "5672"
       - "15672"
@@ -72,31 +68,56 @@ services:
       - moduletrade-network
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 10s
-      timeout: 5s
+      interval: 15s
+      timeout: 10s
       retries: 5
+      start_period: 60s
+    restart: unless-stopped
 
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        NODE_ENV: ${NODE_ENV:-production}
+    container_name: moduletraderu-backend-1
     environment:
       NODE_ENV: ${NODE_ENV:-production}
+      PORT: 3000
+      HOST: 0.0.0.0
+      # Database
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: saas_platform
-      DB_USER: postgres
+      DB_NAME: ${DB_NAME:-saas_platform}
+      DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-SecurePostgresPass2025}
-      # ✅ ОБНОВЛЯЕМ URL REDIS С ПАРОЛЕМ
-      REDIS_URL: redis://:${REDIS_PASSWORD:-SecureRedisPass2025}@redis:6379
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-SecureRedisPass2025}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-SecureRedisPass2025}@redis:6379
+      # RabbitMQ
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-moduletrade_admin}:${RABBITMQ_PASS:-SecureRabbitPass2025}@rabbitmq:5672/moduletrade
+      # JWT
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      # Stripe
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      # URLs
+      API_URL: ${API_URL:-https://api.moduletrade.ru}
+      FRONTEND_URL: ${FRONTEND_URL:-https://moduletrade.ru}
+      # Security
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://moduletrade.ru,https://www.moduletrade.ru}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-100}
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
+      # Uploads
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-50MB}
+      UPLOAD_DIR: ./uploads
     volumes:
       - ./backend/uploads:/app/uploads
+      - ./backend/logs:/app/logs
     expose:
       - "3000"
     networks:
@@ -108,13 +129,22 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-    command: npm run start:prod
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        REACT_APP_API_URL: ${REACT_APP_API_URL:-https://api.moduletrade.ru/api}
+        REACT_APP_STRIPE_PUBLIC_KEY: ${STRIPE_PUBLIC_KEY}
+    container_name: moduletraderu-frontend-1
     environment:
       REACT_APP_API_URL: ${REACT_APP_API_URL:-https://api.moduletrade.ru/api}
       REACT_APP_STRIPE_PUBLIC_KEY: ${STRIPE_PUBLIC_KEY}
@@ -128,10 +158,12 @@ services:
 
   nginx:
     image: nginx:alpine
+    container_name: moduletraderu-nginx-1
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/certs:/etc/nginx/certs:ro
       - ./nginx/security.conf:/etc/nginx/security.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./nginx/logs:/var/log/nginx
     ports:
       - "80:80"
       - "443:443"
@@ -140,9 +172,14 @@ services:
     depends_on:
       - backend
       - frontend
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     restart: unless-stopped
 
-# ✅ СОЗДАЕМ ИЗОЛИРОВАННУЮ СЕТЬ
+# Сети
 networks:
   moduletrade-network:
     driver: bridge
@@ -150,7 +187,11 @@ networks:
       config:
         - subnet: 172.20.0.0/16
 
+# Volumes
 volumes:
   postgres_data:
+    driver: local
   redis_data:
+    driver: local
   rabbitmq_data:
+    driver: local
