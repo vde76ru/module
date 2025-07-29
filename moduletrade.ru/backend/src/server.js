@@ -1,6 +1,6 @@
 // backend/src/server.js
 const express = require('express');
-const cors = require('cors');
+// ❌ УБРАНО: const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
 const morgan = require('morgan');
@@ -21,33 +21,22 @@ if (process.env.NODE_ENV !== 'test') {
 // ========================================
 // MIDDLEWARE
 // ========================================
+// ❌ ОТКЛЮЧЕН CSP в backend - оставляем только в nginx
 app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-eval'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-      imgSrc: ["'self'", "data:", "blob:"],
-      connectSrc: ["'self'"],
-      fontSrc: ["'self'"],
-      objectSrc: ["'none'"],
-      mediaSrc: ["'self'"],
-      frameSrc: ["'none'"],
-    },
-  },
+  contentSecurityPolicy: false
 }));
 
-// CORS конфигурация
-const allowedOrigins = (process.env.CORS_ORIGIN || 'https://moduletrade.ru')
-  .split(',')
-  .map(origin => origin.trim());
-
-app.use(cors({
-  origin: allowedOrigins,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization']
-}));
+// ❌ УБРАН ВЕСЬ CORS БЛОК - обрабатывается в nginx
+// const allowedOrigins = (process.env.CORS_ORIGIN || 'https://moduletrade.ru')
+//   .split(',')
+//   .map(origin => origin.trim());
+// 
+// app.use(cors({
+//   origin: allowedOrigins,
+//   credentials: true,
+//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+//   allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization']
+// }));
 
 app.use(compression());
 app.use(express.json({ limit: process.env.MAX_FILE_SIZE || '10mb' }));

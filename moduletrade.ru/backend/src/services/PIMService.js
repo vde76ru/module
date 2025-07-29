@@ -12,6 +12,7 @@ class PIMService {
       const {
         limit = 50,
         offset = 0,
+        page = 1,
         search = '',
         source_type = 'all',
         low_stock = false,
@@ -19,6 +20,9 @@ class PIMService {
         brand_id = null,
         is_active = null
       } = options;
+
+      // Вычисляем offset если передана страница
+      const actualOffset = page > 1 ? (page - 1) * limit : offset;
 
       let whereConditions = ['p.tenant_id = $1'];
       const queryParams = [tenantId];
@@ -63,7 +67,7 @@ class PIMService {
 
       // Основной запрос
       let query = `
-        SELECT 
+        SELECT
           p.id,
           p.internal_code,
           p.name,
@@ -83,14 +87,14 @@ class PIMService {
         LEFT JOIN brands b ON p.brand_id = b.id
         LEFT JOIN categories c ON p.category_id = c.id
         LEFT JOIN (
-          SELECT 
-            product_id, 
-            SUM(quantity) as total_stock 
-          FROM warehouse_product_links 
+          SELECT
+            product_id,
+            SUM(quantity) as total_stock
+          FROM warehouse_product_links
           GROUP BY product_id
         ) stock ON p.id = stock.product_id
         LEFT JOIN (
-          SELECT 
+          SELECT
             product_id,
             COUNT(*) as suppliers_count,
             MIN(normalized_price) as min_price
@@ -110,7 +114,7 @@ class PIMService {
 
       // Добавляем LIMIT и OFFSET
       query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
-      queryParams.push(limit, offset);
+      queryParams.push(limit, actualOffset);
 
       const result = await db.query(tenantId, query, queryParams);
 
@@ -119,10 +123,10 @@ class PIMService {
         SELECT COUNT(*) as total
         FROM products p
         LEFT JOIN (
-          SELECT 
-            product_id, 
-            SUM(quantity) as total_stock 
-          FROM warehouse_product_links 
+          SELECT
+            product_id,
+            SUM(quantity) as total_stock
+          FROM warehouse_product_links
           GROUP BY product_id
         ) stock ON p.id = stock.product_id
         WHERE ${whereClause}
@@ -139,8 +143,9 @@ class PIMService {
         data: result.rows,
         pagination: {
           total,
-          limit,
-          offset,
+          limit: parseInt(limit),
+          offset: parseInt(actualOffset),
+          page: parseInt(page),
           pages: Math.ceil(total / limit)
         }
       };
@@ -157,7 +162,7 @@ class PIMService {
   async getProductById(tenantId, productId) {
     try {
       const query = `
-        SELECT 
+        SELECT
           p.*,
           b.canonical_name as brand_name,
           c.canonical_name as category_name,
@@ -170,7 +175,7 @@ class PIMService {
       `;
 
       const result = await db.query(tenantId, query, [productId, tenantId]);
-      
+
       if (result.rows.length === 0) {
         return null;
       }
@@ -179,7 +184,7 @@ class PIMService {
 
       // Получаем информацию о поставщиках
       const suppliersQuery = `
-        SELECT 
+        SELECT
           ps.*,
           s.name as supplier_name
         FROM product_suppliers ps
@@ -193,7 +198,7 @@ class PIMService {
 
       // Получаем информацию о складских остатках
       const stockQuery = `
-        SELECT 
+        SELECT
           wpl.*,
           w.name as warehouse_name
         FROM warehouse_product_links wpl
@@ -220,10 +225,14 @@ class PIMService {
     try {
       const productId = uuidv4();
 
+      // Генерируем internal_code если не передан
+      const internalCode = productData.internal_code ||
+        `PROD-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+
       const query = `
         INSERT INTO products (
           id, tenant_id, internal_code, name, brand_id, category_id,
-          attributes, source_type, base_unit, is_divisible, 
+          attributes, source_type, base_unit, is_divisible,
           min_order_quantity, weight, volume, dimensions,
           created_at, updated_at
         ) VALUES (
@@ -235,7 +244,7 @@ class PIMService {
       const values = [
         productId,
         tenantId,
-        productData.internal_code,
+        internalCode,
         productData.name,
         productData.brand_id || null,
         productData.category_id || null,
@@ -250,9 +259,9 @@ class PIMService {
       ];
 
       const result = await db.query(tenantId, query, values);
-      
+
       logger.info(`Product created: ${productId} by user ${userId}`);
-      
+
       return result.rows[0];
 
     } catch (error) {
@@ -266,48 +275,98 @@ class PIMService {
    */
   async updateProduct(tenantId, productId, productData, userId) {
     try {
+      // Собираем поля для обновления
+      const updateFields = [];
+      const values = [productId, tenantId];
+      let paramIndex = 3;
+
+      if (productData.name !== undefined) {
+        updateFields.push(`name = $${paramIndex}`);
+        values.push(productData.name);
+        paramIndex++;
+      }
+
+      if (productData.brand_id !== undefined) {
+        updateFields.push(`brand_id = $${paramIndex}`);
+        values.push(productData.brand_id);
+        paramIndex++;
+      }
+
+      if (productData.category_id !== undefined) {
+        updateFields.push(`category_id = $${paramIndex}`);
+        values.push(productData.category_id);
+        paramIndex++;
+      }
+
+      if (productData.attributes !== undefined) {
+        updateFields.push(`attributes = $${paramIndex}`);
+        values.push(JSON.stringify(productData.attributes));
+        paramIndex++;
+      }
+
+      if (productData.base_unit !== undefined) {
+        updateFields.push(`base_unit = $${paramIndex}`);
+        values.push(productData.base_unit);
+        paramIndex++;
+      }
+
+      if (productData.is_divisible !== undefined) {
+        updateFields.push(`is_divisible = $${paramIndex}`);
+        values.push(productData.is_divisible);
+        paramIndex++;
+      }
+
+      if (productData.min_order_quantity !== undefined) {
+        updateFields.push(`min_order_quantity = $${paramIndex}`);
+        values.push(productData.min_order_quantity);
+        paramIndex++;
+      }
+
+      if (productData.weight !== undefined) {
+        updateFields.push(`weight = $${paramIndex}`);
+        values.push(productData.weight);
+        paramIndex++;
+      }
+
+      if (productData.volume !== undefined) {
+        updateFields.push(`volume = $${paramIndex}`);
+        values.push(productData.volume);
+        paramIndex++;
+      }
+
+      if (productData.dimensions !== undefined) {
+        updateFields.push(`dimensions = $${paramIndex}`);
+        values.push(JSON.stringify(productData.dimensions));
+        paramIndex++;
+      }
+
+      if (productData.is_active !== undefined) {
+        updateFields.push(`is_active = $${paramIndex}`);
+        values.push(productData.is_active);
+        paramIndex++;
+      }
+
+      if (updateFields.length === 0) {
+        throw new Error('No fields to update');
+      }
+
+      updateFields.push('updated_at = CURRENT_TIMESTAMP');
+
       const query = `
         UPDATE products SET
-          name = $3,
-          brand_id = $4,
-          category_id = $5,
-          attributes = $6,
-          base_unit = $7,
-          is_divisible = $8,
-          min_order_quantity = $9,
-          weight = $10,
-          volume = $11,
-          dimensions = $12,
-          is_active = $13,
-          updated_at = CURRENT_TIMESTAMP
+          ${updateFields.join(',\n          ')}
         WHERE id = $1 AND tenant_id = $2
         RETURNING *
       `;
 
-      const values = [
-        productId,
-        tenantId,
-        productData.name,
-        productData.brand_id || null,
-        productData.category_id || null,
-        JSON.stringify(productData.attributes || {}),
-        productData.base_unit || 'шт',
-        productData.is_divisible !== false,
-        productData.min_order_quantity || 1,
-        productData.weight || null,
-        productData.volume || null,
-        JSON.stringify(productData.dimensions || {}),
-        productData.is_active !== false
-      ];
-
       const result = await db.query(tenantId, query, values);
-      
+
       if (result.rows.length === 0) {
         throw new Error('Product not found');
       }
 
       logger.info(`Product updated: ${productId} by user ${userId}`);
-      
+
       return result.rows[0];
 
     } catch (error) {
@@ -322,19 +381,19 @@ class PIMService {
   async deleteProduct(tenantId, productId, userId) {
     try {
       const query = `
-        DELETE FROM products 
+        DELETE FROM products
         WHERE id = $1 AND tenant_id = $2
         RETURNING *
       `;
 
       const result = await db.query(tenantId, query, [productId, tenantId]);
-      
+
       if (result.rows.length === 0) {
         throw new Error('Product not found');
       }
 
       logger.info(`Product deleted: ${productId} by user ${userId}`);
-      
+
       return result.rows[0];
 
     } catch (error) {
@@ -386,13 +445,63 @@ class PIMService {
       `;
 
       const result = await db.query(tenantId, query, values);
-      
+
       logger.info(`Bulk updated ${result.rows.length} products by user ${userId}`);
-      
+
       return result.rows;
 
     } catch (error) {
       logger.error('Error in bulkUpdateProducts:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Поиск товаров
+   */
+  async searchProducts(tenantId, searchTerm, options = {}) {
+    try {
+      const { limit = 20 } = options;
+
+      const query = `
+        SELECT
+          p.id,
+          p.internal_code,
+          p.name,
+          p.source_type,
+          b.canonical_name as brand_name,
+          c.canonical_name as category_name
+        FROM products p
+        LEFT JOIN brands b ON p.brand_id = b.id
+        LEFT JOIN categories c ON p.category_id = c.id
+        WHERE p.tenant_id = $1
+          AND p.is_active = true
+          AND (
+            p.name ILIKE $2
+            OR p.internal_code ILIKE $2
+            OR b.canonical_name ILIKE $2
+          )
+        ORDER BY
+          CASE
+            WHEN p.internal_code ILIKE $2 THEN 1
+            WHEN p.name ILIKE $3 THEN 2
+            ELSE 3
+          END,
+          p.name
+        LIMIT $4
+      `;
+
+      const result = await db.query(tenantId, query, [
+        tenantId,
+        `%${searchTerm}%`,
+        `${searchTerm}%`, // Для приоритета результатов, начинающихся с поискового запроса
+        limit
+      ]);
+
+      return result.rows;
+
+    } catch (error) {
+      logger.error('Error in searchProducts:', error);
       throw error;
     }
   }
