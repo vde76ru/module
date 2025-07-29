@@ -3,7 +3,7 @@ import { Form, Input, Button, Card, Typography, Checkbox, Alert, Spin } from 'an
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
-import { login } from 'store/slices/authSlice';
+import { loginUser } from 'store/authSlice';
 import './Login.css';
 
 const { Title, Text } = Typography;
@@ -17,7 +17,7 @@ const Login = () => {
 
   const onFinish = async (values) => {
     try {
-      const result = await dispatch(login({
+      const result = await dispatch(loginUser({
         email: values.email,
         password: values.password,
         rememberMe: values.remember
