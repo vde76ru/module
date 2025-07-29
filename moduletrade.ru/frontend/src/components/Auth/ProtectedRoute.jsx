@@ -1,23 +1,22 @@
-// frontend/src/components/Auth/ProtectedRoute.jsx
-import React, { useEffect } from 'react';
-import { useSelector, useDispatch } from 'react-redux';
-import { Navigate, useLocation } from 'react-router-dom';
+// ===================================================
+// ФАЙЛ: frontend/src/components/Auth/ProtectedRoute.jsx
+// ===================================================
+import React from 'react';
+import { Navigate } from 'react-router-dom';
 import { Spin } from 'antd';
-import { getCurrentUser } from 'store/authSlice';
+import { useAuth } from '../../contexts/AuthContext';
+import PermissionGuard from './PermissionGuard';
 
-const ProtectedRoute = ({ children }) => {
-  const dispatch = useDispatch();
-  const location = useLocation();
-  const { isAuthenticated, loading, user } = useSelector((state) => state.auth);
+const ProtectedRoute = ({
+  children,
+  permission,
+  permissions,
+  requireAll = true,
+  adminOnly = false,
+  redirectTo = '/login'
+}) => {
+  const { isAuthenticated, loading, user } = useAuth();
 
-  useEffect(() => {
-    // Если есть токен, но нет данных пользователя, загружаем их
-    if (isAuthenticated && !user) {
-      dispatch(getCurrentUser());
-    }
-  }, [dispatch, isAuthenticated, user]);
-
-  // Показываем спиннер во время проверки аутентификации
   if (loading) {
     return (
       <div style={{
@@ -31,13 +30,26 @@ const ProtectedRoute = ({ children }) => {
     );
   }
 
-  // Если пользователь не авторизован, перенаправляем на страницу входа
   if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
+    return <Navigate to={redirectTo} replace />;
   }
 
-  // Если все в порядке, отображаем защищенный контент
-  return children;
+  // Проверяем активность пользователя
+  if (user && !user.is_active) {
+    return <Navigate to="/account-suspended" replace />;
+  }
+
+  return (
+    <PermissionGuard
+      permission={permission}
+      permissions={permissions}
+      requireAll={requireAll}
+      adminOnly={adminOnly}
+      fallback={<Navigate to="/403" replace />}
+    >
+      {children}
+    </PermissionGuard>
+  );
 };
 
 export default ProtectedRoute;

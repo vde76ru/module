@@ -1,90 +1,123 @@
-// frontend/src/App.js
-// --- Финальная, проработанная версия с профессиональной маршрутизацией ---
-
+// ===================================================
+// ФАЙЛ: frontend/src/App.js
+// ===================================================
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { Provider } from 'react-redux';
 import { ConfigProvider } from 'antd';
 import ruRU from 'antd/locale/ru_RU';
 
-import { store } from 'store';
-import ProtectedRoute from 'components/Auth/ProtectedRoute';
-import Layout from 'components/Layout/Layout';
-import Login from 'pages/Auth/Login';
-import Dashboard from 'pages/Dashboard/Dashboard';
-import ProductsPage from 'pages/Products/ProductsPage';
-import ProductDetailsPage from 'pages/Products/ProductDetailsPage';
-import WarehousesPage from 'pages/Warehouses/WarehousesPage';
-import SyncPage from 'pages/Sync/SyncPage';
-import AnalyticsPage from 'pages/Analytics/AnalyticsPage';
-import OrderList from 'pages/OrderList';
-import OrderDetails from 'pages/OrderDetails';
-import Register from 'pages/Auth/Register';
+import { AuthProvider } from './contexts/AuthContext';
+import ProtectedRoute from './components/Auth/ProtectedRoute';
+import Layout from './components/Layout/Layout';
 
-import './App.css';
+// Страницы
+import LoginPage from './pages/Auth/LoginPage';
+import DashboardPage from './pages/Dashboard/DashboardPage';
+import ProductsPage from './pages/Products/ProductsPage';
+import OrdersPage from './pages/Orders/OrdersPage';
+import MarketplacesPage from './pages/Marketplaces/MarketplacesPage';
+import WarehousesPage from './pages/Warehouses/WarehousesPage';
+import SuppliersPage from './pages/Suppliers/SuppliersPage';
+import UsersPage from './pages/Users/UsersPage';
+import AnalyticsPage from './pages/Analytics/AnalyticsPage';
+import SyncPage from './pages/Sync/SyncPage';
+import SettingsPage from './pages/Settings/SettingsPage';
+import ForbiddenPage from './pages/Error/ForbiddenPage';
+import NotFoundPage from './pages/Error/NotFoundPage';
+import AccountSuspendedPage from './pages/Error/AccountSuspendedPage';
+
+// Константы для прав
+import { PERMISSIONS } from './utils/constants';
 
 function App() {
   return (
-    // Оборачиваем все приложение в Provider, чтобы Redux был доступен везде
-    <Provider store={store}>
-      {/* Подключаем русскую локализацию для компонентов Ant Design */}
-      <ConfigProvider locale={ruRU}>
+    <ConfigProvider locale={ruRU}>
+      <AuthProvider>
         <Router>
           <Routes>
-            {/* --- Публичный маршрут --- */}
-            {/* Страница входа доступна всем */}
-            <Route path="/login" element={<Login />} />
+            {/* Публичные маршруты */}
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/403" element={<ForbiddenPage />} />
+            <Route path="/account-suspended" element={<AccountSuspendedPage />} />
 
-            {/* --- Защищенные маршруты --- */}
-            {/* Все остальные пути (/*) ведут на защищенную часть приложения */}
-            <Route
-              path="/*"
-              element={
-                // ProtectedRoute проверяет, авторизован ли пользователь.
-                // Если нет, он перенаправит на /login.
-                <ProtectedRoute>
-                  {/* Layout - это общий шаблон для всех внутренних страниц */}
-                  <Layout>
-                    {/* Внутри Layout находится вложенная маршрутизация */}
-                    <Routes>
-                      {/* При заходе на корень сайта, перенаправляем на /dashboard */}
-                      <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                      <Route path="/dashboard" element={<Dashboard />} />
+            {/* Защищенные маршруты */}
+            <Route path="/" element={
+              <ProtectedRoute>
+                <Layout />
+              </ProtectedRoute>
+            }>
+              {/* Главная страница */}
+              <Route index element={<Navigate to="/dashboard" replace />} />
 
-                      {/* Товары */}
-                      <Route path="/products" element={<ProductsPage />} />
-                      <Route path="/products/:id" element={<ProductDetailsPage />} />
+              {/* Дашборд - доступен всем авторизованным */}
+              <Route path="dashboard" element={<DashboardPage />} />
 
-                      {/* Склады */}
-                      <Route path="/warehouses" element={<WarehousesPage />} />
-
-                      {/* Заказы */}
-                      <Route path="/orders" element={<OrderList />} />
-                      <Route path="/orders/:orderId" element={<OrderDetails />} />
-
-                      {/* Синхронизация */}
-                      <Route path="/sync" element={<SyncPage />} />
-
-                      {/* Аналитика */}
-                      <Route path="/analytics" element={<AnalyticsPage />} />
-
-                      {/* Регистрация */}
-                      <Route path="/register" element={<Register />} />
-
-                      {/* Настройки (раскомментируйте, когда страница будет создана) */}
-                      {/* <Route path="/settings" element={<SettingsPage />} /> */}
-
-                      {/* Если страница не найдена, перенаправляем на /dashboard */}
-                      <Route path="*" element={<Navigate to="/dashboard" replace />} />
-                    </Routes>
-                  </Layout>
+              {/* Товары - требуется право просмотра товаров */}
+              <Route path="products/*" element={
+                <ProtectedRoute permission={PERMISSIONS.PRODUCTS_VIEW}>
+                  <ProductsPage />
                 </ProtectedRoute>
-              }
-            />
+              } />
+
+              {/* Заказы - требуется право просмотра заказов */}
+              <Route path="orders/*" element={
+                <ProtectedRoute permission={PERMISSIONS.ORDERS_VIEW}>
+                  <OrdersPage />
+                </ProtectedRoute>
+              } />
+
+              {/* Маркетплейсы - требуется право просмотра маркетплейсов */}
+              <Route path="marketplaces/*" element={
+                <ProtectedRoute permission={PERMISSIONS.MARKETPLACES_VIEW}>
+                  <MarketplacesPage />
+                </ProtectedRoute>
+              } />
+
+              {/* Склады - требуется право просмотра складов */}
+              <Route path="warehouses/*" element={
+                <ProtectedRoute permission={PERMISSIONS.WAREHOUSES_VIEW}>
+                  <WarehousesPage />
+                </ProtectedRoute>
+              } />
+
+              {/* Поставщики - требуется право просмотра поставщиков */}
+              <Route path="suppliers/*" element={
+                <ProtectedRoute permission={PERMISSIONS.SUPPLIERS_VIEW}>
+                  <SuppliersPage />
+                </ProtectedRoute>
+              } />
+
+              {/* Синхронизация - требуется право синхронизации */}
+              <Route path="sync" element={
+                <ProtectedRoute permission={PERMISSIONS.SYNC_EXECUTE}>
+                  <SyncPage />
+                </ProtectedRoute>
+              } />
+
+              {/* Аналитика - требуется право просмотра аналитики */}
+              <Route path="analytics/*" element={
+                <ProtectedRoute permission={PERMISSIONS.ANALYTICS_VIEW}>
+                  <AnalyticsPage />
+                </ProtectedRoute>
+              } />
+
+              {/* Пользователи - только для админов */}
+              <Route path="users/*" element={
+                <ProtectedRoute adminOnly>
+                  <UsersPage />
+                </ProtectedRoute>
+              } />
+
+              {/* Настройки - доступны всем */}
+              <Route path="settings/*" element={<SettingsPage />} />
+            </Route>
+
+            {/* 404 страница */}
+            <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </Router>
-      </ConfigProvider>
-    </Provider>
+      </AuthProvider>
+    </ConfigProvider>
   );
 }
 

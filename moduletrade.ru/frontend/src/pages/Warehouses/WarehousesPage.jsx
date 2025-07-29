@@ -19,6 +19,8 @@ import {
   Drawer,
   Statistic,
   Transfer,
+  Alert,
+  Spin,
 } from 'antd';
 import {
   PlusOutlined,
@@ -27,6 +29,9 @@ import {
   ShopOutlined,
   SwapOutlined,
   SettingOutlined,
+  CloudOutlined,
+  ApartmentOutlined,
+  InfoCircleOutlined,
 } from '@ant-design/icons';
 import {
   fetchWarehouses,
@@ -34,7 +39,7 @@ import {
   updateWarehouse,
   deleteWarehouse,
   transferProduct,
-} from 'store/warehousesSlice';
+} from '../../../store/warehousesSlice';
 
 const { Option } = Select;
 const { Title } = Typography;
@@ -42,11 +47,11 @@ const { TextArea } = Input;
 
 const WarehousesPage = () => {
   const dispatch = useDispatch();
-  const { items: warehouses, loading } = useSelector((state) => state.warehouses);
+  const { items: warehouses = [], loading } = useSelector((state) => state.warehouses || {});
 
   const [form] = Form.useForm();
   const [transferForm] = Form.useForm();
-  
+
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [isTransferVisible, setIsTransferVisible] = useState(false);
   const [isComponentModalVisible, setIsComponentModalVisible] = useState(false);
@@ -58,6 +63,15 @@ const WarehousesPage = () => {
   useEffect(() => {
     dispatch(fetchWarehouses());
   }, [dispatch]);
+
+  // ✅ ИСПРАВЛЯЕМ ПРОБЛЕМУ С FILTER - проверяем что warehouses является массивом
+  useEffect(() => {
+    if (warehouses && Array.isArray(warehouses)) {
+      // Фильтруем физические склады для компонентов мульти-склада
+      const physicalWarehouses = warehouses.filter(w => w.type === 'physical' && w.is_active);
+      setAvailableWarehouses(physicalWarehouses);
+    }
+  }, [warehouses]);
 
   const handleCreate = () => {
     setEditingWarehouse(null);
@@ -82,6 +96,7 @@ const WarehousesPage = () => {
       }
       setIsModalVisible(false);
       form.resetFields();
+      setEditingWarehouse(null);
     } catch (error) {
       message.error('Ошибка сохранения склада');
     }
@@ -117,29 +132,61 @@ const WarehousesPage = () => {
       message.warning('Управление компонентами доступно только для мульти-складов');
       return;
     }
-    
+
     setSelectedWarehouse(warehouse);
-    // Получаем доступные склады для добавления в мульти-склад
-    const available = warehouses.filter(w => 
-      w.id !== warehouse.id && 
-      w.type !== 'multi'
-    );
-    setAvailableWarehouses(available);
-    
-    // Устанавливаем текущие компоненты
-    setSelectedComponents(warehouse.components?.map(c => c.source_warehouse_id) || []);
+
+    // ✅ ИСПРАВЛЕНО: Безопасная работа с массивами
+    if (warehouse.components && Array.isArray(warehouse.components)) {
+      setSelectedComponents(warehouse.components.map(c => c.source_warehouse_id));
+    } else {
+      setSelectedComponents([]);
+    }
+
     setIsComponentModalVisible(true);
   };
 
   const handleSaveComponents = async () => {
     try {
-      // Здесь должна быть логика сохранения компонентов мульти-склада
+      // Логика сохранения компонентов мульти-склада
+      const updateData = {
+        components: selectedComponents
+      };
+
+      await dispatch(updateWarehouse({
+        id: selectedWarehouse.id,
+        data: updateData
+      })).unwrap();
+
       message.success('Состав мульти-склада обновлен');
       setIsComponentModalVisible(false);
-      dispatch(fetchWarehouses());
+      setSelectedWarehouse(null);
     } catch (error) {
       message.error('Ошибка обновления состава склада');
     }
+  };
+
+  const getWarehouseTypeIcon = (type) => {
+    switch (type) {
+      case 'physical':
+        return <ShopOutlined />;
+      case 'virtual':
+        return <CloudOutlined />;
+      case 'multi':
+        return <ApartmentOutlined />;
+      default:
+        return <ShopOutlined />;
+    }
+  };
+
+  const getWarehouseTypeTag = (type) => {
+    const typeMap = {
+      physical: { color: 'blue', text: 'Физический' },
+      virtual: { color: 'purple', text: 'Виртуальный' },
+      multi: { color: 'orange', text: 'Мульти-склад' }
+    };
+
+    const config = typeMap[type] || { color: 'default', text: type };
+    return <Tag color={config.color}>{config.text}</Tag>;
   };
 
   const columns = [
@@ -147,21 +194,18 @@ const WarehousesPage = () => {
       title: 'Название',
       dataIndex: 'name',
       key: 'name',
+      render: (text, record) => (
+        <Space>
+          {getWarehouseTypeIcon(record.type)}
+          <span>{text}</span>
+        </Space>
+      ),
     },
     {
       title: 'Тип',
       dataIndex: 'type',
       key: 'type',
-      render: (type) => {
-        const typeConfig = {
-          physical: { color: 'blue', text: 'Физический' },
-          virtual: { color: 'green', text: 'Виртуальный' },
-          multi: { color: 'purple', text: 'Мульти-склад' },
-          transit: { color: 'orange', text: 'Транзитный' },
-        };
-        const config = typeConfig[type] || { color: 'default', text: type };
-        return <Tag color={config.color}>{config.text}</Tag>;
-      },
+      render: (type) => getWarehouseTypeTag(type),
     },
     {
       title: 'Адрес',
@@ -170,78 +214,88 @@ const WarehousesPage = () => {
       ellipsis: true,
     },
     {
+      title: 'Приоритет',
+      dataIndex: 'priority',
+      key: 'priority',
+      sorter: (a, b) => a.priority - b.priority,
+    },
+    {
       title: 'Статус',
       dataIndex: 'is_active',
       key: 'is_active',
-      render: (value) => (
-        <Tag color={value ? 'green' : 'red'}>
-          {value ? 'Активен' : 'Неактивен'}
+      render: (isActive) => (
+        <Tag color={isActive ? 'green' : 'red'}>
+          {isActive ? 'Активен' : 'Неактивен'}
         </Tag>
       ),
     },
     {
-      title: 'Всего товаров',
-      dataIndex: 'total_products',
-      key: 'total_products',
-      render: (value) => value || 0,
+      title: 'Товаров',
+      dataIndex: 'products_count',
+      key: 'products_count',
+      render: (count) => count || 0,
     },
     {
-      title: 'Общая стоимость',
-      dataIndex: 'total_value',
-      key: 'total_value',
-      render: (value) => value ? `₽${value.toLocaleString()}` : '₽0',
+      title: 'Единиц',
+      dataIndex: 'total_quantity',
+      key: 'total_quantity',
+      render: (quantity) => quantity || 0,
     },
     {
       title: 'Действия',
       key: 'actions',
-      width: 200,
       render: (_, record) => (
-        <Space size="small">
+        <Space size="middle">
           <Button
-            type="text"
+            type="link"
             icon={<EditOutlined />}
             onClick={() => handleEdit(record)}
-            size="small"
-          />
+          >
+            Редактировать
+          </Button>
+
           {record.type === 'multi' && (
             <Button
-              type="text"
+              type="link"
               icon={<SettingOutlined />}
               onClick={() => handleManageComponents(record)}
-              size="small"
-              title="Управление компонентами"
-            />
+            >
+              Компоненты
+            </Button>
           )}
+
           <Popconfirm
-            title="Удалить склад?"
-            description="Это действие нельзя отменить"
+            title="Вы уверены, что хотите удалить этот склад?"
             onConfirm={() => handleDelete(record.id)}
             okText="Да"
             cancelText="Нет"
           >
             <Button
-              type="text"
-              icon={<DeleteOutlined />}
+              type="link"
               danger
-              size="small"
-            />
+              icon={<DeleteOutlined />}
+            >
+              Удалить
+            </Button>
           </Popconfirm>
         </Space>
       ),
     },
   ];
 
+  // ✅ БЕЗОПАСНАЯ ПРОВЕРКА НА МАССИВ ПЕРЕД РЕНДЕРОМ
+  const warehousesData = Array.isArray(warehouses) ? warehouses : [];
+
   return (
     <div>
       <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
         <Col>
-          <Title level={2} style={{ margin: 0 }}>
-            Управление складами
-          </Title>
+          <Title level={2}>Управление складами</Title>
         </Col>
         <Col>
           <Space>
             <Button
+              type="primary"
               icon={<SwapOutlined />}
               onClick={handleTransfer}
             >
@@ -259,52 +313,54 @@ const WarehousesPage = () => {
       </Row>
 
       {/* Статистика */}
-      <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={6}>
-          <Card size="small">
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24} sm={12} md={6}>
+          <Card>
             <Statistic
               title="Всего складов"
-              value={warehouses.length}
+              value={warehousesData.length}
               prefix={<ShopOutlined />}
             />
           </Card>
         </Col>
-        <Col span={6}>
-          <Card size="small">
+        <Col xs={24} sm={12} md={6}>
+          <Card>
             <Statistic
-              title="Активных"
-              value={warehouses.filter(w => w.is_active).length}
-              valueStyle={{ color: '#3f8600' }}
+              title="Активных складов"
+              value={warehousesData.filter(w => w.is_active).length}
+              prefix={<InfoCircleOutlined />}
             />
           </Card>
         </Col>
-        <Col span={6}>
-          <Card size="small">
+        <Col xs={24} sm={12} md={6}>
+          <Card>
             <Statistic
-              title="Физических"
-              value={warehouses.filter(w => w.type === 'physical').length}
-              valueStyle={{ color: '#1890ff' }}
+              title="Физических складов"
+              value={warehousesData.filter(w => w.type === 'physical').length}
+              prefix={<ShopOutlined />}
             />
           </Card>
         </Col>
-        <Col span={6}>
-          <Card size="small">
+        <Col xs={24} sm={12} md={6}>
+          <Card>
             <Statistic
-              title="Виртуальных"
-              value={warehouses.filter(w => w.type === 'virtual').length}
-              valueStyle={{ color: '#52c41a' }}
+              title="Виртуальных складов"
+              value={warehousesData.filter(w => w.type === 'virtual').length}
+              prefix={<CloudOutlined />}
             />
           </Card>
         </Col>
       </Row>
 
+      {/* Основная таблица */}
       <Card>
         <Table
           columns={columns}
-          dataSource={warehouses}
+          dataSource={warehousesData}
           rowKey="id"
           loading={loading}
           pagination={{
+            pageSize: 20,
             showSizeChanger: true,
             showQuickJumper: true,
             showTotal: (total, range) =>
@@ -315,9 +371,13 @@ const WarehousesPage = () => {
 
       {/* Модальное окно создания/редактирования склада */}
       <Modal
-        title={editingWarehouse ? 'Редактировать склад' : 'Новый склад'}
+        title={editingWarehouse ? 'Редактировать склад' : 'Создать склад'}
         open={isModalVisible}
-        onCancel={() => setIsModalVisible(false)}
+        onCancel={() => {
+          setIsModalVisible(false);
+          setEditingWarehouse(null);
+          form.resetFields();
+        }}
         footer={null}
         width={600}
       >
@@ -325,78 +385,95 @@ const WarehousesPage = () => {
           form={form}
           layout="vertical"
           onFinish={handleSave}
-          initialValues={{
-            type: 'physical',
-            is_active: true,
-          }}
         >
+          <Form.Item
+            label="Название склада"
+            name="name"
+            rules={[{ required: true, message: 'Введите название склада' }]}
+          >
+            <Input placeholder="Название склада" />
+          </Form.Item>
+
+          <Form.Item
+            label="Тип склада"
+            name="type"
+            rules={[{ required: true, message: 'Выберите тип склада' }]}
+          >
+            <Select placeholder="Выберите тип склада">
+              <Option value="physical">
+                <Space>
+                  <ShopOutlined />
+                  Физический склад
+                </Space>
+              </Option>
+              <Option value="virtual">
+                <Space>
+                  <CloudOutlined />
+                  Виртуальный склад
+                </Space>
+              </Option>
+              <Option value="multi">
+                <Space>
+                  <ApartmentOutlined />
+                  Мульти-склад
+                </Space>
+              </Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            label="Адрес"
+            name="address"
+          >
+            <TextArea rows={2} placeholder="Адрес склада" />
+          </Form.Item>
+
+          <Form.Item
+            label="Описание"
+            name="description"
+          >
+            <TextArea rows={3} placeholder="Описание склада" />
+          </Form.Item>
+
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item
-                label="Название"
-                name="name"
-                rules={[{ required: true, message: 'Введите название' }]}
+                label="Приоритет"
+                name="priority"
+                initialValue={0}
               >
-                <Input placeholder="Название склада" />
+                <Input type="number" min={0} placeholder="Приоритет" />
               </Form.Item>
             </Col>
             <Col span={12}>
               <Form.Item
-                label="Тип склада"
-                name="type"
-                rules={[{ required: true, message: 'Выберите тип' }]}
+                label="Статус"
+                name="is_active"
+                initialValue={true}
               >
                 <Select>
-                  <Option value="physical">Физический</Option>
-                  <Option value="virtual">Виртуальный</Option>
-                  <Option value="multi">Мульти-склад</Option>
-                  <Option value="transit">Транзитный</Option>
+                  <Option value={true}>Активен</Option>
+                  <Option value={false}>Неактивен</Option>
                 </Select>
               </Form.Item>
             </Col>
           </Row>
 
-          <Form.Item label="Адрес" name="address">
-            <TextArea rows={2} placeholder="Адрес склада" />
-          </Form.Item>
-
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item label="Контактное лицо" name="contact_person">
-                <Input placeholder="ФИО контактного лица" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Телефон" name="phone">
-                <Input placeholder="+7 (999) 123-45-67" />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Form.Item label="Описание" name="description">
-            <TextArea rows={3} placeholder="Дополнительная информация" />
-          </Form.Item>
-
-          <Form.Item
-            label="Активен"
-            name="is_active"
-            valuePropName="checked"
-          >
-            <Select>
-              <Option value={true}>Активен</Option>
-              <Option value={false}>Неактивен</Option>
-            </Select>
-          </Form.Item>
-
           <Row justify="end" gutter={8}>
             <Col>
-              <Button onClick={() => setIsModalVisible(false)}>
+              <Button
+                onClick={() => {
+                  setIsModalVisible(false);
+                  setEditingWarehouse(null);
+                  form.resetFields();
+                }}
+              >
                 Отмена
               </Button>
             </Col>
             <Col>
               <Button type="primary" htmlType="submit" loading={loading}>
-                Сохранить
+                {editingWarehouse ? 'Обновить' : 'Создать'}
               </Button>
             </Col>
           </Row>
@@ -405,7 +482,7 @@ const WarehousesPage = () => {
 
       {/* Модальное окно перемещения товаров */}
       <Modal
-        title="Перемещение товаров"
+        title="Перемещение товаров между складами"
         open={isTransferVisible}
         onCancel={() => setIsTransferVisible(false)}
         footer={null}
@@ -417,7 +494,7 @@ const WarehousesPage = () => {
           onFinish={handleTransferSave}
         >
           <Form.Item
-            label="Товар (SKU)"
+            label="SKU товара"
             name="product_sku"
             rules={[{ required: true, message: 'Введите SKU товара' }]}
           >
@@ -432,7 +509,7 @@ const WarehousesPage = () => {
                 rules={[{ required: true, message: 'Выберите склад' }]}
               >
                 <Select placeholder="Выберите склад">
-                  {warehouses.map(warehouse => (
+                  {warehousesData.map(warehouse => (
                     <Option key={warehouse.id} value={warehouse.id}>
                       {warehouse.name}
                     </Option>
@@ -447,7 +524,7 @@ const WarehousesPage = () => {
                 rules={[{ required: true, message: 'Выберите склад' }]}
               >
                 <Select placeholder="Выберите склад">
-                  {warehouses.map(warehouse => (
+                  {warehousesData.map(warehouse => (
                     <Option key={warehouse.id} value={warehouse.id}>
                       {warehouse.name}
                     </Option>
@@ -488,18 +565,29 @@ const WarehousesPage = () => {
       <Modal
         title={`Управление составом: ${selectedWarehouse?.name}`}
         open={isComponentModalVisible}
-        onCancel={() => setIsComponentModalVisible(false)}
+        onCancel={() => {
+          setIsComponentModalVisible(false);
+          setSelectedWarehouse(null);
+        }}
         onOk={handleSaveComponents}
         width={600}
         okText="Сохранить"
         cancelText="Отмена"
       >
-        <p>Выберите склады, которые будут входить в состав мульти-склада:</p>
+        <Alert
+          message="Информация"
+          description="Выберите склады, которые будут входить в состав мульти-склада. Остатки товаров будут суммироваться автоматически."
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+
         <Transfer
           dataSource={availableWarehouses.map(w => ({
             key: w.id,
             title: w.name,
-            description: w.address,
+            description: w.address || 'Без адреса',
+            disabled: w.id === selectedWarehouse?.id, // Склад не может включать сам себя
           }))}
           targetKeys={selectedComponents}
           onChange={setSelectedComponents}
@@ -509,6 +597,10 @@ const WarehousesPage = () => {
             height: 300,
           }}
           titles={['Доступные склады', 'Включенные в мульти-склад']}
+          showSearch
+          filterOption={(inputValue, option) =>
+            option.title?.toLowerCase().includes(inputValue.toLowerCase())
+          }
         />
       </Modal>
     </div>

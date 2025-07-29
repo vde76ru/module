@@ -1,4 +1,6 @@
-// frontend/src/utils/constants.js
+// ===================================================
+// ФАЙЛ: frontend/src/utils/constants.js
+// ===================================================
 
 // =====================================
 // API Endpoints
@@ -6,7 +8,7 @@
 export const API_ENDPOINTS = {
   // Авторизация
   LOGIN: '/auth/login',
-  REGISTER: '/auth/register', // ДОБАВЛЕНО!
+  REGISTER: '/auth/register',
   REFRESH: '/auth/refresh',
   LOGOUT: '/auth/logout',
   ME: '/auth/me',
@@ -52,6 +54,10 @@ export const API_ENDPOINTS = {
   ORDERS_BULK_UPDATE: '/orders/bulk-update',
   ORDERS_EXPORT: '/orders/export',
 
+  // Пользователи
+  USERS: '/users',
+  USER_DETAILS: '/users/:id',
+
   // Аналитика
   ANALYTICS_DASHBOARD: '/analytics/dashboard',
   ANALYTICS_SALES: '/analytics/sales',
@@ -74,113 +80,198 @@ export const API_ENDPOINTS = {
 };
 
 // =====================================
-// Storage Keys для localStorage
+// Роли пользователей (на основе БД)
 // =====================================
-export const STORAGE_KEYS = {
-  TOKEN: 'token',
-  REFRESH_TOKEN: 'refreshToken',
-  USER: 'user',
-  LANGUAGE: 'language',
-  THEME: 'theme',
-  SIDEBAR_COLLAPSED: 'sidebarCollapsed',
-  TABLE_SETTINGS: 'tableSettings',
+export const USER_ROLES = {
+  ADMIN: 'admin',
+  MANAGER: 'manager',
+  OPERATOR: 'operator',
+  VIEWER: 'viewer',
 };
 
-// =====================================
-// Статусы товаров
-// =====================================
-export const PRODUCT_STATUSES = {
-  DRAFT: 'draft',
-  ACTIVE: 'active',
-  INACTIVE: 'inactive',
-  ARCHIVED: 'archived',
-  OUT_OF_STOCK: 'out_of_stock',
+export const USER_ROLE_LABELS = {
+  [USER_ROLES.ADMIN]: 'Администратор',
+  [USER_ROLES.MANAGER]: 'Менеджер',
+  [USER_ROLES.OPERATOR]: 'Оператор',
+  [USER_ROLES.VIEWER]: 'Просмотр',
 };
 
-export const PRODUCT_STATUS_LABELS = {
-  [PRODUCT_STATUSES.DRAFT]: 'Черновик',
-  [PRODUCT_STATUSES.ACTIVE]: 'Активен',
-  [PRODUCT_STATUSES.INACTIVE]: 'Неактивен',
-  [PRODUCT_STATUSES.ARCHIVED]: 'Архивирован',
-  [PRODUCT_STATUSES.OUT_OF_STOCK]: 'Нет в наличии',
-};
-
-export const PRODUCT_STATUS_COLORS = {
-  [PRODUCT_STATUSES.DRAFT]: 'default',
-  [PRODUCT_STATUSES.ACTIVE]: 'success',
-  [PRODUCT_STATUSES.INACTIVE]: 'warning',
-  [PRODUCT_STATUSES.ARCHIVED]: 'default',
-  [PRODUCT_STATUSES.OUT_OF_STOCK]: 'error',
+export const USER_ROLE_COLORS = {
+  [USER_ROLES.ADMIN]: 'red',
+  [USER_ROLES.MANAGER]: 'blue',
+  [USER_ROLES.OPERATOR]: 'green',
+  [USER_ROLES.VIEWER]: 'default',
 };
 
 // =====================================
-// Типы источников товаров
+// Права доступа (на основе middleware)
 // =====================================
-export const PRODUCT_SOURCE_TYPES = {
-  INTERNAL: 'internal',
-  ETM: 'etm',
-  RS24: 'rs24',
-  CUSTOM: 'custom',
-  IMPORT: 'import',
-};
+export const PERMISSIONS = {
+  // Товары
+  PRODUCTS_VIEW: 'products.view',
+  PRODUCTS_CREATE: 'products.create',
+  PRODUCTS_UPDATE: 'products.update',
+  PRODUCTS_DELETE: 'products.delete',
+  PRODUCTS_IMPORT: 'products.import',
+  PRODUCTS_EXPORT: 'products.export',
 
-export const PRODUCT_SOURCE_LABELS = {
-  [PRODUCT_SOURCE_TYPES.INTERNAL]: 'Внутренний',
-  [PRODUCT_SOURCE_TYPES.ETM]: 'ETM',
-  [PRODUCT_SOURCE_TYPES.RS24]: 'RS24',
-  [PRODUCT_SOURCE_TYPES.CUSTOM]: 'Пользовательский',
-  [PRODUCT_SOURCE_TYPES.IMPORT]: 'Импорт',
-};
+  // Заказы
+  ORDERS_VIEW: 'orders.view',
+  ORDERS_CREATE: 'orders.create',
+  ORDERS_UPDATE: 'orders.update',
+  ORDERS_DELETE: 'orders.delete',
 
-// =====================================
-// Маркетплейсы
-// =====================================
-export const MARKETPLACES = {
-  OZON: 'ozon',
-  WILDBERRIES: 'wildberries',
-  YANDEX_MARKET: 'yandex_market',
-  AVITO: 'avito',
-  SBER_MARKET: 'sber_market',
-  ALIBABA: 'alibaba',
-};
+  // Маркетплейсы
+  MARKETPLACES_VIEW: 'marketplaces.view',
+  MARKETPLACES_CREATE: 'marketplaces.create',
+  MARKETPLACES_UPDATE: 'marketplaces.update',
+  MARKETPLACES_DELETE: 'marketplaces.delete',
 
-export const MARKETPLACE_LABELS = {
-  [MARKETPLACES.OZON]: 'Ozon',
-  [MARKETPLACES.WILDBERRIES]: 'Wildberries',
-  [MARKETPLACES.YANDEX_MARKET]: 'Яндекс.Маркет',
-  [MARKETPLACES.AVITO]: 'Авито',
-  [MARKETPLACES.SBER_MARKET]: 'СберМегаМаркет',
-  [MARKETPLACES.ALIBABA]: 'Alibaba',
-};
+  // Склады
+  WAREHOUSES_VIEW: 'warehouses.view',
+  WAREHOUSES_CREATE: 'warehouses.create',
+  WAREHOUSES_UPDATE: 'warehouses.update',
+  WAREHOUSES_DELETE: 'warehouses.delete',
 
-export const MARKETPLACE_COLORS = {
-  [MARKETPLACES.OZON]: '#005BFF',
-  [MARKETPLACES.WILDBERRIES]: '#CB11AB',
-  [MARKETPLACES.YANDEX_MARKET]: '#FFCC00',
-  [MARKETPLACES.AVITO]: '#00D4AA',
-  [MARKETPLACES.SBER_MARKET]: '#21A038',
-  [MARKETPLACES.ALIBABA]: '#FF6A00',
-};
+  // Поставщики
+  SUPPLIERS_VIEW: 'suppliers.view',
+  SUPPLIERS_CREATE: 'suppliers.create',
+  SUPPLIERS_UPDATE: 'suppliers.update',
+  SUPPLIERS_DELETE: 'suppliers.delete',
 
-// =====================================
-// Поставщики
-// =====================================
-export const SUPPLIERS = {
-  ETM: 'etm',
-  RS24: 'rs24',
-  CUSTOM: 'custom',
-  MANUAL: 'manual',
-};
+  // Пользователи
+  USERS_VIEW: 'users.view',
+  USERS_CREATE: 'users.create',
+  USERS_UPDATE: 'users.update',
+  USERS_DELETE: 'users.delete',
 
-export const SUPPLIER_LABELS = {
-  [SUPPLIERS.ETM]: 'ETM',
-  [SUPPLIERS.RS24]: 'RS24',
-  [SUPPLIERS.CUSTOM]: 'Пользовательский',
-  [SUPPLIERS.MANUAL]: 'Ручной ввод',
+  // Синхронизация
+  SYNC_EXECUTE: 'sync.execute',
+  SYNC_VIEW_LOGS: 'sync.view_logs',
+
+  // Аналитика
+  ANALYTICS_VIEW: 'analytics.view',
+  ANALYTICS_EXPORT: 'analytics.export',
+
+  // Биллинг
+  BILLING_VIEW: 'billing.view',
+  BILLING_MANAGE: 'billing.manage',
+
+  // Системные
+  SYSTEM_ADMIN: 'system.admin',
+  TENANT_ADMIN: 'tenant.admin',
 };
 
 // =====================================
-// Тарифы
+// Права по ролям (на основе middleware auth.js)
+// =====================================
+export const ROLE_PERMISSIONS = {
+  [USER_ROLES.ADMIN]: [
+    PERMISSIONS.PRODUCTS_VIEW,
+    PERMISSIONS.PRODUCTS_CREATE,
+    PERMISSIONS.PRODUCTS_UPDATE,
+    PERMISSIONS.PRODUCTS_DELETE,
+    PERMISSIONS.PRODUCTS_IMPORT,
+    PERMISSIONS.PRODUCTS_EXPORT,
+    PERMISSIONS.ORDERS_VIEW,
+    PERMISSIONS.ORDERS_CREATE,
+    PERMISSIONS.ORDERS_UPDATE,
+    PERMISSIONS.ORDERS_DELETE,
+    PERMISSIONS.MARKETPLACES_VIEW,
+    PERMISSIONS.MARKETPLACES_CREATE,
+    PERMISSIONS.MARKETPLACES_UPDATE,
+    PERMISSIONS.MARKETPLACES_DELETE,
+    PERMISSIONS.WAREHOUSES_VIEW,
+    PERMISSIONS.WAREHOUSES_CREATE,
+    PERMISSIONS.WAREHOUSES_UPDATE,
+    PERMISSIONS.WAREHOUSES_DELETE,
+    PERMISSIONS.SUPPLIERS_VIEW,
+    PERMISSIONS.SUPPLIERS_CREATE,
+    PERMISSIONS.SUPPLIERS_UPDATE,
+    PERMISSIONS.SUPPLIERS_DELETE,
+    PERMISSIONS.USERS_VIEW,
+    PERMISSIONS.USERS_CREATE,
+    PERMISSIONS.USERS_UPDATE,
+    PERMISSIONS.SYNC_EXECUTE,
+    PERMISSIONS.SYNC_VIEW_LOGS,
+    PERMISSIONS.ANALYTICS_VIEW,
+    PERMISSIONS.ANALYTICS_EXPORT,
+    PERMISSIONS.BILLING_VIEW,
+    PERMISSIONS.TENANT_ADMIN,
+  ],
+
+  [USER_ROLES.MANAGER]: [
+    PERMISSIONS.PRODUCTS_VIEW,
+    PERMISSIONS.PRODUCTS_CREATE,
+    PERMISSIONS.PRODUCTS_UPDATE,
+    PERMISSIONS.PRODUCTS_IMPORT,
+    PERMISSIONS.PRODUCTS_EXPORT,
+    PERMISSIONS.ORDERS_VIEW,
+    PERMISSIONS.ORDERS_CREATE,
+    PERMISSIONS.ORDERS_UPDATE,
+    PERMISSIONS.MARKETPLACES_VIEW,
+    PERMISSIONS.WAREHOUSES_VIEW,
+    PERMISSIONS.SUPPLIERS_VIEW,
+    PERMISSIONS.SYNC_EXECUTE,
+    PERMISSIONS.SYNC_VIEW_LOGS,
+    PERMISSIONS.ANALYTICS_VIEW,
+    PERMISSIONS.BILLING_VIEW,
+  ],
+
+  [USER_ROLES.OPERATOR]: [
+    PERMISSIONS.PRODUCTS_VIEW,
+    PERMISSIONS.PRODUCTS_UPDATE,
+    PERMISSIONS.ORDERS_VIEW,
+    PERMISSIONS.ORDERS_UPDATE,
+    PERMISSIONS.WAREHOUSES_VIEW,
+    PERMISSIONS.SYNC_EXECUTE,
+    PERMISSIONS.ANALYTICS_VIEW,
+  ],
+
+  [USER_ROLES.VIEWER]: [
+    PERMISSIONS.PRODUCTS_VIEW,
+    PERMISSIONS.ORDERS_VIEW,
+    PERMISSIONS.MARKETPLACES_VIEW,
+    PERMISSIONS.WAREHOUSES_VIEW,
+    PERMISSIONS.SUPPLIERS_VIEW,
+    PERMISSIONS.ANALYTICS_VIEW,
+  ],
+};
+
+// =====================================
+// Функции для проверки прав
+// =====================================
+export const hasPermission = (userRole, permission) => {
+  if (!userRole || !permission) return false;
+  if (userRole === USER_ROLES.ADMIN) return true; // Админы имеют все права
+  const rolePermissions = ROLE_PERMISSIONS[userRole] || [];
+  return rolePermissions.includes(permission);
+};
+
+export const hasPermissions = (userRole, permissions, requireAll = true) => {
+  if (!userRole || !permissions || !Array.isArray(permissions)) return false;
+  if (requireAll) {
+    return permissions.every(permission => hasPermission(userRole, permission));
+  } else {
+    return permissions.some(permission => hasPermission(userRole, permission));
+  }
+};
+
+export const isAdmin = (userRole) => {
+  return userRole === USER_ROLES.ADMIN;
+};
+
+export const isSuperAdmin = (userRole) => {
+  // В текущей БД нет super_admin роли, поэтому возвращаем false
+  return false;
+};
+
+export const getRolePermissions = (userRole) => {
+  return ROLE_PERMISSIONS[userRole] || [];
+};
+
+// =====================================
+// Тарифы (на основе БД)
 // =====================================
 export const TARIFF_TYPES = {
   FREE: 'free',
@@ -207,31 +298,54 @@ export const TARIFF_COLORS = {
 };
 
 // =====================================
-// Роли пользователей
+// Статусы товаров (на основе БД)
 // =====================================
-export const USER_ROLES = {
-  ADMIN: 'admin',
-  MANAGER: 'manager',
-  OPERATOR: 'operator',
-  VIEWER: 'viewer',
-};
-
-export const USER_ROLE_LABELS = {
-  [USER_ROLES.ADMIN]: 'Администратор',
-  [USER_ROLES.MANAGER]: 'Менеджер',
-  [USER_ROLES.OPERATOR]: 'Оператор',
-  [USER_ROLES.VIEWER]: 'Просмотр',
-};
-
-export const USER_ROLE_COLORS = {
-  [USER_ROLES.ADMIN]: 'red',
-  [USER_ROLES.MANAGER]: 'blue',
-  [USER_ROLES.OPERATOR]: 'green',
-  [USER_ROLES.VIEWER]: 'default',
+export const PRODUCT_STATUS_COLORS = {
+  ACTIVE: 'green',
+  INACTIVE: 'red',
 };
 
 // =====================================
-// Статусы заказов
+// Маркетплейсы (на основе БД)
+// =====================================
+export const MARKETPLACES = {
+  OZON: 'ozon',
+  WILDBERRIES: 'wildberries',
+  YANDEX_MARKET: 'yandex_market',
+  AVITO: 'avito',
+};
+
+export const MARKETPLACE_LABELS = {
+  [MARKETPLACES.OZON]: 'Ozon',
+  [MARKETPLACES.WILDBERRIES]: 'Wildberries',
+  [MARKETPLACES.YANDEX_MARKET]: 'Яндекс.Маркет',
+  [MARKETPLACES.AVITO]: 'Avito',
+};
+
+export const MARKETPLACE_COLORS = {
+  [MARKETPLACES.OZON]: '#005BFF',
+  [MARKETPLACES.WILDBERRIES]: '#CB11AB',
+  [MARKETPLACES.YANDEX_MARKET]: '#FFCC00',
+  [MARKETPLACES.AVITO]: '#00D4AA',
+};
+
+// =====================================
+// Поставщики (на основе БД)
+// =====================================
+export const SUPPLIERS = {
+  ETM: 'etm',
+  RS24: 'rs24',
+  MANUAL: 'manual',
+};
+
+export const SUPPLIER_LABELS = {
+  [SUPPLIERS.ETM]: 'ETM',
+  [SUPPLIERS.RS24]: 'RS24',
+  [SUPPLIERS.MANUAL]: 'Ручной ввод',
+};
+
+// =====================================
+// Статусы заказов (на основе БД)
 // =====================================
 export const ORDER_STATUSES = {
   NEW: 'new',
@@ -241,7 +355,6 @@ export const ORDER_STATUSES = {
   DELIVERED: 'delivered',
   CANCELLED: 'cancelled',
   RETURNED: 'returned',
-  REFUNDED: 'refunded',
 };
 
 export const ORDER_STATUS_LABELS = {
@@ -252,7 +365,6 @@ export const ORDER_STATUS_LABELS = {
   [ORDER_STATUSES.DELIVERED]: 'Доставлен',
   [ORDER_STATUSES.CANCELLED]: 'Отменен',
   [ORDER_STATUSES.RETURNED]: 'Возвращен',
-  [ORDER_STATUSES.REFUNDED]: 'Возмещен',
 };
 
 export const ORDER_STATUS_COLORS = {
@@ -263,7 +375,6 @@ export const ORDER_STATUS_COLORS = {
   [ORDER_STATUSES.DELIVERED]: 'green',
   [ORDER_STATUSES.CANCELLED]: 'red',
   [ORDER_STATUSES.RETURNED]: 'volcano',
-  [ORDER_STATUSES.REFUNDED]: 'purple',
 };
 
 // =====================================
@@ -296,160 +407,5 @@ export const SYNC_STATUS_COLORS = {
 // =====================================
 // Размеры пагинации
 // =====================================
-export const PAGINATION_SIZES = [10, 20, 50, 100, 200];
+export const PAGINATION_SIZES = [20, 50, 100];
 export const DEFAULT_PAGE_SIZE = 50;
-
-// =====================================
-// Форматы экспорта
-// =====================================
-export const EXPORT_FORMATS = {
-  XLSX: 'xlsx',
-  CSV: 'csv',
-  YML: 'yml',
-  XML: 'xml',
-  JSON: 'json',
-  PDF: 'pdf',
-};
-
-export const EXPORT_FORMAT_LABELS = {
-  [EXPORT_FORMATS.XLSX]: 'Excel (XLSX)',
-  [EXPORT_FORMATS.CSV]: 'CSV',
-  [EXPORT_FORMATS.YML]: 'YML (Яндекс.Маркет)',
-  [EXPORT_FORMATS.XML]: 'XML',
-  [EXPORT_FORMATS.JSON]: 'JSON',
-  [EXPORT_FORMATS.PDF]: 'PDF',
-};
-
-// =====================================
-// Типы файлов для импорта
-// =====================================
-export const IMPORT_FILE_TYPES = {
-  XLSX: '.xlsx',
-  XLS: '.xls',
-  CSV: '.csv',
-  XML: '.xml',
-  JSON: '.json',
-};
-
-export const ACCEPTED_FILE_TYPES = Object.values(IMPORT_FILE_TYPES).join(',');
-
-// =====================================
-// Максимальные размеры файлов (в байтах)
-// =====================================
-export const MAX_FILE_SIZES = {
-  IMAGE: 5 * 1024 * 1024, // 5MB
-  DOCUMENT: 10 * 1024 * 1024, // 10MB
-  IMPORT: 100 * 1024 * 1024, // 100MB
-  EXPORT: 500 * 1024 * 1024, // 500MB
-};
-
-// =====================================
-// Типы уведомлений
-// =====================================
-export const NOTIFICATION_TYPES = {
-  SUCCESS: 'success',
-  INFO: 'info',
-  WARNING: 'warning',
-  ERROR: 'error',
-};
-
-// =====================================
-// Период обновления данных (в миллисекундах)
-// =====================================
-export const REFRESH_INTERVALS = {
-  DASHBOARD: 30000, // 30 секунд
-  ORDERS: 60000, // 1 минута
-  SYNC_STATUS: 5000, // 5 секунд
-  STOCK: 120000, // 2 минуты
-};
-
-// =====================================
-// Настройки приложения
-// =====================================
-export const APP_CONFIG = {
-  NAME: 'ModuleTrade',
-  VERSION: '1.0.0',
-  SUPPORT_EMAIL: 'support@moduletrade.ru',
-  DOCS_URL: 'https://docs.moduletrade.ru',
-  DEFAULT_LANGUAGE: 'ru',
-  DEFAULT_CURRENCY: 'RUB',
-  DEFAULT_TIMEZONE: 'Europe/Moscow',
-};
-
-// =====================================
-// Регулярные выражения для валидации
-// =====================================
-export const REGEX_PATTERNS = {
-  EMAIL: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
-  PHONE: /^(\+7|7|8)?[\s\-]?\(?[489][0-9]{2}\)?[\s\-]?[0-9]{3}[\s\-]?[0-9]{2}[\s\-]?[0-9]{2}$/,
-  PASSWORD: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d@$!%*?&]{8,}$/,
-  ARTICLE: /^[A-Za-z0-9\-_]{3,50}$/,
-  BARCODE: /^[0-9]{8,14}$/,
-  PRICE: /^\d+(\.\d{1,2})?$/,
-};
-
-// =====================================
-// Цвета для статусов (дополнительные)
-// =====================================
-export const STATUS_COLORS = {
-  ACTIVE: '#52c41a',
-  INACTIVE: '#faad14',
-  ERROR: '#ff4d4f',
-  SUCCESS: '#52c41a',
-  WARNING: '#faad14',
-  INFO: '#1890ff',
-  DEFAULT: '#d9d9d9',
-};
-
-// =====================================
-// Форматы даты и времени
-// =====================================
-export const DATE_FORMATS = {
-  DATE: 'DD.MM.YYYY',
-  DATETIME: 'DD.MM.YYYY HH:mm',
-  TIME: 'HH:mm',
-  ISO: 'YYYY-MM-DD',
-  ISO_DATETIME: 'YYYY-MM-DD HH:mm:ss',
-};
-
-// =====================================
-// Валюты
-// =====================================
-export const CURRENCIES = {
-  RUB: 'RUB',
-  USD: 'USD',
-  EUR: 'EUR',
-  CNY: 'CNY',
-};
-
-export const CURRENCY_LABELS = {
-  [CURRENCIES.RUB]: '₽',
-  [CURRENCIES.USD]: '$',
-  [CURRENCIES.EUR]: '€',
-  [CURRENCIES.CNY]: '¥',
-};
-
-// =====================================
-// Единицы измерения
-// =====================================
-export const UNITS = {
-  PIECE: 'pcs',
-  KILOGRAM: 'kg',
-  GRAM: 'g',
-  LITER: 'l',
-  MILLILITER: 'ml',
-  METER: 'm',
-  CENTIMETER: 'cm',
-  SQUARE_METER: 'm2',
-};
-
-export const UNIT_LABELS = {
-  [UNITS.PIECE]: 'шт',
-  [UNITS.KILOGRAM]: 'кг',
-  [UNITS.GRAM]: 'г',
-  [UNITS.LITER]: 'л',
-  [UNITS.MILLILITER]: 'мл',
-  [UNITS.METER]: 'м',
-  [UNITS.CENTIMETER]: 'см',
-  [UNITS.SQUARE_METER]: 'м²',
-};

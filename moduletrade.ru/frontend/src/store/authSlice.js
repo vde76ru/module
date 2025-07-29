@@ -14,14 +14,18 @@ export const loginUser = createAsyncThunk(
   async ({ email, password, rememberMe = false }, { rejectWithValue }) => {
     try {
       const response = await authAPI.login(email, password, rememberMe);
+      
+      // ✅ ИСПРАВЛЕНО: Используем правильную структуру ответа
+      const responseData = response.data.data || response.data;
 
       // Сохраняем токены в localStorage
-      localStorage.setItem('token', response.data.data.token);
-      localStorage.setItem('refreshToken', response.data.data.refreshToken);
-      localStorage.setItem('user', JSON.stringify(response.data.data.user));
+      localStorage.setItem('token', responseData.token);
+      localStorage.setItem('refreshToken', responseData.refreshToken);
+      localStorage.setItem('user', JSON.stringify(responseData.user));
 
-      return response.data.data;
+      return responseData;
     } catch (error) {
+      console.error('Login error:', error);
       return rejectWithValue(
         error.response?.data?.error ||
         error.response?.data?.message ||
@@ -45,12 +49,15 @@ export const registerUser = createAsyncThunk(
         company_name
       });
 
-      // Сохраняем токены в localStorage
-      localStorage.setItem('token', response.data.data.token);
-      localStorage.setItem('refreshToken', response.data.data.refreshToken);
-      localStorage.setItem('user', JSON.stringify(response.data.data.user));
+      // ✅ ИСПРАВЛЕНО: Используем правильную структуру ответа
+      const responseData = response.data.data || response.data;
 
-      return response.data.data;
+      // Сохраняем токены в localStorage
+      localStorage.setItem('token', responseData.token);
+      localStorage.setItem('refreshToken', responseData.refreshToken);
+      localStorage.setItem('user', JSON.stringify(responseData.user));
+
+      return responseData;
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.error ||
@@ -76,10 +83,13 @@ export const refreshToken = createAsyncThunk(
 
       const response = await authAPI.refresh(refreshToken);
 
-      // Обновляем токен
-      localStorage.setItem('token', response.data.data.token);
+      // ✅ ИСПРАВЛЕНО: Используем правильную структуру ответа
+      const responseData = response.data.data || response.data;
 
-      return response.data.data;
+      // Обновляем токен
+      localStorage.setItem('token', responseData.token);
+
+      return responseData;
     } catch (error) {
       // Очищаем токены при ошибке
       localStorage.removeItem('token');
@@ -100,10 +110,13 @@ export const getCurrentUser = createAsyncThunk(
     try {
       const response = await authAPI.getCurrentUser();
 
-      // Обновляем данные пользователя в localStorage
-      localStorage.setItem('user', JSON.stringify(response.data.data.user));
+      // ✅ ИСПРАВЛЕНО: Используем правильную структуру ответа
+      const userData = response.data.data?.user || response.data.user || response.data;
 
-      return response.data.data.user;
+      // Обновляем данные пользователя в localStorage
+      localStorage.setItem('user', JSON.stringify(userData));
+
+      return userData;
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.error ||
@@ -272,10 +285,6 @@ const authSlice = createSlice({
         state.isRegistering = false;
         state.loading = false;
         state.error = action.payload;
-        state.isAuthenticated = false;
-        state.user = null;
-        state.token = null;
-        state.refreshToken = null;
       })
 
       // ===== REFRESH TOKEN =====
@@ -286,38 +295,35 @@ const authSlice = createSlice({
         state.isRefreshing = false;
         state.token = action.payload.token;
         state.isAuthenticated = true;
-        state.error = null;
+        if (action.payload.user) {
+          state.user = action.payload.user;
+        }
       })
-      .addCase(refreshToken.rejected, (state, action) => {
+      .addCase(refreshToken.rejected, (state) => {
         state.isRefreshing = false;
         state.user = null;
         state.token = null;
         state.refreshToken = null;
         state.isAuthenticated = false;
-        state.error = action.payload;
+
+        localStorage.removeItem('token');
+        localStorage.removeItem('refreshToken');
+        localStorage.removeItem('user');
       })
 
       // ===== GET CURRENT USER =====
       .addCase(getCurrentUser.pending, (state) => {
-        // Не показываем loading для фонового обновления данных пользователя
-        if (!state.user) {
-          state.loading = true;
-        }
+        state.loading = true;
       })
       .addCase(getCurrentUser.fulfilled, (state, action) => {
         state.loading = false;
         state.user = action.payload;
-        state.error = null;
       })
-      .addCase(getCurrentUser.rejected, (state, action) => {
+      .addCase(getCurrentUser.rejected, (state) => {
         state.loading = false;
-        state.error = action.payload;
-
-        // Если получение пользователя неуспешно, возможно токен невалиден
-        if (action.payload?.includes('401') || action.payload?.includes('Unauthorized')) {
-          state.user = null;
-          state.token = null;
-          state.refreshToken = null;
+        // Не очищаем токены при ошибке получения пользователя
+        // это может быть временная проблема сети
+        if (!state.token) {
           state.isAuthenticated = false;
 
           localStorage.removeItem('token');

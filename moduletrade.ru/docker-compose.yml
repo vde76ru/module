@@ -1,15 +1,27 @@
+# ===================================================
+# ОБНОВЛЕННЫЙ docker-compose.yml С ИСПРАВЛЕНИЯМИ БЕЗОПАСНОСТИ
+# ===================================================
+
+version: '3.8'
+
 services:
   postgres:
     image: postgres:15-alpine
     environment:
       POSTGRES_DB: saas_platform
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-SecurePostgresPass2025}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/migrations:/docker-entrypoint-initdb.d
-    ports:
-      - "5432:5432"
+    # ❌ УДАЛЯЕМ ВНЕШНИЙ ПОРТ ДЛЯ БЕЗОПАСНОСТИ
+    # ports:
+    #   - "5432:5432"
+    # ✅ Доступ только внутри Docker-сети
+    expose:
+      - "5432"
+    networks:
+      - moduletrade-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -18,13 +30,28 @@ services:
 
   redis:
     image: redis:7-alpine
-    command: redis-server --appendonly yes
+    # ✅ ДОБАВЛЯЕМ ПАРОЛЬ И ЗАЩИЩЕННУЮ КОНФИГУРАЦИЮ
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD:-SecureRedisPass2025}
+      --protected-mode yes
+      --bind 127.0.0.1
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
-    ports:
-      - "6379:6379"
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    # ❌ УДАЛЯЕМ ВНЕШНИЙ ПОРТ ДЛЯ БЕЗОПАСНОСТИ
+    # ports:
+    #   - "6379:6379"
+    # ✅ Доступ только внутри Docker-сети
+    expose:
+      - "6379"
+    networks:
+      - moduletrade-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-SecureRedisPass2025}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -32,13 +59,17 @@ services:
   rabbitmq:
     image: rabbitmq:3-management-alpine
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-admin}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-moduletrade_admin}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-SecureRabbitPass2025}
+      RABBITMQ_DEFAULT_VHOST: /moduletrade
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
-    ports:
-      - "5672:5672"
-      - "15672:15672"
+    # ✅ Управление доступно только локально через nginx proxy
+    expose:
+      - "5672"
+      - "15672"
+    networks:
+      - moduletrade-network
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
@@ -55,17 +86,21 @@ services:
       DB_PORT: 5432
       DB_NAME: saas_platform
       DB_USER: postgres
-      DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      REDIS_URL: redis://redis:6379
-      RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASS:-admin}@rabbitmq:5672
+      DB_PASSWORD: ${DB_PASSWORD:-SecurePostgresPass2025}
+      # ✅ ОБНОВЛЯЕМ URL REDIS С ПАРОЛЕМ
+      REDIS_URL: redis://:${REDIS_PASSWORD:-SecureRedisPass2025}@redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-SecureRedisPass2025}
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-moduletrade_admin}:${RABBITMQ_PASS:-SecureRabbitPass2025}@rabbitmq:5672/moduletrade
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
     volumes:
       - ./backend/uploads:/app/uploads
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
+    networks:
+      - moduletrade-network
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,10 +116,12 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     environment:
-      REACT_APP_API_URL: ${REACT_APP_API_URL:-https://api.moduletrade.ru/api}  # ✅ ИСПРАВЛЕНО
+      REACT_APP_API_URL: ${REACT_APP_API_URL:-https://api.moduletrade.ru/api}
       REACT_APP_STRIPE_PUBLIC_KEY: ${STRIPE_PUBLIC_KEY}
-    ports:
-      - "3001:80"
+    expose:
+      - "80"
+    networks:
+      - moduletrade-network
     depends_on:
       - backend
     restart: unless-stopped
@@ -92,15 +129,26 @@ services:
   nginx:
     image: nginx:alpine
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro
+      - ./nginx/security.conf:/etc/nginx/security.conf:ro
     ports:
       - "80:80"
       - "443:443"
+    networks:
+      - moduletrade-network
     depends_on:
       - backend
       - frontend
     restart: unless-stopped
+
+# ✅ СОЗДАЕМ ИЗОЛИРОВАННУЮ СЕТЬ
+networks:
+  moduletrade-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 
 volumes:
   postgres_data:
