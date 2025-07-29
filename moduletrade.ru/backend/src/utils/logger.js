@@ -1,16 +1,7 @@
 // backend/src/utils/logger.js
 const winston = require('winston');
-const path = require('path');
-const fs = require('fs');
 
-// Путь к папке с логами внутри контейнера
-const logDir = '/app/logs';
-
-// Создаем папку для логов, если она не существует
-if (!fs.existsSync(logDir)) {
-  fs.mkdirSync(logDir);
-}
-
+// Определяем уровни логирования
 const levels = {
   error: 0,
   warn: 1,
@@ -19,6 +10,7 @@ const levels = {
   debug: 4,
 };
 
+// Цвета для разных уровней
 const colors = {
   error: 'red',
   warn: 'yellow',
@@ -29,33 +21,61 @@ const colors = {
 
 winston.addColors(colors);
 
+// Формат для логов
 const format = winston.format.combine(
-  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss:ms' }),
+  winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss:SSS' }),
   winston.format.colorize({ all: true }),
   winston.format.printf(
-    (info) => `${info.timestamp} ${info.level}: ${info.message}`,
-  ),
+    (info) => `${info.timestamp} ${info.level}: ${info.message}` +
+    (info.error ? `\n${JSON.stringify(info.error, null, 2)}` : '') +
+    (info.stack ? `\n${info.stack}` : '')
+  )
 );
 
-const transports = [
-  new winston.transports.Console(),
-  new winston.transports.File({
-    filename: path.join(logDir, 'error.log'), // ИСПРАВЛЕННЫЙ ПУТЬ
-    level: 'error',
-    maxsize: 5242880, // 5MB
-    maxFiles: 5,
-  }),
-  new winston.transports.File({
-    filename: path.join(logDir, 'all.log'), // ИСПРАВЛЕННЫЙ ПУТЬ
-    maxsize: 5242880, // 5MB
-    maxFiles: 5,
-  }),
-];
+// Транспорты в зависимости от окружения
+const transports = [];
 
+if (process.env.NODE_ENV !== 'production') {
+  transports.push(
+    new winston.transports.Console({
+      format: format
+    })
+  );
+} else {
+  transports.push(
+    new winston.transports.Console({
+      format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.json()
+      )
+    }),
+    new winston.transports.File({
+      filename: 'logs/error.log',
+      level: 'error',
+      format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.json()
+      )
+    }),
+    new winston.transports.File({
+      filename: 'logs/combined.log',
+      format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.json()
+      )
+    })
+  );
+}
+
+// Создаем logger
 const logger = winston.createLogger({
-  level: process.env.LOG_LEVEL || 'debug',
+  level: process.env.LOG_LEVEL || 'info',
   levels,
-  format,
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.errors({ stack: true }),
+    winston.format.json()
+  ),
   transports,
 });
 

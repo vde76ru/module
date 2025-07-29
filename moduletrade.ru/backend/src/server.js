@@ -2,11 +2,21 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
 const compression = require('compression');
-const { DatabaseManager } = require('./services/DatabaseManager');
+const morgan = require('morgan');
+require('dotenv').config();
+
+// Правильный импорт database manager
+const db = require('./config/database');
 
 const app = express();
+
+// ========================================
+// LOGGING SETUP
+// ========================================
+if (process.env.NODE_ENV !== 'test') {
+  app.use(morgan('combined'));
+}
 
 // ========================================
 // MIDDLEWARE
@@ -15,7 +25,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-eval'"], // Разрешаем eval для решения CSP проблемы
+      scriptSrc: ["'self'", "'unsafe-eval'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "blob:"],
       connectSrc: ["'self'"],
@@ -27,166 +37,111 @@ app.use(helmet({
   },
 }));
 
+// CORS конфигурация
+const allowedOrigins = (process.env.CORS_ORIGIN || 'https://moduletrade.ru')
+  .split(',')
+  .map(origin => origin.trim());
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'https://moduletrade.ru',
-  credentials: true
+  origin: allowedOrigins,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization']
 }));
 
 app.use(compression());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 минут
-  max: 100 // лимит 100 запросов с IP за 15 минут
-});
-app.use(limiter);
+app.use(express.json({ limit: process.env.MAX_FILE_SIZE || '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: process.env.MAX_FILE_SIZE || '10mb' }));
 
 // ========================================
-// IMPORT ROUTES
+// RATE LIMITING (вместо express-rate-limit)
 // ========================================
-const authRoutes = require('./routes/auth');
-const productsRoutes = require('./routes/products');
-const ordersRoutes = require('./routes/orders');
-const analyticsRoutes = require('./routes/analytics');
-const warehousesRoutes = require('./routes/warehouses');
-const billingRoutes = require('./routes/billing');
-const syncRoutes = require('./routes/sync');
-const marketplacesRoutes = require('./routes/marketplaces');
-const suppliersRoutes = require('./routes/suppliers');
+const { rateLimiter } = require('./middleware/auth');
 
-// ========================================
-// DEBUG MIDDLEWARE - ДО МАРШРУТОВ!
-// ========================================
-app.use((req, res, next) => {
-  console.log(`🔍 ${new Date().toISOString()} - ${req.method} ${req.path}`);
-  console.log('Headers:', {
-    'content-type': req.headers['content-type'],
-    'authorization': req.headers.authorization ? 'Bearer ***' : 'none',
-    'origin': req.headers.origin,
-    'user-agent': req.headers['user-agent']?.substring(0, 50) + '...'
-  });
-  next();
-});
-
-// ========================================
-// API ROUTES - С ПРЕФИКСОМ /api
-// ========================================
-app.use('/api/auth', authRoutes);
-app.use('/api/products', productsRoutes);
-app.use('/api/orders', ordersRoutes);
-app.use('/api/analytics', analyticsRoutes);
-app.use('/api/warehouses', warehousesRoutes);
-app.use('/api/billing', billingRoutes);
-app.use('/api/sync', syncRoutes);
-app.use('/api/marketplaces', marketplacesRoutes);
-app.use('/api/suppliers', suppliersRoutes);
-
-// ========================================
-// LEGACY ROUTES (БЕЗ ПРЕФИКСА) - для обратной совместимости
-// ========================================
-app.use('/auth', authRoutes);
-app.use('/products', productsRoutes);
-app.use('/orders', ordersRoutes);
-app.use('/analytics', analyticsRoutes);
-app.use('/warehouses', warehousesRoutes);
-app.use('/billing', billingRoutes);
-app.use('/sync', syncRoutes);
-app.use('/marketplaces', marketplacesRoutes);
-app.use('/suppliers', suppliersRoutes);
+// Применяем rate limiting только если включено
+if (process.env.RATE_LIMIT_ENABLED === 'true') {
+  const maxRequests = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100;
+  const windowMs = parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 900000; // 15 минут
+  
+  app.use(rateLimiter(maxRequests, windowMs));
+}
 
 // ========================================
 // HEALTH CHECK
 // ========================================
 app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
+  res.json({ 
+    status: 'ok', 
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
-  });
-});
-
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    environment: process.env.NODE_ENV 
   });
 });
 
 // ========================================
-// TEST ENDPOINTS
+// DEBUG MIDDLEWARE (только в dev режиме)
 // ========================================
-app.get('/test', (req, res) => {
-  res.json({
-    message: 'Backend is working!',
-    timestamp: new Date().toISOString(),
-    available_routes: [
-      '/api/auth',
-      '/api/products',
-      '/api/orders',
-      '/api/analytics',
-      '/api/billing',
-      '/api/sync',
-      '/api/marketplaces',
-      '/api/suppliers'
-    ]
+if (process.env.NODE_ENV !== 'production') {
+  app.use((req, res, next) => {
+    console.log(`🔍 ${new Date().toISOString()} - ${req.method} ${req.path}`);
+    console.log('Headers:', {
+      'content-type': req.headers['content-type'],
+      'authorization': req.headers.authorization ? '[HIDDEN]' : 'None'
+    });
+    next();
   });
-});
+}
 
-app.get('/api/test', (req, res) => {
-  res.json({
-    message: 'API Backend is working!',
-    timestamp: new Date().toISOString(),
-    available_routes: [
-      '/api/auth',
-      '/api/products',
-      '/api/orders',
-      '/api/analytics',
-      '/api/billing',
-      '/api/sync',
-      '/api/marketplaces',
-      '/api/suppliers'
-    ]
-  });
-});
+// ========================================
+// ROUTES
+// ========================================
+try {
+  const authRoutes = require('./routes/auth');
+  const productsRoutes = require('./routes/products');
+  const ordersRoutes = require('./routes/orders');
+  const analyticsRoutes = require('./routes/analytics');
+  const warehousesRoutes = require('./routes/warehouses');
+  const billingRoutes = require('./routes/billing');
+  const syncRoutes = require('./routes/sync');
+  const marketplacesRoutes = require('./routes/marketplaces');
+  const suppliersRoutes = require('./routes/suppliers');
+
+  // Монтируем роуты
+  app.use('/api/auth', authRoutes);
+  app.use('/api/products', productsRoutes);
+  app.use('/api/orders', ordersRoutes);
+  app.use('/api/analytics', analyticsRoutes);
+  app.use('/api/warehouses', warehousesRoutes);
+  app.use('/api/billing', billingRoutes);
+  app.use('/api/sync', syncRoutes);
+  app.use('/api/marketplaces', marketplacesRoutes);
+  app.use('/api/suppliers', suppliersRoutes);
+
+} catch (error) {
+  console.error('❌ Ошибка при загрузке роутов:', error.message);
+  process.exit(1);
+}
 
 // ========================================
 // ERROR HANDLING
 // ========================================
 app.use((err, req, res, next) => {
-  console.error('🚨 Global error handler:', err);
-
+  console.error('❌ Необработанная ошибка:', err);
+  
   res.status(err.status || 500).json({
     success: false,
-    error: err.message || 'Internal server error',
-    timestamp: new Date().toISOString()
+    error: process.env.NODE_ENV === 'production' 
+      ? 'Internal server error' 
+      : err.message,
+    ...(process.env.NODE_ENV !== 'production' && { stack: err.stack })
   });
 });
 
-// ========================================
-// 404 HANDLER
-// ========================================
-app.use((req, res) => {
-  console.log(`❌ 404 - Route not found: ${req.method} ${req.path}`);
-
+// 404 handler
+app.use('*', (req, res) => {
   res.status(404).json({
     success: false,
-    error: 'Route not found',
-    path: req.path,
-    method: req.method,
-    timestamp: new Date().toISOString(),
-    available_routes: [
-      '/api/auth',
-      '/api/products', 
-      '/api/orders',
-      '/api/analytics',
-      '/api/billing',
-      '/api/sync',
-      '/api/marketplaces',
-      '/api/suppliers'
-    ]
+    error: 'Endpoint not found',
+    path: req.originalUrl
   });
 });
 
@@ -198,40 +153,45 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 async function startServer() {
   try {
-    // Инициализация базы данных
-    console.log('🚀 Initializing services...');
+    // Проверяем подключение к БД
+    console.log('🔄 Проверка подключения к базе данных...');
+    await db._testConnection();
     
-    const db = new DatabaseManager();
-    await db.initialize();
-    console.log('✅ Database initialized');
+    // Запускаем сервер
+    const server = app.listen(PORT, HOST, () => {
+      console.log(`🚀 Сервер запущен на ${HOST}:${PORT}`);
+      console.log(`📊 Environment: ${process.env.NODE_ENV}`);
+      console.log(`🔒 Rate limiting: ${process.env.RATE_LIMIT_ENABLED === 'true' ? 'enabled' : 'disabled'}`);
+    });
 
-    // Запуск сервера
-    app.listen(PORT, HOST, () => {
-      console.log('🎉 ========================================');
-      console.log(`🚀 Server running on ${HOST}:${PORT}`);
-      console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-      console.log(`🔗 Health check: http://${HOST}:${PORT}/health`);
-      console.log(`🔗 API Health check: http://${HOST}:${PORT}/api/health`);
-      console.log(`🔗 API test: http://${HOST}:${PORT}/api/test`);
-      console.log('📋 Available API routes:');
-      console.log('   - /api/auth/* (authentication)');
-      console.log('   - /api/products/* (products management)');
-      console.log('   - /api/orders/* (orders management)');
-      console.log('   - /api/analytics/* (analytics & reports)');
-      console.log('   - /api/warehouses/* (warehouse management)');
-      console.log('   - /api/billing/* (billing & tariffs)');
-      console.log('   - /api/sync/* (synchronization)');
-      console.log('   - /api/marketplaces/* (marketplace integrations)');
-      console.log('   - /api/suppliers/* (supplier management)');
-      console.log('🎉 ========================================');
+    // Graceful shutdown
+    process.on('SIGTERM', () => {
+      console.log('🛑 Получен SIGTERM, завершаем сервер...');
+      server.close(async () => {
+        await db.close();
+        console.log('✅ Сервер корректно завершен');
+        process.exit(0);
+      });
+    });
+
+    process.on('SIGINT', () => {
+      console.log('🛑 Получен SIGINT, завершаем сервер...');
+      server.close(async () => {
+        await db.close();
+        console.log('✅ Сервер корректно завершен');
+        process.exit(0);
+      });
     });
 
   } catch (error) {
-    console.error('❌ Failed to start server:', error);
+    console.error('❌ Критическая ошибка при запуске сервера:', error);
     process.exit(1);
   }
 }
 
-startServer();
+// Запускаем сервер
+if (require.main === module) {
+  startServer();
+}
 
 module.exports = app;
