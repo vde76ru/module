@@ -6,8 +6,31 @@ const compression = require('compression');
 const morgan = require('morgan');
 require('dotenv').config();
 
+// Инициализируем logger как можно раньше
+let logger;
+try {
+  logger = require('./utils/logger');
+  logger.info('Logger initialized successfully');
+} catch (error) {
+  console.error('Failed to initialize logger:', error.message);
+  // Используем простой fallback
+  logger = {
+    info: (...args) => console.log('[INFO]', ...args),
+    error: (...args) => console.error('[ERROR]', ...args),
+    warn: (...args) => console.warn('[WARN]', ...args),
+    debug: (...args) => console.log('[DEBUG]', ...args),
+    safeLog: (level, ...args) => console.log(`[${level.toUpperCase()}]`, ...args)
+  };
+}
+
 // Импорт конфигурации базы данных
-const db = require('./config/database');
+let db;
+try {
+  db = require('./config/database');
+  logger.info('Database configuration loaded');
+} catch (error) {
+  logger.error('Failed to load database configuration:', error);
+}
 
 const app = express();
 
@@ -19,6 +42,7 @@ const app = express();
 if (process.env.NODE_ENV !== 'test') {
   const logFormat = process.env.NODE_ENV === 'production' ? 'combined' : 'dev';
   app.use(morgan(logFormat));
+  logger.info(`Morgan logging enabled with format: ${logFormat}`);
 }
 
 // Безопасность
@@ -32,6 +56,8 @@ const allowedOrigins = (process.env.CORS_ORIGIN || 'https://moduletrade.ru')
   .split(',')
   .map(origin => origin.trim());
 
+logger.info('Allowed CORS origins:', allowedOrigins);
+
 app.use(cors({
   origin: function (origin, callback) {
     // Разрешаем запросы без origin (например, мобильные приложения)
@@ -40,7 +66,7 @@ app.use(cors({
     if (allowedOrigins.indexOf(origin) !== -1) {
       callback(null, true);
     } else {
-      console.warn(`CORS blocked origin: ${origin}`);
+      logger.warn(`CORS blocked origin: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -80,68 +106,45 @@ app.use('/uploads', express.static('uploads', {
 }));
 
 // ========================================
-// SIMPLE RATE LIMITING (без redis)
-// ========================================
-const rateLimitMap = new Map();
-
-const rateLimiter = (maxRequests = 100, windowMs = 15 * 60 * 1000) => {
-  return (req, res, next) => {
-    if (process.env.RATE_LIMIT_ENABLED !== 'true') {
-      return next();
-    }
-
-    const clientId = req.ip || req.connection.remoteAddress;
-    const now = Date.now();
-    const windowStart = now - windowMs;
-
-    // Очищаем старые записи
-    if (rateLimitMap.has(clientId)) {
-      const requests = rateLimitMap.get(clientId).filter(time => time > windowStart);
-      rateLimitMap.set(clientId, requests);
-    } else {
-      rateLimitMap.set(clientId, []);
-    }
-
-    const requests = rateLimitMap.get(clientId);
-
-    if (requests.length >= maxRequests) {
-      return res.status(429).json({
-        success: false,
-        error: 'Too many requests',
-        retryAfter: Math.ceil(windowMs / 1000)
-      });
-    }
-
-    requests.push(now);
-    next();
-  };
-};
-
-// Применяем rate limiting
-const maxRequests = parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100;
-const windowMs = parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 900000; // 15 минут
-app.use(rateLimiter(maxRequests, windowMs));
-
-// ========================================
-// HEALTH CHECK
+// HEALTH CHECK ENDPOINT
 // ========================================
 app.get('/health', async (req, res) => {
   try {
-    // Проверяем подключение к базе данных
-    await db._testConnection();
+    // Базовая проверка здоровья
+    let dbStatus = 'unknown';
 
-    res.json({
+    try {
+      if (db && db.mainPool) {
+        await db.mainPool.query('SELECT 1');
+        dbStatus = 'ok';
+      }
+    } catch (dbError) {
+      logger.error('Database health check failed:', dbError);
+      dbStatus = 'error';
+    }
+
+    const healthStatus = {
       status: 'ok',
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV,
       uptime: process.uptime(),
       memory: process.memoryUsage(),
       services: {
-        database: 'ok'
+        database: dbStatus
       }
-    });
+    };
+
+    // Если база недоступна, возвращаем 503
+    if (dbStatus === 'error') {
+      return res.status(503).json({
+        ...healthStatus,
+        status: 'error'
+      });
+    }
+
+    res.json(healthStatus);
   } catch (error) {
-    console.error('Health check failed:', error);
+    logger.error('Health check failed:', error);
     res.status(503).json({
       status: 'error',
       timestamp: new Date().toISOString(),
@@ -156,11 +159,11 @@ app.get('/health', async (req, res) => {
 if (process.env.NODE_ENV !== 'production') {
   app.use((req, res, next) => {
     const start = Date.now();
-    console.log(`🔍 ${new Date().toISOString()} - ${req.method} ${req.path}`);
+    logger.debug(`🔍 ${new Date().toISOString()} - ${req.method} ${req.path}`);
 
     res.on('finish', () => {
       const duration = Date.now() - start;
-      console.log(`✅ ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`);
+      logger.debug(`✅ ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`);
     });
 
     next();
@@ -168,167 +171,131 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // ========================================
-// API ROUTES
+// API ROUTES - С УЛУЧШЕННОЙ ОБРАБОТКОЙ ОШИБОК
 // ========================================
-try {
-  // Импортируем роуты
-  const authRoutes = require('./routes/auth');
-  const productsRoutes = require('./routes/products');
-  const ordersRoutes = require('./routes/orders');
-  const analyticsRoutes = require('./routes/analytics');
-  const warehousesRoutes = require('./routes/warehouses');
-  const billingRoutes = require('./routes/billing');
-  const syncRoutes = require('./routes/sync');
-  const marketplacesRoutes = require('./routes/marketplaces');
-  const suppliersRoutes = require('./routes/suppliers');
 
-  // Монтируем роуты
-  app.use('/api/auth', authRoutes);
-  app.use('/api/products', productsRoutes);
-  app.use('/api/orders', ordersRoutes);
-  app.use('/api/analytics', analyticsRoutes);
-  app.use('/api/warehouses', warehousesRoutes);
-  app.use('/api/billing', billingRoutes);
-  app.use('/api/sync', syncRoutes);
-  app.use('/api/marketplaces', marketplacesRoutes);
-  app.use('/api/suppliers', suppliersRoutes);
+const routeConfigs = [
+  { path: '/api/auth', file: './routes/auth', name: 'auth' },
+  { path: '/api/products', file: './routes/products', name: 'products' },
+  { path: '/api/orders', file: './routes/orders', name: 'orders' },
+  { path: '/api/analytics', file: './routes/analytics', name: 'analytics' },
+  { path: '/api/warehouses', file: './routes/warehouses', name: 'warehouses' },
+  { path: '/api/billing', file: './routes/billing', name: 'billing' },
+  { path: '/api/sync', file: './routes/sync', name: 'sync' },
+  { path: '/api/marketplaces', file: './routes/marketplaces', name: 'marketplaces' },
+  { path: '/api/suppliers', file: './routes/suppliers', name: 'suppliers' },
+  { path: '/api/dictionaries', file: './routes/dictionaries', name: 'dictionaries' },
+  { path: '/api/settings', file: './routes/settings', name: 'settings' }
+];
 
-  console.log('✅ Все роуты загружены успешно');
+// Загружаем роуты с обработкой ошибок для каждого файла
+const loadedRoutes = [];
+const failedRoutes = [];
 
-} catch (error) {
-  console.error('❌ Ошибка при загрузке роутов:', error.message);
-  console.error('Stack:', error.stack);
-  process.exit(1);
+for (const config of routeConfigs) {
+  try {
+    const routeModule = require(config.file);
+    app.use(config.path, routeModule);
+    loadedRoutes.push(config.name);
+    logger.info(`✅ Route loaded: ${config.name} -> ${config.path}`);
+  } catch (error) {
+    logger.error(`❌ Failed to load route ${config.name} (${config.file}):`, error.message);
+    logger.debug('Route loading error details:', error);
+    failedRoutes.push({ name: config.name, error: error.message });
+  }
+}
+
+// Логируем общий статус загрузки роутов
+logger.info(`Routes loaded: ${loadedRoutes.length}/${routeConfigs.length}`);
+if (loadedRoutes.length > 0) {
+  logger.info('Successfully loaded routes:', loadedRoutes.join(', '));
+}
+if (failedRoutes.length > 0) {
+  logger.error('Failed routes:', failedRoutes.map(r => `${r.name} (${r.error})`).join(', '));
 }
 
 // ========================================
-// ERROR HANDLING
+// ERROR HANDLERS
 // ========================================
 
-// Обработка ошибок CORS
-app.use((err, req, res, next) => {
-  if (err.message === 'Not allowed by CORS') {
-    return res.status(403).json({
-      success: false,
-      error: 'CORS policy violation',
-      origin: req.headers.origin
-    });
-  }
-  next(err);
+// 404 Handler
+app.use((req, res) => {
+  logger.warn(`404 - Route not found: ${req.method} ${req.path}`);
+  res.status(404).json({
+    success: false,
+    error: 'Route not found',
+    path: req.path,
+    method: req.method
+  });
 });
 
-// Общий обработчик ошибок
-app.use((err, req, res, next) => {
-  console.error('❌ Необработанная ошибка:');
-  console.error('Message:', err.message);
-  console.error('Stack:', err.stack);
-  console.error('URL:', req.originalUrl);
-  console.error('Method:', req.method);
-  console.error('Headers:', req.headers);
+// Global Error Handler
+app.use((error, req, res, next) => {
+  logger.error('Unhandled error:', {
+    message: error.message,
+    stack: error.stack,
+    path: req.path,
+    method: req.method,
+    body: req.body
+  });
 
-  const statusCode = err.status || err.statusCode || 500;
+  const statusCode = error.statusCode || error.status || 500;
 
   res.status(statusCode).json({
     success: false,
     error: process.env.NODE_ENV === 'production'
       ? 'Internal server error'
-      : err.message,
+      : error.message,
     ...(process.env.NODE_ENV !== 'production' && {
-      stack: err.stack,
-      url: req.originalUrl
+      stack: error.stack,
+      details: error.details
     })
-  });
-});
-
-// 404 handler
-app.use('*', (req, res) => {
-  console.warn(`🔍 404 - Route not found: ${req.method} ${req.originalUrl}`);
-  res.status(404).json({
-    success: false,
-    error: 'API endpoint not found',
-    method: req.method,
-    path: req.originalUrl,
-    timestamp: new Date().toISOString()
   });
 });
 
 // ========================================
 // SERVER STARTUP
 // ========================================
+
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 
-async function startServer() {
-  try {
-    console.log('🚀 Запуск ModuleTrade Backend Server...');
-    console.log(`📊 Environment: ${process.env.NODE_ENV}`);
-    console.log(`🔒 Rate limiting: ${process.env.RATE_LIMIT_ENABLED === 'true' ? 'enabled' : 'disabled'}`);
+const server = app.listen(PORT, HOST, () => {
+  logger.info(`🚀 Server running on ${HOST}:${PORT}`);
+  logger.info(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info(`🔍 Log level: ${process.env.LOG_LEVEL || 'info'}`);
 
-    // Проверяем подключение к базе данных
-    console.log('🔄 Проверка подключения к базе данных...');
-    await db._testConnection();
-    console.log('✅ База данных подключена успешно');
-
-    // Запускаем HTTP сервер
-    const server = app.listen(PORT, HOST, () => {
-      console.log(`🌐 Сервер запущен на http://${HOST}:${PORT}`);
-      console.log(`🔗 Health check: http://${HOST}:${PORT}/health`);
-      console.log(`📚 API доступен по: http://${HOST}:${PORT}/api`);
-    });
-
-    // Graceful shutdown handlers
-    const gracefulShutdown = async (signal) => {
-      console.log(`\n🛑 Получен сигнал ${signal}, начинаем graceful shutdown...`);
-
-      server.close(async (err) => {
-        if (err) {
-          console.error('❌ Ошибка при закрытии сервера:', err);
-          process.exit(1);
-        }
-
-        try {
-          console.log('🔄 Закрываем подключения к базе данных...');
-          await db.close();
-          console.log('✅ Все подключения закрыты');
-          console.log('👋 Сервер корректно завершен');
-          process.exit(0);
-        } catch (error) {
-          console.error('❌ Ошибка при закрытии подключений:', error);
-          process.exit(1);
-        }
-      });
-
-      // Принудительное завершение через 30 секунд
-      setTimeout(() => {
-        console.error('⏰ Превышен таймаут graceful shutdown, принудительное завершение');
-        process.exit(1);
-      }, 30000);
-    };
-
-    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-    // Обработка необработанных ошибок
-    process.on('unhandledRejection', (reason, promise) => {
-      console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
-    });
-
-    process.on('uncaughtException', (error) => {
-      console.error('❌ Uncaught Exception:', error);
-      process.exit(1);
-    });
-
-  } catch (error) {
-    console.error('❌ Критическая ошибка при запуске сервера:');
-    console.error('Message:', error.message);
-    console.error('Stack:', error.stack);
-    process.exit(1);
+  if (failedRoutes.length > 0) {
+    logger.warn(`⚠️  Some routes failed to load. Check logs for details.`);
   }
-}
+});
 
-// Запускаем сервер только если этот файл запущен напрямую
-if (require.main === module) {
-  startServer();
-}
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    logger.info('Process terminated');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  logger.info('SIGINT received, shutting down gracefully');
+  server.close(() => {
+    logger.info('Process terminated');
+    process.exit(0);
+  });
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
+});
 
 module.exports = app;
