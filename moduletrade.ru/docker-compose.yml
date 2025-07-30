@@ -1,5 +1,5 @@
 # ===================================================
-# MODULETRADE - ОБНОВЛЕННЫЙ docker-compose.yml
+# MODULETRADE - ИСПРАВЛЕННЫЙ docker-compose.yml
 # ===================================================
 
 services:
@@ -14,8 +14,9 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/migrations:/docker-entrypoint-initdb.d:ro
-    expose:
-      - "5432"
+    # ИСПРАВЛЕНИЕ 4: Добавляем ports для доступа к БД снаружи (опционально)
+    ports:
+      - "5432:5432"
     networks:
       - moduletrade-network
     healthcheck:
@@ -39,8 +40,9 @@ services:
       --tcp-keepalive 300
     volumes:
       - redis_data:/data
-    expose:
-      - "6379"
+    # ИСПРАВЛЕНИЕ 4: Добавляем ports для доступа к Redis снаружи (опционально)
+    ports:
+      - "6379:6379"
     networks:
       - moduletrade-network
     healthcheck:
@@ -61,9 +63,10 @@ services:
       RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE:-moduletrade_secret_cookie}
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
-    expose:
-      - "5672"
-      - "15672"
+    # ИСПРАВЛЕНИЕ 4: Добавляем ports для доступа к RabbitMQ снаружи
+    ports:
+      - "5672:5672"
+      - "15672:15672"
     networks:
       - moduletrade-network
     healthcheck:
@@ -116,10 +119,14 @@ services:
       MAX_FILE_SIZE: ${MAX_FILE_SIZE:-50MB}
       UPLOAD_DIR: ./uploads
     volumes:
-      - ./backend/uploads:/app/uploads
-      - ./backend/logs:/app/logs
-    expose:
-      - "3000"
+      # ИСПРАВЛЕНИЕ 2: Монтируем директории с правильными правами
+      - backend_uploads:/app/uploads
+      - backend_logs:/app/logs
+      # Для разработки можно добавить исходный код
+      # - ./backend/src:/app/src:ro
+    # ИСПРАВЛЕНИЕ 4: Добавляем ports для прямого доступа к backend
+    ports:
+      - "3000:3000"
     networks:
       - moduletrade-network
     depends_on:
@@ -148,8 +155,9 @@ services:
     environment:
       REACT_APP_API_URL: ${REACT_APP_API_URL:-https://api.moduletrade.ru/api}
       REACT_APP_STRIPE_PUBLIC_KEY: ${STRIPE_PUBLIC_KEY}
-    expose:
-      - "80"
+    # ИСПРАВЛЕНИЕ 4: Добавляем ports для прямого доступа к frontend (опционально)
+    ports:
+      - "3001:80"
     networks:
       - moduletrade-network
     depends_on:
@@ -163,7 +171,7 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/security.conf:/etc/nginx/security.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro
-      - ./nginx/logs:/var/log/nginx
+      - nginx_logs:/var/log/nginx
     ports:
       - "80:80"
       - "443:443"
@@ -194,4 +202,11 @@ volumes:
   redis_data:
     driver: local
   rabbitmq_data:
+    driver: local
+  # ИСПРАВЛЕНИЕ 2: Добавляем named volumes для backend
+  backend_uploads:
+    driver: local
+  backend_logs:
+    driver: local
+  nginx_logs:
     driver: local
