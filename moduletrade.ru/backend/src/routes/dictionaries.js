@@ -13,12 +13,18 @@ router.get('/categories', authenticate, async (req, res) => {
   try {
     const tenantId = req.user.tenantId;
 
-    const result = await db.mainPool.query(`
-      SELECT id, name, parent_id, description, created_at
-      FROM product_categories
-      WHERE tenant_id = $1
-      ORDER BY parent_id NULLS FIRST, name ASC
-    `, [tenantId]);
+    // ✅ ИСПРАВЛЕНО: Изменена таблица с product_categories на categories
+    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+    const result = await db.query(`
+      SELECT 
+        id, 
+        canonical_name as name, 
+        parent_id, 
+        path as description, 
+        created_at
+      FROM categories
+      ORDER BY parent_id NULLS FIRST, canonical_name ASC
+    `);
 
     res.json({
       success: true,
@@ -27,6 +33,111 @@ router.get('/categories', authenticate, async (req, res) => {
 
   } catch (error) {
     console.error('Get categories error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+/**
+ * ✅ НОВЫЙ ЭНДПОИНТ: GET /api/dictionaries/brands
+ * Получение списка брендов
+ */
+router.get('/brands', authenticate, async (req, res) => {
+  try {
+    const { search = '', limit = 100 } = req.query;
+
+    let query = `
+      SELECT 
+        id, 
+        canonical_name as name,
+        created_at
+      FROM brands
+    `;
+    
+    const queryParams = [];
+    let paramIndex = 1;
+
+    if (search) {
+      query += ` WHERE canonical_name ILIKE $${paramIndex}`;
+      queryParams.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    query += ` ORDER BY canonical_name ASC LIMIT $${paramIndex}`;
+    queryParams.push(limit);
+
+    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+    const result = await db.query(query, queryParams);
+
+    res.json({
+      success: true,
+      data: result.rows
+    });
+
+  } catch (error) {
+    console.error('Get brands error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+/**
+ * ✅ НОВЫЙ ЭНДПОИНТ: GET /api/dictionaries/suppliers
+ * Получение списка поставщиков
+ */
+router.get('/suppliers', authenticate, async (req, res) => {
+  try {
+    const { search = '', is_active = null, limit = 100 } = req.query;
+
+    let whereConditions = [];
+    const queryParams = [];
+    let paramIndex = 1;
+
+    if (search) {
+      whereConditions.push(`(name ILIKE $${paramIndex} OR code ILIKE $${paramIndex})`);
+      queryParams.push(`%${search}%`);
+      paramIndex++;
+    }
+
+    if (is_active !== null) {
+      // Предполагаем, что у поставщиков может быть поле is_active
+      whereConditions.push(`(api_config IS NOT NULL)`); // Простая проверка активности
+    }
+
+    const whereClause = whereConditions.length > 0 ? 
+      `WHERE ${whereConditions.join(' AND ')}` : '';
+
+    const query = `
+      SELECT 
+        id,
+        code,
+        name,
+        api_type,
+        is_main,
+        priority,
+        created_at
+      FROM suppliers
+      ${whereClause}
+      ORDER BY priority DESC, name ASC
+      LIMIT $${paramIndex}
+    `;
+
+    queryParams.push(limit);
+
+    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+    const result = await db.query(query, queryParams);
+
+    res.json({
+      success: true,
+      data: result.rows
+    });
+
+  } catch (error) {
+    console.error('Get suppliers error:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'

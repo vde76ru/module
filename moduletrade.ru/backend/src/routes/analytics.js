@@ -19,7 +19,8 @@ router.get('/dashboard', authenticate, async (req, res) => {
 
     const [ordersStats, productsStats, syncStats] = await Promise.all([
       // Статистика заказов
-      db.query(tenantId, `
+      // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+      db.query(`
         SELECT 
           COUNT(*) as total_orders,
           COALESCE(SUM(total_amount), 0) as total_revenue,
@@ -30,7 +31,8 @@ router.get('/dashboard', authenticate, async (req, res) => {
       `, [tenantId, thirtyDaysAgo.toISOString()]),
 
       // Статистика товаров
-      db.query(tenantId, `
+      // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+      db.query(`
         SELECT 
           COUNT(*) as total_products,
           COUNT(CASE WHEN is_active = true THEN 1 END) as active_products,
@@ -41,7 +43,8 @@ router.get('/dashboard', authenticate, async (req, res) => {
       `, [tenantId]),
 
       // Статистика синхронизации (с проверкой существования таблицы)
-      db.query(tenantId, `
+      // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+      db.query(`
         SELECT 
           COUNT(*) as total_syncs,
           COUNT(CASE WHEN status = 'completed' THEN 1 END) as successful_syncs,
@@ -49,7 +52,7 @@ router.get('/dashboard', authenticate, async (req, res) => {
           MAX(started_at) as last_sync
         FROM sync_logs 
         WHERE tenant_id = $1 AND started_at >= $2
-      `, [tenantId, thirtyDaysAgo.toISOString()]).catch(() => {
+      `, [tenantId, thirtyDaysAgo.toISOString()]).catch((error) => {
         // Если таблица не существует, возвращаем нули
         return { rows: [{ total_syncs: 0, successful_syncs: 0, failed_syncs: 0, last_sync: null }] };
       })
@@ -59,7 +62,8 @@ router.get('/dashboard', authenticate, async (req, res) => {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    const dailyStats = await db.query(tenantId, `
+    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+    const dailyStats = await db.query(`
       SELECT 
         DATE(order_date) as date,
         COUNT(*) as orders_count,
@@ -72,7 +76,8 @@ router.get('/dashboard', authenticate, async (req, res) => {
     `, [tenantId, sevenDaysAgo.toISOString()]);
 
     // Топ товары по продажам
-    const topProducts = await db.query(tenantId, `
+    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+    const topProducts = await db.query(`
       SELECT 
         p.name as product_name,
         p.internal_code,
@@ -143,7 +148,8 @@ router.get('/sales', authenticate, async (req, res) => {
 
     const whereClause = whereConditions.join(' AND ');
 
-    const salesData = await db.query(tenantId, `
+    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+    const salesData = await db.query(`
       SELECT 
         DATE(o.order_date) as date,
         COUNT(DISTINCT o.id) as orders_count,
@@ -173,6 +179,70 @@ router.get('/sales', authenticate, async (req, res) => {
 });
 
 /**
+ * ✅ НОВЫЙ ЭНДПОИНТ: GET /analytics/profit
+ * Аналитика прибыльности
+ */
+router.get('/profit', authenticate, async (req, res) => {
+  try {
+    const tenantId = req.user.tenantId;
+    const { date_from, date_to, marketplace_id } = req.query;
+
+    let whereConditions = ['o.tenant_id = $1'];
+    const queryParams = [tenantId];
+    let paramIndex = 2;
+
+    if (date_from) {
+      whereConditions.push(`o.order_date >= $${paramIndex}`);
+      queryParams.push(date_from);
+      paramIndex++;
+    }
+
+    if (date_to) {
+      whereConditions.push(`o.order_date <= $${paramIndex}`);
+      queryParams.push(date_to);
+      paramIndex++;
+    }
+
+    if (marketplace_id) {
+      whereConditions.push(`o.marketplace_id = $${paramIndex}`);
+      queryParams.push(marketplace_id);
+      paramIndex++;
+    }
+
+    const whereClause = whereConditions.join(' AND ');
+
+    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+    const profitData = await db.query(`
+      SELECT 
+        DATE(o.order_date) as date,
+        SUM(o.total_amount) as revenue,
+        SUM(o.commission_amount) as commission,
+        SUM(oi.quantity * ps.price) as cost,
+        SUM(o.total_amount - o.commission_amount - (oi.quantity * ps.price)) as profit,
+        COUNT(DISTINCT o.id) as orders_count
+      FROM orders o
+      JOIN order_items oi ON o.id = oi.order_id
+      LEFT JOIN product_suppliers ps ON oi.product_id = ps.product_id
+      WHERE ${whereClause}
+      GROUP BY DATE(o.order_date)
+      ORDER BY date DESC
+    `, queryParams);
+
+    res.json({
+      success: true,
+      data: profitData.rows
+    });
+
+  } catch (error) {
+    console.error('Profit analytics error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+/**
  * GET /analytics/products
  * Аналитика товаров
  */
@@ -186,7 +256,8 @@ router.get('/products', authenticate, async (req, res) => {
     const finalSort = validSorts.includes(sortField) ? sortField : 'revenue';
     const finalDirection = sortDirection === 'asc' ? 'ASC' : 'DESC';
 
-    const productStats = await db.query(tenantId, `
+    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+    const productStats = await db.query(`
       SELECT 
         p.id,
         p.name,

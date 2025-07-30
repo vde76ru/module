@@ -276,10 +276,10 @@ async function main() {
 
       // В production ждем подтверждения
       if (!process.env.AUTO_MIGRATE) {
-        log('❌ Установите AUTO_MIGRATE=true для автоматического выполнения в production', 'ERROR');
-        process.exit(1);
+          log('❌ Установите AUTO_MIGRATE=true для автоматического выполнения в production', 'ERROR');
+          process.exit(1); // <--- Вот здесь скрипт останавливается
       }
-    }
+  }
 
     // Проверяем безопасность всех миграций
     let allSafe = true;

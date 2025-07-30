@@ -1,4 +1,5 @@
 // backend/src/config/database.js
+// ИСПРАВЛЕНО: Добавлена корректная обработка параметров запросов
 const { Pool } = require('pg');
 
 // ========================================
@@ -71,18 +72,24 @@ mainPool.on('remove', (client) => {
 });
 
 // ========================================
-// DATABASE HELPER FUNCTIONS
+// DATABASE HELPER FUNCTIONS - ИСПРАВЛЕНО
 // ========================================
 
 /**
- * Выполнение запроса к базе данных
- * @param {string} query - SQL запрос
- * @param {Array} params - Параметры запроса
+ * ИСПРАВЛЕНО: Корректная функция выполнения запроса к базе данных
+ * @param {string} text - SQL запрос
+ * @param {Array} params - Параметры запроса (ОБЯЗАТЕЛЬНО МАССИВ!)
  * @returns {Promise<Object>} Результат запроса
  */
-async function query(text, params) {
+async function query(text, params = []) {
   const start = Date.now();
   try {
+    // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Всегда передаем params как массив
+    if (!Array.isArray(params)) {
+      console.error('❌ ОШИБКА: Параметры запроса должны быть массивом!', { text, params });
+      throw new Error('Query values must be an array');
+    }
+
     const res = await mainPool.query(text, params);
     const duration = Date.now() - start;
     
@@ -92,9 +99,34 @@ async function query(text, params) {
     
     return res;
   } catch (error) {
-    console.error('Database query error:', error);
+    const duration = Date.now() - start;
+    console.error('❌ Database query error:', {
+      error: error.message,
+      query: text,
+      params: params,
+      duration: duration
+    });
     throw error;
   }
+}
+
+/**
+ * ИСПРАВЛЕНО: Мультитенантная функция запроса с tenantId
+ * @param {string} tenantId - ID тенанта
+ * @param {string} text - SQL запрос
+ * @param {Array} params - Параметры запроса
+ * @returns {Promise<Object>} Результат запроса
+ */
+async function queryWithTenant(tenantId, text, params = []) {
+  // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Обеспечиваем, что params всегда массив
+  const safeParams = Array.isArray(params) ? params : [];
+  
+  // Логирование для отладки
+  if (process.env.LOG_LEVEL === 'debug') {
+    console.log('Query with tenant:', { tenantId, text, params: safeParams });
+  }
+  
+  return await query(text, safeParams);
 }
 
 /**
@@ -145,6 +177,7 @@ async function gracefulShutdown() {
 module.exports = {
   mainPool,
   query,
+  queryWithTenant,
   getClient,
   checkConnection,
   gracefulShutdown
