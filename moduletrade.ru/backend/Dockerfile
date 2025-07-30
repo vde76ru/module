@@ -13,8 +13,8 @@ RUN apk add --no-cache \
 # Копируем файлы зависимостей
 COPY package*.json ./
 
-# Устанавливаем ВСЕ зависимости (включая winston)
-RUN npm ci && npm cache clean --force
+# Используем npm install вместо npm ci для правильной установки всех зависимостей
+RUN npm install --production=false && npm cache clean --force
 
 # Production стадия
 FROM node:18-alpine

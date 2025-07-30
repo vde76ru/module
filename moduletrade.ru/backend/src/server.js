@@ -101,160 +101,160 @@ app.use(express.urlencoded({
 app.use('/uploads', express.static('uploads', {
   maxAge: '1d',
   setHeaders: (res, path) => {
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    if (path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.png')) {
+      res.set('Cache-Control', 'public, max-age=86400'); // 1 день
+    }
   }
 }));
 
 // ========================================
-// HEALTH CHECK ENDPOINT
+// HEALTH CHECK ENDPOINT (БЕЗ ПРОВЕРКИ БД)
 // ========================================
+
 app.get('/health', async (req, res) => {
-  try {
-    // Базовая проверка здоровья
-    let dbStatus = 'unknown';
+  const health = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    environment: process.env.NODE_ENV || 'development',
+    services: {
+      api: 'healthy'
+    }
+  };
 
+  // Опциональная проверка БД (без падения при ошибке)
+  if (db && db.checkHealth) {
     try {
-      if (db && db.mainPool) {
-        await db.mainPool.query('SELECT 1');
-        dbStatus = 'ok';
-      }
-    } catch (dbError) {
-      logger.error('Database health check failed:', dbError);
-      dbStatus = 'error';
+      const dbHealthy = await db.checkHealth();
+      health.services.database = dbHealthy ? 'healthy' : 'unhealthy';
+    } catch (error) {
+      health.services.database = 'error';
+      health.services.databaseError = error.message;
     }
-
-    const healthStatus = {
-      status: 'ok',
-      timestamp: new Date().toISOString(),
-      environment: process.env.NODE_ENV,
-      uptime: process.uptime(),
-      memory: process.memoryUsage(),
-      services: {
-        database: dbStatus
-      }
-    };
-
-    // Если база недоступна, возвращаем 503
-    if (dbStatus === 'error') {
-      return res.status(503).json({
-        ...healthStatus,
-        status: 'error'
-      });
-    }
-
-    res.json(healthStatus);
-  } catch (error) {
-    logger.error('Health check failed:', error);
-    res.status(503).json({
-      status: 'error',
-      timestamp: new Date().toISOString(),
-      error: 'Service unhealthy'
-    });
   }
+
+  const isHealthy = health.status === 'ok' && (!health.services.database || health.services.database === 'healthy');
+  res.status(isHealthy ? 200 : 503).json(health);
 });
 
 // ========================================
-// REQUEST LOGGING (только в dev режиме)
-// ========================================
-if (process.env.NODE_ENV !== 'production') {
-  app.use((req, res, next) => {
-    const start = Date.now();
-    logger.debug(`🔍 ${new Date().toISOString()} - ${req.method} ${req.path}`);
-
-    res.on('finish', () => {
-      const duration = Date.now() - start;
-      logger.debug(`✅ ${req.method} ${req.path} - ${res.statusCode} (${duration}ms)`);
-    });
-
-    next();
-  });
-}
-
-// ========================================
-// API ROUTES - С УЛУЧШЕННОЙ ОБРАБОТКОЙ ОШИБОК
+// API ROUTES
 // ========================================
 
-const routeConfigs = [
-  { path: '/api/auth', file: './routes/auth', name: 'auth' },
-  { path: '/api/products', file: './routes/products', name: 'products' },
-  { path: '/api/orders', file: './routes/orders', name: 'orders' },
-  { path: '/api/analytics', file: './routes/analytics', name: 'analytics' },
-  { path: '/api/warehouses', file: './routes/warehouses', name: 'warehouses' },
-  { path: '/api/billing', file: './routes/billing', name: 'billing' },
-  { path: '/api/sync', file: './routes/sync', name: 'sync' },
-  { path: '/api/marketplaces', file: './routes/marketplaces', name: 'marketplaces' },
-  { path: '/api/suppliers', file: './routes/suppliers', name: 'suppliers' },
-  { path: '/api/dictionaries', file: './routes/dictionaries', name: 'dictionaries' },
-  { path: '/api/settings', file: './routes/settings', name: 'settings' }
+const routesPath = './routes';
+const routeFiles = [
+  'auth',
+  'products',
+  'orders',
+  'analytics',
+  'warehouses',
+  'billing',
+  'sync',
+  'marketplaces',
+  'suppliers',
+  'dictionaries',
+  'settings'
 ];
 
-// Загружаем роуты с обработкой ошибок для каждого файла
-const loadedRoutes = [];
+let loadedRoutes = 0;
 const failedRoutes = [];
 
-for (const config of routeConfigs) {
+routeFiles.forEach(routeName => {
   try {
-    const routeModule = require(config.file);
-    app.use(config.path, routeModule);
-    loadedRoutes.push(config.name);
-    logger.info(`✅ Route loaded: ${config.name} -> ${config.path}`);
+    const route = require(`${routesPath}/${routeName}`);
+    app.use(`/api/${routeName}`, route);
+    loadedRoutes++;
+    logger.info(`✅ Route loaded: ${routeName} -> /api/${routeName}`);
   } catch (error) {
-    logger.error(`❌ Failed to load route ${config.name} (${config.file}):`, error.message);
-    logger.debug('Route loading error details:', error);
-    failedRoutes.push({ name: config.name, error: error.message });
+    failedRoutes.push(routeName);
+    logger.error(`❌ Failed to load route ${routeName} (${routesPath}/${routeName}):`, error.message);
   }
-}
+});
 
-// Логируем общий статус загрузки роутов
-logger.info(`Routes loaded: ${loadedRoutes.length}/${routeConfigs.length}`);
-if (loadedRoutes.length > 0) {
-  logger.info('Successfully loaded routes:', loadedRoutes.join(', '));
+logger.info(`Routes loaded: ${loadedRoutes}/${routeFiles.length}`);
+if (loadedRoutes > 0) {
+  logger.info('Successfully loaded routes:', routeFiles.filter(r => !failedRoutes.includes(r)).join(', '));
 }
 if (failedRoutes.length > 0) {
-  logger.error('Failed routes:', failedRoutes.map(r => `${r.name} (${r.error})`).join(', '));
+  logger.error('Failed routes:', failedRoutes.join(', '));
 }
 
 // ========================================
 // ERROR HANDLERS
 // ========================================
 
-// 404 Handler
+// 404 handler
 app.use((req, res) => {
-  logger.warn(`404 - Route not found: ${req.method} ${req.path}`);
   res.status(404).json({
     success: false,
-    error: 'Route not found',
+    error: 'Not found',
     path: req.path,
     method: req.method
   });
 });
 
-// Global Error Handler
+// Global error handler
 app.use((error, req, res, next) => {
-  logger.error('Unhandled error:', {
-    message: error.message,
-    stack: error.stack,
-    path: req.path,
-    method: req.method,
-    body: req.body
-  });
+  logger.error('Global error handler:', error);
 
-  const statusCode = error.statusCode || error.status || 500;
+  // CORS errors
+  if (error.message === 'Not allowed by CORS') {
+    return res.status(403).json({
+      success: false,
+      error: 'CORS policy violation',
+      origin: req.get('origin')
+    });
+  }
 
-  res.status(statusCode).json({
-    success: false,
-    error: process.env.NODE_ENV === 'production'
-      ? 'Internal server error'
-      : error.message,
-    ...(process.env.NODE_ENV !== 'production' && {
-      stack: error.stack,
+  // JWT errors
+  if (error.name === 'JsonWebTokenError') {
+    return res.status(401).json({
+      success: false,
+      error: 'Invalid token'
+    });
+  }
+
+  if (error.name === 'TokenExpiredError') {
+    return res.status(401).json({
+      success: false,
+      error: 'Token expired'
+    });
+  }
+
+  // Validation errors
+  if (error.name === 'ValidationError') {
+    return res.status(400).json({
+      success: false,
+      error: 'Validation error',
       details: error.details
-    })
+    });
+  }
+
+  // Database errors
+  if (error.code === '23505') { // Unique violation
+    return res.status(409).json({
+      success: false,
+      error: 'Duplicate entry'
+    });
+  }
+
+  if (error.code === '23503') { // Foreign key violation
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid reference'
+    });
+  }
+
+  // Default error
+  res.status(error.status || 500).json({
+    success: false,
+    error: error.message || 'Internal server error',
+    ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
   });
 });
 
 // ========================================
-// SERVER STARTUP
+// SERVER START
 // ========================================
 
 const PORT = process.env.PORT || 3000;
@@ -263,38 +263,53 @@ const HOST = process.env.HOST || '0.0.0.0';
 const server = app.listen(PORT, HOST, () => {
   logger.info(`🚀 Server running on ${HOST}:${PORT}`);
   logger.info(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
-  logger.info(`🔍 Log level: ${process.env.LOG_LEVEL || 'info'}`);
+  logger.info(`🔍 Log level: ${process.env.LOG_LEVEL || 'debug'}`);
 
   if (failedRoutes.length > 0) {
-    logger.warn(`⚠️  Some routes failed to load. Check logs for details.`);
+    logger.warn('⚠️  Some routes failed to load. Check logs for details.');
   }
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully');
+// ========================================
+// GRACEFUL SHUTDOWN
+// ========================================
+
+const gracefulShutdown = async (signal) => {
+  logger.info(`\n${signal} received. Starting graceful shutdown...`);
+
+  // Останавливаем прием новых запросов
   server.close(() => {
-    logger.info('Process terminated');
-    process.exit(0);
+    logger.info('✅ HTTP server closed');
   });
-});
 
-process.on('SIGINT', () => {
-  logger.info('SIGINT received, shutting down gracefully');
-  server.close(() => {
-    logger.info('Process terminated');
+  // Закрываем подключения к БД
+  if (db && db.gracefulShutdown) {
+    try {
+      await db.gracefulShutdown();
+      logger.info('✅ Database connections closed');
+    } catch (error) {
+      logger.error('❌ Error closing database connections:', error);
+    }
+  }
+
+  // Даем время на завершение активных запросов
+  setTimeout(() => {
+    logger.info('✅ Graceful shutdown completed');
     process.exit(0);
-  });
-});
+  }, 5000);
+};
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception:', error);
-  process.exit(1);
-});
+// Обработка сигналов
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
+// Обработка необработанных ошибок
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error);
   process.exit(1);
 });
 

@@ -5,6 +5,15 @@ const { Pool } = require('pg');
 // DATABASE CONFIGURATION
 // ========================================
 
+// Определяем нужен ли SSL
+const isProduction = process.env.NODE_ENV === 'production';
+const isDockerEnvironment = process.env.DB_HOST === 'postgres' || process.env.DB_HOST === 'localhost';
+
+// SSL конфигурация - отключаем для Docker
+const sslConfig = isProduction && !isDockerEnvironment ? {
+  rejectUnauthorized: false
+} : false;
+
 // Основной пул подключений для public схемы
 const mainPoolConfig = {
   host: process.env.DB_HOST || 'localhost',
@@ -21,10 +30,8 @@ const mainPoolConfig = {
   statement_timeout: 30000,
   query_timeout: 30000,
 
-  // SSL настройки для production
-  ssl: process.env.NODE_ENV === 'production' ? {
-    rejectUnauthorized: false
-  } : false,
+  // SSL настройки
+  ssl: sslConfig,
 
   // Дополнительные настройки
   application_name: 'moduletrade-backend',
@@ -51,34 +58,25 @@ mainPool.on('connect', (client) => {
 
 mainPool.on('error', (err, client) => {
   console.error('❌ Ошибка PostgreSQL пула:', err);
-  console.error('Client:', client ? 'Connected' : 'Not connected');
+  console.error('Client:', client ? 'present' : 'null');
+  // Не падаем при ошибках пула
 });
 
-mainPool.on('acquire', (client) => {
-  if (process.env.NODE_ENV !== 'production') {
-    console.log('🔗 Клиент получен из пула');
-  }
-});
-
-mainPool.on('release', (err, client) => {
-  if (err) {
-    console.error('⚠️ Ошибка при возврате клиента в пул:', err);
-  } else if (process.env.NODE_ENV !== 'production') {
-    console.log('🔄 Клиент возвращен в пул');
-  }
+mainPool.on('remove', () => {
+  console.log('❌ Клиент удален из пула');
 });
 
 // ========================================
-// TENANT POOL CACHE
+// TENANT POOL FACTORY
 // ========================================
 
 // Кеш пулов для тенантов
 const tenantPools = new Map();
 
 /**
- * Получает пул подключений для конкретного тенанта
+ * Получить или создать пул подключений для конкретного тенанта
  * @param {string} schemaName - Имя схемы тенанта
- * @returns {Pool} - Пул подключений
+ * @returns {Pool} Пул подключений
  */
 function getTenantPool(schemaName) {
   if (!schemaName || schemaName === 'public') {
@@ -89,150 +87,121 @@ function getTenantPool(schemaName) {
     return tenantPools.get(schemaName);
   }
 
-  // Создаем новый пул для тенанта
-  const tenantPoolConfig = {
+  const tenantPool = new Pool({
     ...mainPoolConfig,
-    application_name: `moduletrade-tenant-${schemaName}`,
-    min: 1,
-    max: 10
-  };
-
-  const pool = new Pool(tenantPoolConfig);
-
-  // Устанавливаем search_path для тенанта при подключении
-  pool.on('connect', (client) => {
-    console.log(`✅ Подключение к схеме тенанта: ${schemaName}`);
-    client.query(`SET search_path TO ${schemaName}, public`, (err) => {
-      if (err) {
-        console.error(`⚠️ Ошибка установки search_path для ${schemaName}:`, err);
-      }
-    });
+    application_name: `moduletrade-${schemaName}`,
+    // Переопределяем search_path для тенанта
+    options: `-c search_path=${schemaName},public`
   });
 
-  tenantPools.set(schemaName, pool);
-  return pool;
+  tenantPool.on('error', (err) => {
+    console.error(`❌ Ошибка пула тенанта ${schemaName}:`, err);
+  });
+
+  tenantPools.set(schemaName, tenantPool);
+  console.log(`✅ Создан пул для тенанта: ${schemaName}`);
+
+  return tenantPool;
 }
 
 // ========================================
-// UTILITY FUNCTIONS
+// TRANSACTION HELPER
 // ========================================
 
 /**
- * Тестирует подключение к базе данных
+ * Выполнить функцию в транзакции
+ * @param {Pool} pool - Пул подключений
+ * @param {Function} callback - Функция для выполнения
+ * @returns {Promise<any>} Результат функции
  */
-async function testConnection() {
-  try {
-    const client = await mainPool.connect();
-    const result = await client.query('SELECT NOW() as current_time, version() as db_version');
-    client.release();
-
-    console.log('✅ Подключение к БД успешно:');
-    console.log(`   Time: ${result.rows[0].current_time}`);
-    console.log(`   Version: ${result.rows[0].db_version.split(',')[0]}`);
-
-    return true;
-  } catch (error) {
-    console.error('❌ Ошибка подключения к БД:', error.message);
-    throw error;
-  }
-}
-
-/**
- * Выполняет запрос с логированием (для отладки)
- */
-async function query(text, params, poolToUse = mainPool) {
-  const start = Date.now();
-
-  try {
-    const result = await poolToUse.query(text, params);
-    const duration = Date.now() - start;
-
-    if (process.env.NODE_ENV !== 'production' && duration > 1000) {
-      console.warn(`⚠️ Медленный запрос (${duration}ms): ${text.substring(0, 100)}...`);
-    }
-
-    return result;
-  } catch (error) {
-    const duration = Date.now() - start;
-    console.error(`❌ Ошибка запроса (${duration}ms):`, error.message);
-    console.error('Query:', text.substring(0, 200));
-    console.error('Params:', params);
-    throw error;
-  }
-}
-
-/**
- * Выполняет транзакцию
- */
-async function transaction(callback, poolToUse = mainPool) {
-  const client = await poolToUse.connect();
+async function withTransaction(pool, callback) {
+  const client = await pool.connect();
 
   try {
     await client.query('BEGIN');
-
     const result = await callback(client);
-
     await client.query('COMMIT');
     return result;
-
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('❌ Транзакция отменена:', error.message);
     throw error;
   } finally {
     client.release();
   }
 }
 
+// ========================================
+// QUERY HELPERS
+// ========================================
+
 /**
- * Закрывает все подключения
+ * Выполнить запрос с повторными попытками
+ * @param {Pool} pool - Пул подключений
+ * @param {string} text - SQL запрос
+ * @param {Array} params - Параметры запроса
+ * @param {number} retries - Количество повторных попыток
+ * @returns {Promise<object>} Результат запроса
  */
-async function close() {
-  try {
-    console.log('🔄 Закрытие подключений к базе данных...');
+async function queryWithRetry(pool, text, params = [], retries = 3) {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await pool.query(text, params);
+    } catch (error) {
+      if (i === retries - 1) throw error;
 
-    // Закрываем основной пул
-    await mainPool.end();
-
-    // Закрываем все пулы тенантов
-    for (const [schemaName, pool] of tenantPools.entries()) {
-      console.log(`🔄 Закрытие пула для схемы: ${schemaName}`);
-      await pool.end();
+      // Ждем перед повторной попыткой
+      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
     }
-
-    tenantPools.clear();
-    console.log('✅ Все подключения к БД закрыты');
-
-  } catch (error) {
-    console.error('❌ Ошибка при закрытии подключений:', error);
-    throw error;
   }
 }
+
+// ========================================
+// HEALTH CHECK
+// ========================================
 
 /**
- * Получает информацию о пулах подключений
+ * Проверить состояние подключения к БД
+ * @returns {Promise<boolean>} Статус подключения
  */
-function getPoolStats() {
-  const mainStats = {
-    totalCount: mainPool.totalCount,
-    idleCount: mainPool.idleCount,
-    waitingCount: mainPool.waitingCount
-  };
+async function checkHealth() {
+  try {
+    const result = await mainPool.query('SELECT NOW()');
+    return !!result.rows[0];
+  } catch (error) {
+    console.error('❌ Database health check failed:', error.message);
+    return false;
+  }
+}
 
-  const tenantStats = {};
-  for (const [schemaName, pool] of tenantPools.entries()) {
-    tenantStats[schemaName] = {
-      totalCount: pool.totalCount,
-      idleCount: pool.idleCount,
-      waitingCount: pool.waitingCount
-    };
+// ========================================
+// GRACEFUL SHUTDOWN
+// ========================================
+
+async function gracefulShutdown() {
+  console.log('🛑 Закрытие подключений к БД...');
+
+  // Закрываем пулы тенантов
+  for (const [schemaName, pool] of tenantPools) {
+    try {
+      await pool.end();
+      console.log(`✅ Закрыт пул тенанта: ${schemaName}`);
+    } catch (error) {
+      console.error(`❌ Ошибка закрытия пула ${schemaName}:`, error);
+    }
   }
 
-  return {
-    main: mainStats,
-    tenants: tenantStats
-  };
+  // Закрываем основной пул
+  try {
+    await mainPool.end();
+    console.log('✅ Основной пул закрыт');
+  } catch (error) {
+    console.error('❌ Ошибка закрытия основного пула:', error);
+  }
 }
+
+// Обработка сигналов завершения
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
 
 // ========================================
 // EXPORTS
@@ -241,9 +210,8 @@ function getPoolStats() {
 module.exports = {
   mainPool,
   getTenantPool,
-  query,
-  transaction,
-  close,
-  getPoolStats,
-  _testConnection: testConnection
+  withTransaction,
+  queryWithRetry,
+  checkHealth,
+  gracefulShutdown
 };
