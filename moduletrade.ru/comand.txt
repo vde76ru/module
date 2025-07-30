@@ -1,0 +1,74 @@
+Команды!
+
+Остановка и очистка!
+docker compose down -v 
+
+Запуск с пересборкой
+docker compose up -d --build
+
+Миграции
+docker compose exec backend npm run migrate
+
+подключения
+ssh root@your-server-ip
+cd /var/www/moduletrade.ru
+git pull (получение с github)
+
+отправка на гит хаб 
+git add .
+git commit -m "refactor: implement absolute imports"
+git push (отправка в github)
+
+сбор логов 
+sudo docker-compose logs -f
+
+перезагрузка
+sudo docker-compose restart nginx-1
+sudo systemctl reload nginx
+
+получение статуса
+sudo systemctl status nginx
+sudo docker-compose ps
+
+просмотр папки
+ls -la
+
+открыть файл
+nano 
+
+посмотреть данные файла 
+cat 
+
+создание бэкапа базы данных и скачивание!
+sudo docker-compose exec -T postgres pg_dump -U postgres -d saas_platform > backup9.sql
+scp root@5.23.48.221:/var/www/moduletrade.ru/backup.sql "C:\Users\TREIDCOMPUTERS\projects\"
+
+
+
+# ==============================================
+# КОМАНДЫ ДЛЯ ИСПРАВЛЕНИЯ И ЗАПУСКА ПРОЕКТА
+# ==============================================
+
+# 1. ОСТАНОВКА ТЕКУЩИХ КОНТЕЙНЕРОВ
+# docker compose down -v
+
+# 2. ОЧИСТКА DOCKER (ОПЦИОНАЛЬНО)
+# docker system prune -a -f
+
+# 3. ЗАПУСК С ПЕРЕСБОРКОЙ
+# docker compose up -d --build
+
+# 4. ПРОВЕРКА ЛОГОВ
+# docker compose logs -f backend
+
+# 5. ВЫПОЛНЕНИЕ МИГРАЦИЙ (ПОСЛЕ ЗАПУСКА)
+# docker compose exec backend npm run migrate
+
+# 6. ПРОВЕРКА СТАТУСА МИГРАЦИЙ
+# docker compose exec backend npm run db:status
+
+cat > frontend/.env << 'EOF'
+REACT_APP_API_URL=https://api.moduletrade.ru/api
+GENERATE_SOURCEMAP=false
+SKIP_PREFLIGHT_CHECK=true
+EOF
