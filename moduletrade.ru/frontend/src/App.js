@@ -1,18 +1,27 @@
 // ===================================================
 // ФАЙЛ: frontend/src/App.js
+// ИСПРАВЛЕНО: Полный импорт PERMISSIONS и корректная структура
 // ===================================================
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ConfigProvider } from 'antd';
 import ruRU from 'antd/locale/ru_RU';
+import { Provider } from 'react-redux';
+import { store } from './store';
 
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/Auth/ProtectedRoute';
 import Layout from './components/Layout/Layout';
 
-// Страницы
-import LoginPage from './pages/Auth/LoginPage';
-import DashboardPage from './pages/Dashboard/DashboardPage';
+// ===================================================
+// СТРАНИЦЫ - ИСПРАВЛЕННЫЕ ИМПОРТЫ
+// ===================================================
+
+// Auth страницы
+import Login from './pages/Auth/Login';
+import Dashboard from './pages/Dashboard/Dashboard';
+
+// Основные страницы
 import ProductsPage from './pages/Products/ProductsPage';
 import OrdersPage from './pages/Orders/OrdersPage';
 import MarketplacesPage from './pages/Marketplaces/MarketplacesPage';
@@ -22,102 +31,110 @@ import UsersPage from './pages/Users/UsersPage';
 import AnalyticsPage from './pages/Analytics/AnalyticsPage';
 import SyncPage from './pages/Sync/SyncPage';
 import SettingsPage from './pages/Settings/SettingsPage';
+
+// Error страницы
 import ForbiddenPage from './pages/Error/ForbiddenPage';
 import NotFoundPage from './pages/Error/NotFoundPage';
 import AccountSuspendedPage from './pages/Error/AccountSuspendedPage';
 
-// Константы для прав
+// ✅ ИСПРАВЛЕНО: Полный путь к константам
 import { PERMISSIONS } from './utils/constants';
 
 function App() {
   return (
-    <ConfigProvider locale={ruRU}>
-      <AuthProvider>
-        <Router>
-          <Routes>
-            {/* Публичные маршруты */}
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/403" element={<ForbiddenPage />} />
-            <Route path="/account-suspended" element={<AccountSuspendedPage />} />
+    <Provider store={store}>
+      <ConfigProvider locale={ruRU}>
+        <AuthProvider>
+          <Router>
+            <Routes>
+              {/* Страница входа */}
+              <Route path="/login" element={<Login />} />
+              
+              {/* Страница заблокированного аккаунта */}
+              <Route path="/account-suspended" element={<AccountSuspendedPage />} />
+              
+              {/* Страница отказа в доступе */}
+              <Route path="/forbidden" element={<ForbiddenPage />} />
 
-            {/* Защищенные маршруты */}
-            <Route path="/" element={
-              <ProtectedRoute>
-                <Layout />
-              </ProtectedRoute>
-            }>
-              {/* Главная страница */}
-              <Route index element={<Navigate to="/dashboard" replace />} />
+              {/* Главная - редирект на dashboard */}
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
-              {/* Дашборд - доступен всем авторизованным */}
-              <Route path="dashboard" element={<DashboardPage />} />
-
-              {/* Товары - требуется право просмотра товаров */}
-              <Route path="products/*" element={
-                <ProtectedRoute permission={PERMISSIONS.PRODUCTS_VIEW}>
-                  <ProductsPage />
+              {/* Защищенные маршруты */}
+              <Route path="/*" element={
+                <ProtectedRoute>
+                  <Layout />
                 </ProtectedRoute>
-              } />
+              }>
+                {/* Dashboard - доступен всем авторизованным */}
+                <Route path="dashboard" element={<Dashboard />} />
 
-              {/* Заказы - требуется право просмотра заказов */}
-              <Route path="orders/*" element={
-                <ProtectedRoute permission={PERMISSIONS.ORDERS_VIEW}>
-                  <OrdersPage />
-                </ProtectedRoute>
-              } />
+                {/* Товары - требуется право просмотра товаров */}
+                <Route path="products/*" element={
+                  <ProtectedRoute permission={PERMISSIONS.PRODUCTS_VIEW}>
+                    <ProductsPage />
+                  </ProtectedRoute>
+                } />
 
-              {/* Маркетплейсы - требуется право просмотра маркетплейсов */}
-              <Route path="marketplaces/*" element={
-                <ProtectedRoute permission={PERMISSIONS.MARKETPLACES_VIEW}>
-                  <MarketplacesPage />
-                </ProtectedRoute>
-              } />
+                {/* Заказы - требуется право просмотра заказов */}
+                <Route path="orders/*" element={
+                  <ProtectedRoute permission={PERMISSIONS.ORDERS_VIEW}>
+                    <OrdersPage />
+                  </ProtectedRoute>
+                } />
 
-              {/* Склады - требуется право просмотра складов */}
-              <Route path="warehouses/*" element={
-                <ProtectedRoute permission={PERMISSIONS.WAREHOUSES_VIEW}>
-                  <WarehousesPage />
-                </ProtectedRoute>
-              } />
+                {/* Маркетплейсы - требуется право просмотра маркетплейсов */}
+                <Route path="marketplaces/*" element={
+                  <ProtectedRoute permission={PERMISSIONS.MARKETPLACES_VIEW}>
+                    <MarketplacesPage />
+                  </ProtectedRoute>
+                } />
 
-              {/* Поставщики - требуется право просмотра поставщиков */}
-              <Route path="suppliers/*" element={
-                <ProtectedRoute permission={PERMISSIONS.SUPPLIERS_VIEW}>
-                  <SuppliersPage />
-                </ProtectedRoute>
-              } />
+                {/* Склады - требуется право просмотра складов */}
+                <Route path="warehouses/*" element={
+                  <ProtectedRoute permission={PERMISSIONS.WAREHOUSES_VIEW}>
+                    <WarehousesPage />
+                  </ProtectedRoute>
+                } />
 
-              {/* Синхронизация - требуется право синхронизации */}
-              <Route path="sync" element={
-                <ProtectedRoute permission={PERMISSIONS.SYNC_EXECUTE}>
-                  <SyncPage />
-                </ProtectedRoute>
-              } />
+                {/* Поставщики - требуется право просмотра поставщиков */}
+                <Route path="suppliers/*" element={
+                  <ProtectedRoute permission={PERMISSIONS.SUPPLIERS_VIEW}>
+                    <SuppliersPage />
+                  </ProtectedRoute>
+                } />
 
-              {/* Аналитика - требуется право просмотра аналитики */}
-              <Route path="analytics/*" element={
-                <ProtectedRoute permission={PERMISSIONS.ANALYTICS_VIEW}>
-                  <AnalyticsPage />
-                </ProtectedRoute>
-              } />
+                {/* Синхронизация - требуется право синхронизации */}
+                <Route path="sync" element={
+                  <ProtectedRoute permission={PERMISSIONS.SYNC_EXECUTE}>
+                    <SyncPage />
+                  </ProtectedRoute>
+                } />
 
-              {/* Пользователи - только для админов */}
-              <Route path="users/*" element={
-                <ProtectedRoute adminOnly>
-                  <UsersPage />
-                </ProtectedRoute>
-              } />
+                {/* Аналитика - требуется право просмотра аналитики */}
+                <Route path="analytics/*" element={
+                  <ProtectedRoute permission={PERMISSIONS.ANALYTICS_VIEW}>
+                    <AnalyticsPage />
+                  </ProtectedRoute>
+                } />
 
-              {/* Настройки - доступны всем */}
-              <Route path="settings/*" element={<SettingsPage />} />
-            </Route>
+                {/* Пользователи - только для админов */}
+                <Route path="users/*" element={
+                  <ProtectedRoute adminOnly>
+                    <UsersPage />
+                  </ProtectedRoute>
+                } />
 
-            {/* 404 страница */}
-            <Route path="*" element={<NotFoundPage />} />
-          </Routes>
-        </Router>
-      </AuthProvider>
-    </ConfigProvider>
+                {/* Настройки - доступны всем */}
+                <Route path="settings/*" element={<SettingsPage />} />
+              </Route>
+
+              {/* 404 страница */}
+              <Route path="*" element={<NotFoundPage />} />
+            </Routes>
+          </Router>
+        </AuthProvider>
+      </ConfigProvider>
+    </Provider>
   );
 }
 
