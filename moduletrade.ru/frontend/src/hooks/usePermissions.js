@@ -1,7 +1,8 @@
 // ===================================================
 // ФАЙЛ: frontend/src/hooks/usePermissions.js
+// ОБНОВЛЕНО: Использует новый useAuth из Redux вместо AuthContext
 // ===================================================
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from './useAuth';
 import {
   hasPermission,
   hasPermissions,
@@ -12,11 +13,10 @@ import {
 
 /**
  * Хук для работы с правами пользователя
+ * Обновлен для работы с Redux authSlice
  */
 export const usePermissions = () => {
-  const { user, tenant } = useAuth();
-
-  const userRole = user?.role;
+  const { user, tenant, userRole } = useAuth();
 
   return {
     // Базовые проверки прав

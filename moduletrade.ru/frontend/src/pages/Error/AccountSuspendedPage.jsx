@@ -1,9 +1,10 @@
 // ===================================================
 // ФАЙЛ: frontend/src/pages/Error/AccountSuspendedPage.jsx
+// ОБНОВЛЕНО: Использует новый useAuth из Redux
 // ===================================================
 import React from 'react';
 import { Result, Button, Space } from 'antd';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../hooks/useAuth';
 
 const AccountSuspendedPage = () => {
   const { logout } = useAuth();

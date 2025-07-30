@@ -3,7 +3,7 @@ import { Form, Input, Button, Card, Typography, Checkbox, Alert, Spin } from 'an
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
-import { loginUser, clearError } from 'store/authSlice';
+import { loginUser, clearError } from '../../store/authSlice';
 import './Login.css';
 
 const { Title, Text } = Typography;
