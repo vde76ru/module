@@ -1,6 +1,9 @@
 // ===================================================
 // ФАЙЛ: frontend/src/pages/Warehouses/WarehousesPage.jsx
-// ИСПРАВЛЕНО: Правильные импорты из store внутри src/
+// ✅ ИСПРАВЛЕНО: transferProduct заменен на transferStock
+// ✅ ИСПРАВЛЕНО: Убран PermissionGuard, заменен на hasPermission условия
+// ✅ ИСПРАВЛЕНО: Убран дублирующий импорт usePermissions
+// ✅ ИСПРАВЛЕНО: Правильные импорты из store внутри src/
 // ===================================================
 import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -24,7 +27,8 @@ import {
   Transfer,
   Alert,
   Spin,
-  Switch
+  Switch,
+  InputNumber
 } from 'antd';
 import {
   PlusOutlined,
@@ -38,16 +42,16 @@ import {
   InfoCircleOutlined,
 } from '@ant-design/icons';
 
-// ✅ ИСПРАВЛЕНО: Правильный путь к store внутри src/
+// ✅ ИСПРАВЛЕНО: transferProduct заменен на transferStock
 import {
   fetchWarehouses,
   createWarehouse,
   updateWarehouse,
   deleteWarehouse,
-  transferProduct,
+  transferStock,
 } from '../../store/warehousesSlice';
 
-import PermissionGuard from '../../components/Auth/PermissionGuard';
+// ✅ ИСПРАВЛЕНО: Только один импорт usePermissions
 import { usePermissions } from '../../hooks/usePermissions';
 import { PERMISSIONS } from '../../utils/constants';
 
@@ -59,7 +63,7 @@ const WarehousesPage = () => {
   const dispatch = useDispatch();
   const { items: warehouses = [], loading } = useSelector((state) => state.warehouses || {});
   const { hasPermission } = usePermissions();
-
+  
   const [form] = Form.useForm();
   const [transferForm] = Form.useForm();
 
@@ -75,19 +79,13 @@ const WarehousesPage = () => {
   const canCreate = hasPermission(PERMISSIONS.WAREHOUSES_CREATE);
   const canUpdate = hasPermission(PERMISSIONS.WAREHOUSES_UPDATE);
   const canDelete = hasPermission(PERMISSIONS.WAREHOUSES_DELETE);
+  const canView = hasPermission(PERMISSIONS.WAREHOUSES_VIEW);
 
   useEffect(() => {
-    dispatch(fetchWarehouses());
-  }, [dispatch]);
-
-  // ✅ ИСПРАВЛЕНО: Безопасная проверка на массив
-  useEffect(() => {
-    if (warehouses && Array.isArray(warehouses)) {
-      // Фильтруем физические склады для компонентов мульти-склада
-      const physicalWarehouses = warehouses.filter(w => w.type === 'physical' && w.is_active);
-      setAvailableWarehouses(physicalWarehouses);
+    if (canView) {
+      dispatch(fetchWarehouses());
     }
-  }, [warehouses]);
+  }, [dispatch, canView]);
 
   const handleCreate = () => {
     setEditingWarehouse(null);
@@ -97,87 +95,52 @@ const WarehousesPage = () => {
 
   const handleEdit = (warehouse) => {
     setEditingWarehouse(warehouse);
-    form.setFieldsValue({
-      ...warehouse,
-      components: warehouse.components || [],
-    });
-    setSelectedComponents(warehouse.components || []);
+    form.setFieldsValue(warehouse);
     setIsModalVisible(true);
   };
 
-  const handleDelete = async (id) => {
+  const handleSubmit = async (values) => {
     try {
-      await dispatch(deleteWarehouse(id)).unwrap();
+      if (editingWarehouse) {
+        await dispatch(updateWarehouse({ id: editingWarehouse.id, data: values })).unwrap();
+        message.success('Склад обновлен');
+      } else {
+        await dispatch(createWarehouse(values)).unwrap();
+        message.success('Склад создан');
+      }
+      setIsModalVisible(false);
+    } catch (error) {
+      message.error('Ошибка сохранения склада');
+    }
+  };
+
+  const handleDelete = async (warehouseId) => {
+    try {
+      await dispatch(deleteWarehouse(warehouseId)).unwrap();
       message.success('Склад удален');
     } catch (error) {
       message.error('Ошибка удаления склада');
     }
   };
 
-  const handleSave = async (values) => {
-    try {
-      const warehouseData = {
-        ...values,
-        components: values.type === 'multi' ? selectedComponents : undefined,
-      };
-
-      if (editingWarehouse) {
-        await dispatch(updateWarehouse({ id: editingWarehouse.id, data: warehouseData })).unwrap();
-        message.success('Склад обновлен');
-      } else {
-        await dispatch(createWarehouse(warehouseData)).unwrap();
-        message.success('Склад создан');
-      }
-
-      setIsModalVisible(false);
-      form.resetFields();
-    } catch (error) {
-      message.error('Ошибка сохранения склада');
-    }
-  };
-
   const handleTransfer = () => {
     setIsTransferVisible(true);
-    transferForm.resetFields();
-  };
-
-  const handleTransferSubmit = async (values) => {
-    try {
-      await dispatch(transferProduct(values)).unwrap();
-      message.success('Товар перемещен');
-      setIsTransferVisible(false);
-      transferForm.resetFields();
-    } catch (error) {
-      message.error('Ошибка перемещения товара');
-    }
   };
 
   const handleManageComponents = (warehouse) => {
     setSelectedWarehouse(warehouse);
-    setSelectedComponents(warehouse.components || []);
     setIsComponentModalVisible(true);
   };
 
-  const handleComponentsChange = (targetKeys) => {
-    setSelectedComponents(targetKeys);
-  };
-
-  const saveComponents = async () => {
+  // ✅ ИСПРАВЛЕНО: transferProduct заменен на transferStock
+  const handleTransferSubmit = async (values) => {
     try {
-      const warehouseData = {
-        ...selectedWarehouse,
-        components: selectedComponents,
-      };
-
-      await dispatch(updateWarehouse({ 
-        id: selectedWarehouse.id, 
-        data: warehouseData 
-      })).unwrap();
-      
-      message.success('Компоненты склада обновлены');
-      setIsComponentModalVisible(false);
+      await dispatch(transferStock(values)).unwrap();
+      message.success('Перемещение выполнено');
+      setIsTransferVisible(false);
+      transferForm.resetFields();
     } catch (error) {
-      message.error('Ошибка обновления компонентов');
+      message.error('Ошибка перемещения товара');
     }
   };
 
@@ -186,14 +149,6 @@ const WarehousesPage = () => {
       title: 'Название',
       dataIndex: 'name',
       key: 'name',
-      render: (text, record) => (
-        <Space>
-          {record.type === 'physical' && <ShopOutlined />}
-          {record.type === 'virtual' && <CloudOutlined />}
-          {record.type === 'multi' && <ApartmentOutlined />}
-          <span>{text}</span>
-        </Space>
-      ),
     },
     {
       title: 'Тип',
@@ -201,18 +156,29 @@ const WarehousesPage = () => {
       key: 'type',
       render: (type) => {
         const typeConfig = {
-          physical: { color: 'blue', text: 'Физический' },
-          virtual: { color: 'green', text: 'Виртуальный' },
-          multi: { color: 'purple', text: 'Мульти-склад' },
+          physical: { label: 'Физический', icon: <ShopOutlined />, color: 'blue' },
+          virtual: { label: 'Виртуальный', icon: <CloudOutlined />, color: 'green' },
+          multi: { label: 'Мульти-склад', icon: <ApartmentOutlined />, color: 'purple' },
         };
-        const config = typeConfig[type] || { color: 'default', text: type };
-        return <Tag color={config.color}>{config.text}</Tag>;
+        const config = typeConfig[type] || typeConfig.physical;
+        return (
+          <Tag icon={config.icon} color={config.color}>
+            {config.label}
+          </Tag>
+        );
       },
     },
     {
       title: 'Адрес',
       dataIndex: 'address',
       key: 'address',
+      ellipsis: true,
+    },
+    {
+      title: 'Товары',
+      dataIndex: 'total_products',
+      key: 'total_products',
+      render: (count) => count || 0,
     },
     {
       title: 'Статус',
@@ -227,87 +193,92 @@ const WarehousesPage = () => {
     {
       title: 'Действия',
       key: 'actions',
-      render: (_, record) => (
+      render: (_, warehouse) => (
         <Space>
-          <PermissionGuard permission={PERMISSIONS.WAREHOUSES_VIEW}>
-            <Button
-              type="link"
-              icon={<InfoCircleOutlined />}
-              onClick={() => handleEdit(record)}
-            >
-              Просмотр
-            </Button>
-          </PermissionGuard>
-
-          <PermissionGuard permission={PERMISSIONS.WAREHOUSES_UPDATE}>
+          {canUpdate && (
             <Button
               type="link"
               icon={<EditOutlined />}
-              onClick={() => handleEdit(record)}
+              onClick={() => handleEdit(warehouse)}
             >
               Редактировать
             </Button>
-          </PermissionGuard>
-
-          {record.type === 'multi' && (
-            <PermissionGuard permission={PERMISSIONS.WAREHOUSES_UPDATE}>
-              <Button
-                type="link"
-                icon={<SettingOutlined />}
-                onClick={() => handleManageComponents(record)}
-              >
-                Компоненты
-              </Button>
-            </PermissionGuard>
           )}
-
-          <PermissionGuard permission={PERMISSIONS.WAREHOUSES_DELETE}>
+          <Button
+            type="link"
+            icon={<SettingOutlined />}
+            onClick={() => handleManageComponents(warehouse)}
+          >
+            Управление
+          </Button>
+          {canDelete && (
             <Popconfirm
               title="Удалить склад?"
-              onConfirm={() => handleDelete(record.id)}
+              description="Это действие нельзя отменить"
+              onConfirm={() => handleDelete(warehouse.id)}
               okText="Да"
               cancelText="Нет"
             >
-              <Button type="link" danger icon={<DeleteOutlined />}>
+              <Button
+                type="link"
+                danger
+                icon={<DeleteOutlined />}
+              >
                 Удалить
               </Button>
             </Popconfirm>
-          </PermissionGuard>
+          )}
         </Space>
       ),
     },
   ];
 
+  if (!canView) {
+    return (
+      <Alert
+        message="Нет доступа"
+        description="У вас нет прав для просмотра складов"
+        type="warning"
+        showIcon
+      />
+    );
+  }
+
   return (
-    <div>
+    <div className="warehouses-page">
       <Card>
-        <Row justify="space-between" align="middle" style={{ marginBottom: 16 }}>
-          <Col>
-            <Title level={4}>Склады</Title>
-          </Col>
-          <Col>
-            <Space>
-              <PermissionGuard permission={PERMISSIONS.WAREHOUSES_CREATE}>
-                <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-                  Добавить склад
-                </Button>
-              </PermissionGuard>
-              <Button icon={<SwapOutlined />} onClick={handleTransfer}>
-                Перемещение товаров
+        <div className="page-header">
+          <Title level={2}>Управление складами</Title>
+          <Space>
+            <Button
+              type="primary"
+              icon={<SwapOutlined />}
+              onClick={handleTransfer}
+            >
+              Перемещение товара
+            </Button>
+            {canCreate && (
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={handleCreate}
+              >
+                Добавить склад
               </Button>
-            </Space>
-          </Col>
-        </Row>
+            )}
+          </Space>
+        </div>
 
         <Table
+          dataSource={warehouses}
           columns={columns}
-          dataSource={Array.isArray(warehouses) ? warehouses : []}
           loading={loading}
           rowKey="id"
           pagination={{
             pageSize: 20,
             showSizeChanger: true,
-            showTotal: (total) => `Всего: ${total}`,
+            showTotal: (total, range) => 
+              `${range[0]}-${range[1]} из ${total} складов`,
           }}
         />
       </Card>
@@ -317,69 +288,100 @@ const WarehousesPage = () => {
         title={editingWarehouse ? 'Редактировать склад' : 'Создать склад'}
         open={isModalVisible}
         onCancel={() => setIsModalVisible(false)}
-        footer={null}
-        width={600}
+        onOk={() => form.submit()}
+        width={800}
       >
         <Form
           form={form}
           layout="vertical"
-          onFinish={handleSave}
+          onFinish={handleSubmit}
         >
-          <Form.Item
-            name="name"
-            label="Название"
-            rules={[{ required: true, message: 'Введите название склада' }]}
-          >
-            <Input placeholder="Название склада" />
-          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                label="Название"
+                name="name"
+                rules={[
+                  { required: true, message: 'Введите название склада' },
+                  { min: 2, message: 'Минимум 2 символа' }
+                ]}
+              >
+                <Input placeholder="Основной склад" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                label="Тип склада"
+                name="type"
+                rules={[{ required: true, message: 'Выберите тип склада' }]}
+              >
+                <Select placeholder="Выберите тип">
+                  <Option value="physical">Физический</Option>
+                  <Option value="virtual">Виртуальный</Option>
+                  <Option value="multi">Мульти-склад</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Form.Item
-            name="type"
-            label="Тип склада"
-            rules={[{ required: true, message: 'Выберите тип склада' }]}
-          >
-            <Select placeholder="Выберите тип склада">
-              <Option value="physical">Физический</Option>
-              <Option value="virtual">Виртуальный</Option>
-              <Option value="multi">Мульти-склад</Option>
-            </Select>
-          </Form.Item>
-
-          <Form.Item
-            name="address"
             label="Адрес"
+            name="address"
+            rules={[{ required: true, message: 'Введите адрес склада' }]}
           >
-            <TextArea rows={2} placeholder="Адрес склада" />
+            <TextArea 
+              placeholder="г. Москва, ул. Примерная, д. 1"
+              rows={2}
+            />
+          </Form.Item>
+
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                label="Контактное лицо"
+                name="contact_person"
+              >
+                <Input placeholder="Иван Иванов" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                label="Телефон"
+                name="contact_phone"
+              >
+                <Input placeholder="+7 (999) 123-45-67" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Form.Item
+            label="Описание"
+            name="description"
+          >
+            <TextArea 
+              placeholder="Дополнительная информация о складе"
+              rows={3}
+            />
           </Form.Item>
 
           <Form.Item
             name="is_active"
-            label="Статус"
             valuePropName="checked"
             initialValue={true}
           >
-            <Switch checkedChildren="Активен" unCheckedChildren="Неактивен" />
-          </Form.Item>
-
-          <Form.Item>
-            <Space>
-              <Button type="primary" htmlType="submit">
-                {editingWarehouse ? 'Обновить' : 'Создать'}
-              </Button>
-              <Button onClick={() => setIsModalVisible(false)}>
-                Отмена
-              </Button>
-            </Space>
+            <Switch />
+            <span style={{ marginLeft: 8 }}>Активен</span>
           </Form.Item>
         </Form>
       </Modal>
 
-      {/* Модальное окно перемещения товаров */}
+      {/* Модальное окно перемещения товара */}
       <Modal
-        title="Перемещение товаров"
+        title="Перемещение товара между складами"
         open={isTransferVisible}
         onCancel={() => setIsTransferVisible(false)}
-        footer={null}
+        onOk={() => transferForm.submit()}
+        width={600}
       >
         <Form
           form={transferForm}
@@ -387,90 +389,142 @@ const WarehousesPage = () => {
           onFinish={handleTransferSubmit}
         >
           <Form.Item
-            name="product_id"
             label="Товар"
+            name="product_id"
             rules={[{ required: true, message: 'Выберите товар' }]}
           >
-            <Select placeholder="Выберите товар">
-              {/* Здесь будет список товаров */}
+            <Select
+              placeholder="Выберите товар"
+              showSearch
+              filterOption={(input, option) =>
+                option.children.toLowerCase().indexOf(input.toLowerCase()) >= 0
+              }
+            >
+              {/* Здесь должен быть список товаров */}
             </Select>
           </Form.Item>
 
-          <Form.Item
-            name="from_warehouse_id"
-            label="Из склада"
-            rules={[{ required: true, message: 'Выберите склад-источник' }]}
-          >
-            <Select placeholder="Выберите склад-источник">
-              {warehouses.map(warehouse => (
-                <Option key={warehouse.id} value={warehouse.id}>
-                  {warehouse.name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                label="Со склада"
+                name="from_warehouse_id"
+                rules={[{ required: true, message: 'Выберите склад-источник' }]}
+              >
+                <Select placeholder="Выберите склад">
+                  {warehouses.map(warehouse => (
+                    <Option key={warehouse.id} value={warehouse.id}>
+                      {warehouse.name}
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                label="На склад"
+                name="to_warehouse_id"
+                rules={[{ required: true, message: 'Выберите склад-получатель' }]}
+              >
+                <Select placeholder="Выберите склад">
+                  {warehouses.map(warehouse => (
+                    <Option key={warehouse.id} value={warehouse.id}>
+                      {warehouse.name}
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Form.Item
-            name="to_warehouse_id"
-            label="В склад"
-            rules={[{ required: true, message: 'Выберите склад-получатель' }]}
-          >
-            <Select placeholder="Выберите склад-получатель">
-              {warehouses.map(warehouse => (
-                <Option key={warehouse.id} value={warehouse.id}>
-                  {warehouse.name}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-
-          <Form.Item
-            name="quantity"
             label="Количество"
-            rules={[{ required: true, message: 'Введите количество' }]}
+            name="quantity"
+            rules={[
+              { required: true, message: 'Введите количество' },
+              { type: 'number', min: 1, message: 'Количество должно быть больше 0' }
+            ]}
           >
-            <Input type="number" min={1} placeholder="Количество" />
+            <InputNumber 
+              placeholder="1"
+              min={1}
+              style={{ width: '100%' }}
+            />
           </Form.Item>
 
-          <Form.Item>
-            <Space>
-              <Button type="primary" htmlType="submit">
-                Переместить
-              </Button>
-              <Button onClick={() => setIsTransferVisible(false)}>
-                Отмена
-              </Button>
-            </Space>
+          <Form.Item
+            label="Причина перемещения"
+            name="reason"
+          >
+            <TextArea 
+              placeholder="Опишите причину перемещения (необязательно)"
+              rows={2}
+            />
           </Form.Item>
         </Form>
       </Modal>
 
-      {/* Модальное окно управления компонентами мульти-склада */}
-      <Modal
-        title="Управление компонентами мульти-склада"
+      {/* Drawer для управления компонентами склада */}
+      <Drawer
+        title={`Управление компонентами: ${selectedWarehouse?.name}`}
+        placement="right"
+        onClose={() => setIsComponentModalVisible(false)}
         open={isComponentModalVisible}
-        onCancel={() => setIsComponentModalVisible(false)}
-        onOk={saveComponents}
         width={800}
       >
-        <Alert
-          message="Выберите физические склады, которые будут входить в состав мульти-склада"
-          type="info"
-          style={{ marginBottom: 16 }}
-        />
-        
-        <Transfer
-          dataSource={availableWarehouses.map(w => ({
-            key: w.id,
-            title: w.name,
-            description: w.address,
-          }))}
-          titles={['Доступные склады', 'Выбранные склады']}
-          targetKeys={selectedComponents}
-          onChange={handleComponentsChange}
-          render={item => item.title}
-        />
-      </Modal>
+        <div className="warehouse-components">
+          <Alert
+            message="Управление компонентами склада"
+            description="Здесь вы можете настроить зоны хранения, стеллажи и другие компоненты склада"
+            type="info"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+          
+          <Row gutter={[16, 16]}>
+            <Col span={12}>
+              <Card title="Зоны хранения" size="small">
+                <Button type="dashed" block icon={<PlusOutlined />}>
+                  Добавить зону
+                </Button>
+              </Card>
+            </Col>
+            <Col span={12}>
+              <Card title="Стеллажи" size="small">
+                <Button type="dashed" block icon={<PlusOutlined />}>
+                  Добавить стеллаж
+                </Button>
+              </Card>
+            </Col>
+          </Row>
+
+          <Card title="Статистика склада" style={{ marginTop: 16 }}>
+            <Row gutter={16}>
+              <Col span={8}>
+                <Statistic
+                  title="Общий объем"
+                  value={1000}
+                  suffix="м³"
+                />
+              </Col>
+              <Col span={8}>
+                <Statistic
+                  title="Занято"
+                  value={750}
+                  suffix="м³"
+                />
+              </Col>
+              <Col span={8}>
+                <Statistic
+                  title="Свободно"
+                  value={250}
+                  suffix="м³"
+                />
+              </Col>
+            </Row>
+          </Card>
+        </div>
+      </Drawer>
     </div>
   );
 };

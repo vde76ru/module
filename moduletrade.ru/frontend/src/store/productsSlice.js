@@ -1,18 +1,25 @@
-// frontend/src/store/productsSlice.js
+// ===================================================
+// ФАЙЛ: frontend/src/store/productsSlice.js
+// ✅ ИСПРАВЛЕНО: Правильные импорты из новой API архитектуры  
+// ===================================================
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { productsAPI } from '../services/api';
+import { api } from '../services'; // ✅ ИСПРАВЛЕНО: Импорт из правильного места
 
-// Async thunks
+// =====================================
+// ASYNC THUNKS
+// =====================================
+
 export const fetchProducts = createAsyncThunk(
   'products/fetchProducts',
   async (params = {}, { rejectWithValue }) => {
     try {
-      const response = await productsAPI.getProducts(params);
-      return response.data;
+      const response = await api.products.getProducts(params);
+      return response;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || 'Ошибка загрузки товаров'
-      );
+      return rejectWithValue({
+        message: error.message || 'Ошибка загрузки товаров',
+        status: error.status
+      });
     }
   }
 );
@@ -21,12 +28,13 @@ export const createProduct = createAsyncThunk(
   'products/createProduct',
   async (productData, { rejectWithValue }) => {
     try {
-      const response = await productsAPI.createProduct(productData);
-      return response.data;
+      const response = await api.products.createProduct(productData);
+      return response;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || 'Ошибка создания товара'
-      );
+      return rejectWithValue({
+        message: error.message || 'Ошибка создания товара',
+        status: error.status
+      });
     }
   }
 );
@@ -35,12 +43,13 @@ export const updateProduct = createAsyncThunk(
   'products/updateProduct',
   async ({ id, data }, { rejectWithValue }) => {
     try {
-      const response = await productsAPI.updateProduct(id, data);
-      return response.data;
+      const response = await api.products.updateProduct(id, data);
+      return response;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || 'Ошибка обновления товара'
-      );
+      return rejectWithValue({
+        message: error.message || 'Ошибка обновления товара',
+        status: error.status
+      });
     }
   }
 );
@@ -49,12 +58,13 @@ export const deleteProduct = createAsyncThunk(
   'products/deleteProduct',
   async (id, { rejectWithValue }) => {
     try {
-      await productsAPI.deleteProduct(id);
+      await api.products.deleteProduct(id);
       return id;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || 'Ошибка удаления товара'
-      );
+      return rejectWithValue({
+        message: error.message || 'Ошибка удаления товара',
+        status: error.status
+      });
     }
   }
 );
@@ -63,15 +73,65 @@ export const importProducts = createAsyncThunk(
   'products/importProducts',
   async (file, { rejectWithValue }) => {
     try {
-      const response = await productsAPI.importProducts(file);
-      return response.data;
+      const response = await api.products.importProducts(file);
+      return response;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || 'Ошибка импорта товаров'
-      );
+      return rejectWithValue({
+        message: error.message || 'Ошибка импорта товаров',
+        status: error.status
+      });
     }
   }
 );
+
+export const bulkUpdateProducts = createAsyncThunk(
+  'products/bulkUpdateProducts',
+  async ({ productIds, updates }, { rejectWithValue }) => {
+    try {
+      const response = await api.products.bulkUpdateProducts(productIds, updates);
+      return response;
+    } catch (error) {
+      return rejectWithValue({
+        message: error.message || 'Ошибка массового обновления товаров',
+        status: error.status
+      });
+    }
+  }
+);
+
+export const bulkDeleteProducts = createAsyncThunk(
+  'products/bulkDeleteProducts',
+  async (productIds, { rejectWithValue }) => {
+    try {
+      const response = await api.products.bulkDeleteProducts(productIds);
+      return response;
+    } catch (error) {
+      return rejectWithValue({
+        message: error.message || 'Ошибка массового удаления товаров',
+        status: error.status
+      });
+    }
+  }
+);
+
+export const exportProducts = createAsyncThunk(
+  'products/exportProducts',
+  async (params = {}, { rejectWithValue }) => {
+    try {
+      const response = await api.products.exportProducts(params);
+      return response;
+    } catch (error) {
+      return rejectWithValue({
+        message: error.message || 'Ошибка экспорта товаров',
+        status: error.status
+      });
+    }
+  }
+);
+
+// =====================================
+// INITIAL STATE
+// =====================================
 
 const initialState = {
   items: [],
@@ -89,7 +149,12 @@ const initialState = {
   },
   selectedProduct: null,
   importStatus: null,
+  bulkActionLoading: false,
 };
+
+// =====================================
+// SLICE
+// =====================================
 
 const productsSlice = createSlice({
   name: 'products',
@@ -181,19 +246,83 @@ const productsSlice = createSlice({
       .addCase(importProducts.pending, (state) => {
         state.loading = true;
         state.error = null;
-        state.importStatus = 'uploading';
+        state.importStatus = 'pending';
       })
       .addCase(importProducts.fulfilled, (state, action) => {
         state.loading = false;
-        state.importStatus = 'success';
+        state.importStatus = 'completed';
+        // Если импорт возвращает новые товары, добавляем их
+        if (action.payload.products) {
+          state.items = [...action.payload.products, ...state.items];
+          state.total += action.payload.products.length;
+        }
       })
       .addCase(importProducts.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
-        state.importStatus = 'error';
+        state.importStatus = 'failed';
+      })
+      
+      // Bulk update products
+      .addCase(bulkUpdateProducts.pending, (state) => {
+        state.bulkActionLoading = true;
+        state.error = null;
+      })
+      .addCase(bulkUpdateProducts.fulfilled, (state, action) => {
+        state.bulkActionLoading = false;
+        // Обновляем товары в списке
+        if (action.payload.updated_products) {
+          action.payload.updated_products.forEach(updatedProduct => {
+            const index = state.items.findIndex(item => item.id === updatedProduct.id);
+            if (index !== -1) {
+              state.items[index] = updatedProduct;
+            }
+          });
+        }
+      })
+      .addCase(bulkUpdateProducts.rejected, (state, action) => {
+        state.bulkActionLoading = false;
+        state.error = action.payload;
+      })
+      
+      // Bulk delete products
+      .addCase(bulkDeleteProducts.pending, (state) => {
+        state.bulkActionLoading = true;
+        state.error = null;
+      })
+      .addCase(bulkDeleteProducts.fulfilled, (state, action) => {
+        state.bulkActionLoading = false;
+        // Удаляем товары из списка
+        if (action.payload.deleted_ids) {
+          state.items = state.items.filter(item => 
+            !action.payload.deleted_ids.includes(item.id)
+          );
+          state.total -= action.payload.deleted_ids.length;
+        }
+      })
+      .addCase(bulkDeleteProducts.rejected, (state, action) => {
+        state.bulkActionLoading = false;
+        state.error = action.payload;
+      })
+      
+      // Export products
+      .addCase(exportProducts.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(exportProducts.fulfilled, (state) => {
+        state.loading = false;
+      })
+      .addCase(exportProducts.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
       });
   },
 });
+
+// =====================================
+// EXPORTS
+// =====================================
 
 export const {
   setFilters,

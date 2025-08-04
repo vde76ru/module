@@ -29,7 +29,7 @@ services:
       start_period: 30s
     restart: unless-stopped
     command: >
-      postgres 
+      postgres
       -c max_connections=200
       -c shared_buffers=256MB
       -c effective_cache_size=1GB
@@ -49,12 +49,15 @@ services:
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-SecureRedisPass2025}
     command: >
-      redis-server 
+      redis-server
       --requirepass ${REDIS_PASSWORD:-SecureRedisPass2025}
       --maxmemory 256mb
       --maxmemory-policy allkeys-lru
-      --save 60 1000
+      --save 900 1
+      --save 300 10
+      --save 60 10000
       --appendonly yes
+      --appendfsync everysec
     volumes:
       - redis_data:/data
     ports:
@@ -64,9 +67,8 @@ services:
     healthcheck:
       test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
       interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
 
   # ==============================================
@@ -76,75 +78,63 @@ services:
     image: rabbitmq:3.12-management-alpine
     container_name: moduletrade_rabbitmq
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-moduletrade_admin}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-SecureRabbitPass2025}
-      RABBITMQ_DEFAULT_VHOST: moduletrade
+      RABBITMQ_DEFAULT_VHOST: /
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
-      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
     ports:
       - "5672:5672"
       - "15672:15672"
     networks:
       - moduletrade-network
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      test: ["CMD", "rabbitmq-diagnostics", "status"]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 5
       start_period: 60s
     restart: unless-stopped
 
   # ==============================================
-  # BACKEND API SERVER
+  # BACKEND API
   # ==============================================
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        NODE_ENV: ${NODE_ENV:-production}
     container_name: moduletrade_backend
     environment:
-      # Окружение
       NODE_ENV: ${NODE_ENV:-production}
-      
-      # База данных
+      PORT: 3000
+
+      # Database
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: ${DB_NAME:-saas_platform}
-      DB_USER: ${DB_USER:-postgres}
-      DB_PASSWORD: ${DB_PASSWORD:-SecurePostgresPass2025}
-      
+      DB_NAME: ${POSTGRES_DB:-saas_platform}
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-SecurePostgresPass2025}
+
       # Redis
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD:-SecureRedisPass2025}
-      REDIS_URL: redis://:${REDIS_PASSWORD:-SecureRedisPass2025}@redis:6379
-      
+
       # RabbitMQ
-      RABBITMQ_USER: ${RABBITMQ_USER:-moduletrade_admin}
-      RABBITMQ_PASS: ${RABBITMQ_PASS:-SecureRabbitPass2025}
-      RABBITMQ_URL: amqp://${RABBITMQ_USER:-moduletrade_admin}:${RABBITMQ_PASS:-SecureRabbitPass2025}@rabbitmq:5672/moduletrade
-      
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-admin}:${RABBITMQ_PASS:-SecureRabbitPass2025}@rabbitmq:5672
+
       # JWT
-      JWT_SECRET: ${JWT_SECRET}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
-      
-      # Stripe
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
-      
-      # URLs
+      JWT_SECRET: ${JWT_SECRET:-your_super_secret_jwt_key_change_in_production}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-your_super_secret_refresh_key_change_in_production}
+
+      # API URLs
       API_URL: ${API_URL:-https://api.moduletrade.ru}
       FRONTEND_URL: ${FRONTEND_URL:-https://moduletrade.ru}
-      
-      # Security
-      CORS_ORIGIN: ${CORS_ORIGIN:-https://moduletrade.ru,https://www.moduletrade.ru}
-      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
-      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-100}
-      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
-      
-      # Uploads
-      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-50MB}
+
+      # Other
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       UPLOAD_DIR: ./uploads
     volumes:
       - backend_uploads:/app/uploads
@@ -177,6 +167,7 @@ services:
       dockerfile: Dockerfile
       args:
         REACT_APP_API_URL: ${REACT_APP_API_URL:-https://api.moduletrade.ru/api}
+        REACT_APP_STRIPE_PUBLIC_KEY: ${STRIPE_PUBLIC_KEY:-}
     container_name: moduletrade_frontend
     ports:
       - "80:80"

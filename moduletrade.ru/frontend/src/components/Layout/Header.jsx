@@ -1,5 +1,6 @@
 // ===================================================
 // ФАЙЛ: frontend/src/components/Layout/Header.jsx
+// ✅ ИСПРАВЛЕНО: Заменен импорт AuthContext на новый useAuth хук
 // ===================================================
 import React from 'react';
 import { Layout, Space, Dropdown, Avatar, Tag, Button, Typography, theme } from 'antd';
@@ -12,7 +13,8 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 
-import { useAuth } from '../../contexts/AuthContext';
+// ✅ ИСПРАВЛЕНО: Заменен contexts/AuthContext на hooks/useAuth
+import { useAuth } from '../../hooks/useAuth';
 import { usePermissions } from '../../hooks/usePermissions';
 import { USER_ROLE_LABELS, USER_ROLE_COLORS } from '../../utils/constants';
 
@@ -90,45 +92,45 @@ const Header = () => {
       </div>
 
       {/* Правая часть - уведомления и профиль */}
-      <Space size="large">
+      <Space size="middle">
         {/* Уведомления */}
         <Button
           type="text"
           icon={<BellOutlined />}
-          style={{ fontSize: 16 }}
-          onClick={() => navigate('/notifications')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
         />
 
         {/* Профиль пользователя */}
-        <Space>
-          <div style={{ textAlign: 'right' }}>
-            <div>
-              <Text strong>{user?.name || user?.email}</Text>
+        <Dropdown
+          menu={{ items: userMenuItems }}
+          trigger={['click']}
+          placement="bottomRight"
+        >
+          <Space style={{ cursor: 'pointer' }}>
+            <Avatar size="small" icon={<UserOutlined />} />
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+              <Text strong style={{ lineHeight: '16px', fontSize: '14px' }}>
+                {user?.name || user?.email || 'Пользователь'}
+              </Text>
+              {user?.role && (
+                <Text
+                  type="secondary"
+                  style={{
+                    lineHeight: '12px',
+                    fontSize: '12px',
+                    color: USER_ROLE_COLORS[user.role] || '#666',
+                  }}
+                >
+                  {USER_ROLE_LABELS[user.role] || user.role}
+                </Text>
+              )}
             </div>
-            <div>
-              <Tag
-                color={USER_ROLE_COLORS[user?.role]}
-                size="small"
-              >
-                {USER_ROLE_LABELS[user?.role] || user?.role}
-              </Tag>
-            </div>
-          </div>
-
-          <Dropdown
-            menu={{ items: userMenuItems }}
-            placement="bottomRight"
-            trigger={['click']}
-          >
-            <Avatar
-              icon={<UserOutlined />}
-              style={{
-                cursor: 'pointer',
-                backgroundColor: '#1890ff',
-              }}
-            />
-          </Dropdown>
-        </Space>
+          </Space>
+        </Dropdown>
       </Space>
     </AntHeader>
   );

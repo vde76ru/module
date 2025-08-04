@@ -1,6 +1,6 @@
 // ===================================================
 // ФАЙЛ: frontend/src/utils/axios.js
-// УНИФИЦИРОВАННЫЙ HTTP КЛИЕНТ
+// УНИФИЦИРОВАННЫЙ HTTP КЛИЕНТ - ИСПРАВЛЕННАЯ ВЕРСИЯ
 // ===================================================
 import axios from 'axios';
 import { notification } from 'antd';
@@ -8,7 +8,8 @@ import { notification } from 'antd';
 // =====================================
 // КОНФИГУРАЦИЯ
 // =====================================
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://api.moduletrade.ru/api';
+// Исправлено: убран двойной /api из URL
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://api.moduletrade.ru';
 const REQUEST_TIMEOUT = 30000;
 
 // =====================================
@@ -28,9 +29,10 @@ const axiosInstance = axios.create({
 
 /**
  * Получение токена из localStorage
+ * Исправлено: используем правильные ключи для токенов
  */
 const getToken = () => {
-  return localStorage.getItem('token');
+  return localStorage.getItem('accessToken') || localStorage.getItem('token');
 };
 
 /**
@@ -42,9 +44,11 @@ const getRefreshToken = () => {
 
 /**
  * Сохранение токенов
+ * Исправлено: сохраняем токены под правильными ключами
  */
 const setTokens = (token, refreshToken = null) => {
-  localStorage.setItem('token', token);
+  localStorage.setItem('accessToken', token);
+  localStorage.setItem('token', token); // Для обратной совместимости
   if (refreshToken) {
     localStorage.setItem('refreshToken', refreshToken);
   }
@@ -54,6 +58,7 @@ const setTokens = (token, refreshToken = null) => {
  * Очистка токенов
  */
 const clearTokens = () => {
+  localStorage.removeItem('accessToken');
   localStorage.removeItem('token');
   localStorage.removeItem('refreshToken');
   localStorage.removeItem('user');
@@ -79,17 +84,17 @@ const decodeToken = (token) => {
 const isTokenExpired = (token) => {
   const decoded = decodeToken(token);
   if (!decoded || !decoded.exp) return true;
-  
+
   const currentTime = Math.floor(Date.now() / 1000);
   return decoded.exp < currentTime;
 };
 
 /**
- * Получение tenant_id из токена
+ * Получение company_id из токена
  */
 const getTenantIdFromToken = (token) => {
   const decoded = decodeToken(token);
-  return decoded?.tenant_id || null;
+  return decoded?.companyId || decoded?.company_id || null;
 };
 
 // =====================================
@@ -98,18 +103,18 @@ const getTenantIdFromToken = (token) => {
 axiosInstance.interceptors.request.use(
   (config) => {
     const token = getToken();
-    
+
     // Добавляем токен авторизации
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
-      
-      // Добавляем tenant_id если есть в токене
-      const tenantId = getTenantIdFromToken(token);
-      if (tenantId) {
-        config.headers['X-Tenant-ID'] = tenantId;
+
+      // Добавляем company_id если есть в токене
+      const companyId = getTenantIdFromToken(token);
+      if (companyId) {
+        config.headers['X-Tenant-ID'] = companyId;
       }
     }
-    
+
     // Логирование в development режиме
     if (process.env.NODE_ENV === 'development') {
       console.log(`🚀 ${config.method?.toUpperCase()} ${config.url}`, {
@@ -117,7 +122,7 @@ axiosInstance.interceptors.request.use(
         data: config.data,
       });
     }
-    
+
     return config;
   },
   (error) => {
@@ -138,12 +143,12 @@ axiosInstance.interceptors.response.use(
         data: response.data,
       });
     }
-    
+
     return response;
   },
   async (error) => {
     const originalRequest = error.config;
-    
+
     // Логирование ошибок в development режиме
     if (process.env.NODE_ENV === 'development') {
       console.error(`❌ ${originalRequest?.method?.toUpperCase()} ${originalRequest?.url}`, {
@@ -151,100 +156,60 @@ axiosInstance.interceptors.response.use(
         error: error.response?.data,
       });
     }
-    
+
     // Обработка 401 ошибки (Unauthorized)
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
-      
+
       const refreshToken = getRefreshToken();
-      
+
       if (refreshToken && !isTokenExpired(refreshToken)) {
         try {
           // Пытаемся обновить токен
-          const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
+          const response = await axios.post(`${API_BASE_URL}/api/auth/refresh`, {
             refreshToken: refreshToken,
           });
-          
-          if (response.data.success && response.data.token) {
-            const { token: newToken, refreshToken: newRefreshToken } = response.data;
-            
+
+          if (response.data.success) {
+            const newToken = response.data.token || response.data.data?.tokens?.accessToken;
+            const newRefreshToken = response.data.refreshToken || response.data.data?.tokens?.refreshToken;
+
             // Сохраняем новые токены
             setTokens(newToken, newRefreshToken || refreshToken);
-            
+
             // Повторяем оригинальный запрос с новым токеном
             originalRequest.headers.Authorization = `Bearer ${newToken}`;
-            
-            // Обновляем tenant_id если изменился
-            const tenantId = getTenantIdFromToken(newToken);
-            if (tenantId) {
-              originalRequest.headers['X-Tenant-ID'] = tenantId;
+
+            // Обновляем company_id если изменился
+            const companyId = getTenantIdFromToken(newToken);
+            if (companyId) {
+              originalRequest.headers['X-Tenant-ID'] = companyId;
             }
-            
+
             return axiosInstance(originalRequest);
           }
         } catch (refreshError) {
           console.warn('Token refresh failed:', refreshError);
-          // Если refresh не удался, очищаем токены и перенаправляем на логин
+          // Если обновление токена не удалось, очищаем авторизацию
           clearTokens();
-          
-          // Перенаправляем только если не находимся уже на странице логина
-          if (window.location.pathname !== '/login') {
-            window.location.href = '/login';
-          }
-          
+          window.location.href = '/login';
           return Promise.reject(refreshError);
         }
       } else {
-        // Refresh токен отсутствует или истек
+        // Если нет refresh токена или он истек
         clearTokens();
-        
-        if (window.location.pathname !== '/login') {
-          window.location.href = '/login';
-        }
-        
-        return Promise.reject(error);
+        window.location.href = '/login';
       }
     }
-    
-    // Обработка других HTTP ошибок
+
+    // Обработка других ошибок
     if (error.response) {
-      const { status, data } = error.response;
-      let errorMessage = 'Произошла ошибка';
-      
-      // Определяем сообщение об ошибке
-      if (data?.message) {
-        errorMessage = data.message;
-      } else if (data?.error) {
-        errorMessage = data.error;
-      } else {
-        switch (status) {
-          case 400:
-            errorMessage = 'Неверные данные запроса';
-            break;
-          case 401:
-            errorMessage = 'Ошибка авторизации';
-            break;
-          case 403:
-            errorMessage = 'Доступ запрещен';
-            break;
-          case 404:
-            errorMessage = 'Ресурс не найден';
-            break;
-          case 422:
-            errorMessage = 'Ошибка валидации данных';
-            break;
-          case 429:
-            errorMessage = 'Слишком много запросов';
-            break;
-          case 500:
-            errorMessage = 'Внутренняя ошибка сервера';
-            break;
-          default:
-            errorMessage = `Ошибка сервера (${status})`;
-        }
-      }
-      
-      // Показываем уведомление (кроме 401, который обрабатывается отдельно)
+      const status = error.response.status;
+      const errorMessage = error.response.data?.error ||
+                          error.response.data?.message ||
+                          'Произошла ошибка';
+
+      // Показываем уведомления для всех ошибок (кроме 401, который обрабатывается отдельно)
       if (status !== 401) {
         notification.error({
           message: 'Ошибка',
@@ -267,7 +232,7 @@ axiosInstance.interceptors.response.use(
         duration: 5,
       });
     }
-    
+
     return Promise.reject(error);
   }
 );

@@ -1,5 +1,6 @@
 // ===================================================
 // ФАЙЛ: frontend/src/pages/Orders/OrdersPage.jsx
+// ✅ ИСПРАВЛЕНО: Добавлен импорт ShopOutlined
 // ===================================================
 import React, { useState, useEffect } from 'react';
 import {
@@ -24,10 +25,10 @@ import {
   EyeOutlined,
   EditOutlined,
   DownloadOutlined,
+  ShopOutlined, // ✅ ИСПРАВЛЕНО: Добавлена эта иконка
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 
-import PermissionGuard from '../../components/Auth/PermissionGuard';
 import { usePermissions } from '../../hooks/usePermissions';
 import { PERMISSIONS, ORDER_STATUS_COLORS, ORDER_STATUS_LABELS } from '../../utils/constants';
 
@@ -57,6 +58,12 @@ const OrdersPage = () => {
 
   const { hasPermission } = usePermissions();
 
+  // Проверяем права
+  const canCreate = hasPermission(PERMISSIONS.ORDERS_CREATE);
+  const canUpdate = hasPermission(PERMISSIONS.ORDERS_UPDATE);
+  const canDelete = hasPermission(PERMISSIONS.ORDERS_DELETE);
+  const canExport = hasPermission(PERMISSIONS.ORDERS_EXPORT);
+
   useEffect(() => {
     fetchOrders();
   }, [searchText, statusFilter, dateRange, pagination.current, pagination.pageSize]);
@@ -74,38 +81,102 @@ const OrdersPage = () => {
           {
             id: '1',
             order_number: 'ORD-001',
-            customer_name: 'Иван Петров',
+            customer_name: 'ООО "Компания"',
+            customer_email: 'order@company.ru',
+            total_amount: 15000,
             status: 'new',
-            total: 2500,
+            marketplace: 'Wildberries',
             created_at: new Date().toISOString(),
-            marketplace: 'Ozon'
+            items_count: 3,
           },
           {
             id: '2',
             order_number: 'ORD-002',
-            customer_name: 'Анна Сидорова',
+            customer_name: 'Иван Петров',
+            customer_email: 'ivan@example.ru',
+            total_amount: 2500,
             status: 'processing',
-            total: 1800,
-            created_at: new Date().toISOString(),
-            marketplace: 'Wildberries'
-          }
+            marketplace: 'Ozon',
+            created_at: new Date(Date.now() - 86400000).toISOString(),
+            items_count: 1,
+          },
+          {
+            id: '3',
+            order_number: 'ORD-003',
+            customer_name: 'ЗАО "ТехСервис"',
+            customer_email: 'orders@techserv.ru',
+            total_amount: 45000,
+            status: 'shipped',
+            marketplace: 'Яндекс.Маркет',
+            created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
+            items_count: 5,
+          },
+          {
+            id: '4',
+            order_number: 'ORD-004',
+            customer_name: 'Мария Сидорова',
+            customer_email: 'maria@example.ru',
+            total_amount: 7200,
+            status: 'delivered',
+            marketplace: 'Wildberries',
+            created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
+            items_count: 2,
+          },
         ]);
-        setPagination({ ...pagination, total: 2 });
+        setPagination(prev => ({ ...prev, total: 4 }));
         setLoading(false);
-      }, 1000);
+      }, 800);
     } catch (error) {
-      message.error('Ошибка загрузки заказов');
+      message.error('Ошибка при загрузке заказов');
       setLoading(false);
     }
   };
 
-  const fetchStats = () => {
-    setStats({
-      total: 156,
-      new: 23,
-      processing: 67,
-      delivered: 66,
-    });
+  const fetchStats = async () => {
+    try {
+      // Демо данные
+      setTimeout(() => {
+        setStats({
+          total: 125,
+          new: 15,
+          processing: 32,
+          delivered: 78,
+        });
+      }, 500);
+    } catch (error) {
+      message.error('Ошибка при загрузке статистики');
+    }
+  };
+
+  const handleSearch = (value) => {
+    setSearchText(value);
+    setPagination(prev => ({ ...prev, current: 1 }));
+  };
+
+  const handleStatusFilter = (value) => {
+    setStatusFilter(value);
+    setPagination(prev => ({ ...prev, current: 1 }));
+  };
+
+  const handleDateRangeChange = (dates) => {
+    setDateRange(dates);
+    setPagination(prev => ({ ...prev, current: 1 }));
+  };
+
+  const handleTableChange = (pagination) => {
+    setPagination(pagination);
+  };
+
+  const handleViewOrder = (order) => {
+    navigate(`/orders/${order.id}`);
+  };
+
+  const handleEditOrder = (order) => {
+    navigate(`/orders/${order.id}/edit`);
+  };
+
+  const handleExport = () => {
+    message.info('Экспорт заказов будет реализован');
   };
 
   const columns = [
@@ -113,8 +184,9 @@ const OrdersPage = () => {
       title: 'Номер заказа',
       dataIndex: 'order_number',
       key: 'order_number',
+      width: 120,
       render: (text, record) => (
-        <Button type="link" onClick={() => navigate(`/orders/${record.id}`)}>
+        <Button type="link" onClick={() => handleViewOrder(record)}>
           {text}
         </Button>
       ),
@@ -123,33 +195,52 @@ const OrdersPage = () => {
       title: 'Клиент',
       dataIndex: 'customer_name',
       key: 'customer_name',
+      width: 200,
+      render: (text, record) => (
+        <div>
+          <div>{text}</div>
+          <div style={{ fontSize: '12px', color: '#888' }}>
+            {record.customer_email}
+          </div>
+        </div>
+      ),
     },
     {
       title: 'Маркетплейс',
       dataIndex: 'marketplace',
       key: 'marketplace',
-      render: (marketplace) => <Tag color="blue">{marketplace}</Tag>,
+      width: 150,
+    },
+    {
+      title: 'Сумма',
+      dataIndex: 'total_amount',
+      key: 'total_amount',
+      width: 120,
+      render: (amount) => `${amount.toLocaleString()} ₽`,
+    },
+    {
+      title: 'Товаров',
+      dataIndex: 'items_count',
+      key: 'items_count',
+      width: 80,
+      align: 'center',
     },
     {
       title: 'Статус',
       dataIndex: 'status',
       key: 'status',
+      width: 120,
       render: (status) => (
-        <Tag color={ORDER_STATUS_COLORS[status]}>
-          {ORDER_STATUS_LABELS[status]}
+        <Tag color={ORDER_STATUS_COLORS[status] || 'default'}>
+          {ORDER_STATUS_LABELS[status] || status}
         </Tag>
       ),
-    },
-    {
-      title: 'Сумма',
-      dataIndex: 'total',
-      key: 'total',
-      render: (total) => `${total.toLocaleString('ru-RU')} ₽`,
     },
     {
       title: 'Дата создания',
       dataIndex: 'created_at',
       key: 'created_at',
+      width: 140,
       render: (date) => new Date(date).toLocaleDateString('ru-RU'),
     },
     {
@@ -157,75 +248,102 @@ const OrdersPage = () => {
       key: 'actions',
       width: 120,
       render: (_, record) => (
-        <Space>
+        <Space size="small">
           <Button
             type="text"
             icon={<EyeOutlined />}
-            onClick={() => navigate(`/orders/${record.id}`)}
+            onClick={() => handleViewOrder(record)}
+            title="Просмотр"
           />
-          <PermissionGuard permission={PERMISSIONS.ORDERS_UPDATE}>
+          {canUpdate && (
             <Button
               type="text"
               icon={<EditOutlined />}
-              onClick={() => navigate(`/orders/${record.id}/edit`)}
+              onClick={() => handleEditOrder(record)}
+              title="Редактировать"
             />
-          </PermissionGuard>
+          )}
         </Space>
       ),
     },
   ];
 
   return (
-    <div>
+    <div style={{ padding: '24px' }}>
       {/* Статистика */}
-      <Row gutter={16} style={{ marginBottom: 24 }}>
+      <Row gutter={16} style={{ marginBottom: '24px' }}>
         <Col span={6}>
           <Card>
-            <Statistic title="Всего заказов" value={stats.total} />
+            <Statistic
+              title="Всего заказов"
+              value={stats.total}
+              prefix={<ShopOutlined />}
+            />
           </Card>
         </Col>
         <Col span={6}>
           <Card>
-            <Statistic title="Новые" value={stats.new} valueStyle={{ color: '#1890ff' }} />
+            <Statistic
+              title="Новые"
+              value={stats.new}
+              valueStyle={{ color: '#1890ff' }}
+            />
           </Card>
         </Col>
         <Col span={6}>
           <Card>
-            <Statistic title="В обработке" value={stats.processing} valueStyle={{ color: '#fa8c16' }} />
+            <Statistic
+              title="В обработке"
+              value={stats.processing}
+              valueStyle={{ color: '#faad14' }}
+            />
           </Card>
         </Col>
         <Col span={6}>
           <Card>
-            <Statistic title="Доставлены" value={stats.delivered} valueStyle={{ color: '#52c41a' }} />
+            <Statistic
+              title="Доставлено"
+              value={stats.delivered}
+              valueStyle={{ color: '#52c41a' }}
+            />
           </Card>
         </Col>
       </Row>
 
-      {/* Основная таблица */}
+      {/* Основная карточка */}
       <Card
         title={
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Title level={4} style={{ margin: 0 }}>Заказы</Title>
+            <Title level={4} style={{ margin: 0 }}>
+              Заказы
+            </Title>
             <Space>
-              <PermissionGuard permission={PERMISSIONS.ORDERS_CREATE}>
-                <Button type="primary" icon={<PlusOutlined />}>
-                  Создать заказ
+              {canExport && (
+                <Button
+                  icon={<DownloadOutlined />}
+                  onClick={handleExport}
+                >
+                  Экспорт
                 </Button>
-              </PermissionGuard>
-              <Button icon={<DownloadOutlined />}>
-                Экспорт
+              )}
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={fetchOrders}
+                loading={loading}
+              >
+                Обновить
               </Button>
             </Space>
           </div>
         }
       >
         {/* Фильтры */}
-        <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Row gutter={16} style={{ marginBottom: '16px' }}>
           <Col span={8}>
             <Search
-              placeholder="Поиск по номеру заказа, клиенту..."
+              placeholder="Поиск по номеру заказа или клиенту"
               allowClear
-              onSearch={setSearchText}
+              onSearch={handleSearch}
               style={{ width: '100%' }}
             />
           </Col>
@@ -235,40 +353,40 @@ const OrdersPage = () => {
               allowClear
               style={{ width: '100%' }}
               value={statusFilter}
-              onChange={setStatusFilter}
+              onChange={handleStatusFilter}
             >
               <Option value="all">Все статусы</Option>
               <Option value="new">Новые</Option>
               <Option value="processing">В обработке</Option>
-              <Option value="delivered">Доставлены</Option>
+              <Option value="shipped">Отправлено</Option>
+              <Option value="delivered">Доставлено</Option>
+              <Option value="cancelled">Отменено</Option>
             </Select>
           </Col>
           <Col span={6}>
             <RangePicker
               style={{ width: '100%' }}
               placeholder={['Дата от', 'Дата до']}
-              onChange={setDateRange}
+              onChange={handleDateRangeChange}
             />
-          </Col>
-          <Col span={2}>
-            <Button icon={<ReloadOutlined />} onClick={fetchOrders} />
           </Col>
         </Row>
 
+        {/* Таблица */}
         <Table
           columns={columns}
           dataSource={orders}
-          rowKey="id"
           loading={loading}
           pagination={{
             ...pagination,
             showSizeChanger: true,
             showQuickJumper: true,
-            showTotal: (total) => `Всего ${total} заказов`,
-            onChange: (page, pageSize) => {
-              setPagination({ ...pagination, current: page, pageSize });
-            },
+            showTotal: (total, range) =>
+              `${range[0]}-${range[1]} из ${total} заказов`,
           }}
+          onChange={handleTableChange}
+          rowKey="id"
+          scroll={{ x: 'max-content' }}
         />
       </Card>
     </div>

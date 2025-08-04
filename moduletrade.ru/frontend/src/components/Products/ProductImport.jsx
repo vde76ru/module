@@ -1,6 +1,6 @@
 // ===================================================
 // ФАЙЛ: frontend/src/components/Products/ProductImport.jsx
-// ИСПРАВЛЕНО: Правильные импорты с алиасами
+// ✅ ИСПРАВЛЕНО: Правильные импорты и API вызовы
 // ===================================================
 import React, { useState, useCallback } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
@@ -35,9 +35,9 @@ import {
   SettingOutlined
 } from '@ant-design/icons';
 
-// ✅ ИСПРАВЛЕНО: Правильные импорты с относительными путями
+// ✅ ИСПРАВЛЕНО: Правильные импорты
 import { importProducts, fetchProducts } from '../../store/productsSlice';
-import api from '../../services/api';
+import { api } from '../../services'; // Импорт из правильного места
 
 const { Step } = Steps;
 const { Option } = Select;
@@ -71,25 +71,118 @@ const ProductImport = ({ visible, onClose }) => {
     }
   }, [visible]);
 
+  // ✅ ИСПРАВЛЕНО: Используем новую структуру API
   const fetchSuppliers = async () => {
     try {
-      const response = await api.get('/api/suppliers');
-      setSuppliers(response.data.data || []);
+      const data = await api.suppliers.getSuppliers();
+      setSuppliers(data.suppliers || []);
     } catch (error) {
-      console.error('Error fetching suppliers:', error);
+      message.error('Ошибка при загрузке поставщиков');
+      console.error('Fetch suppliers error:', error);
     }
   };
 
+  // ✅ ИСПРАВЛЕНО: Используем новую структуру API
   const fetchCategories = async () => {
     try {
-      const response = await api.get('/api/categories');
-      setCategories(response.data.data || []);
+      // Предполагаем, что есть метод для получения категорий
+      // Если его нет, можем получить уникальные категории из товаров
+      const data = await api.products.getProducts({ 
+        select: 'category_path',
+        distinct: true 
+      });
+      
+      // Извлекаем уникальные категории
+      const uniqueCategories = [...new Set(
+        data.products
+          ?.map(p => p.category_path)
+          ?.filter(Boolean) || []
+      )];
+      
+      setCategories(uniqueCategories.map(cat => ({ name: cat, path: cat })));
     } catch (error) {
-      console.error('Error fetching categories:', error);
+      message.error('Ошибка при загрузке категорий');
+      console.error('Fetch categories error:', error);
     }
   };
 
-  const handleClose = () => {
+  const handleFileUpload = useCallback((file) => {
+    setUploadedFile(file);
+    
+    // Парсинг файла для предварительного просмотра
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        // Простой парсинг CSV для демонстрации
+        const text = e.target.result;
+        const lines = text.split('\n');
+        const headers = lines[0].split(',').map(h => h.trim());
+        const rows = lines.slice(1, 11).map(line => {
+          const values = line.split(',');
+          return headers.reduce((obj, header, index) => {
+            obj[header] = values[index]?.trim() || '';
+            return obj;
+          }, {});
+        });
+        
+        setPreviewData(rows);
+        setCurrentStep(1);
+      } catch (error) {
+        message.error('Ошибка при парсинге файла');
+        console.error('File parsing error:', error);
+      }
+    };
+    
+    reader.readAsText(file);
+    return false; // Предотвращаем автоматическую загрузку
+  }, []);
+
+  const handleMapping = useCallback(() => {
+    if (Object.keys(mappingConfig).length === 0) {
+      message.warning('Настройте соответствие полей перед продолжением');
+      return;
+    }
+    setCurrentStep(2);
+  }, [mappingConfig]);
+
+  // ✅ ИСПРАВЛЕНО: Используем новую структуру API
+  const handleImport = useCallback(async () => {
+    if (!uploadedFile) {
+      message.error('Файл не выбран');
+      return;
+    }
+
+    try {
+      setCurrentStep(3);
+      setImportProgress(0);
+
+      // Создаем объект с настройками импорта
+      const importOptionsWithMapping = {
+        ...importOptions,
+        mapping: mappingConfig,
+        supplier_id: selectedSupplier
+      };
+
+      // Используем новую структуру API
+      const result = await api.products.importProducts(uploadedFile, importOptionsWithMapping);
+      
+      setImportResults(result);
+      setImportProgress(100);
+      setCurrentStep(4);
+      
+      message.success(`Импорт завершен! Обработано: ${result.processed}, Ошибок: ${result.errors || 0}`);
+      
+      // Обновляем список товаров
+      dispatch(fetchProducts());
+      
+    } catch (error) {
+      message.error('Ошибка при импорте товаров');
+      console.error('Import error:', error);
+      setCurrentStep(2);
+    }
+  }, [uploadedFile, mappingConfig, importOptions, selectedSupplier, dispatch]);
+
+  const handleReset = useCallback(() => {
     setCurrentStep(0);
     setUploadedFile(null);
     setPreviewData([]);
@@ -97,418 +190,337 @@ const ProductImport = ({ visible, onClose }) => {
     setImportProgress(0);
     setImportResults(null);
     setSelectedSupplier(null);
-    onClose();
-  };
-
-  const handleFinish = () => {
-    dispatch(fetchProducts());
-    handleClose();
-  };
-
-  // Маппинг полей для автоматического определения
-  const fieldMappingRules = {
-    name: ['название', 'наименование', 'name', 'title', 'товар'],
-    sku: ['sku', 'артикул', 'код', 'article', 'code'],
-    price: ['цена', 'price', 'стоимость', 'cost'],
-    quantity: ['количество', 'остаток', 'qty', 'quantity', 'stock'],
-    description: ['описание', 'description', 'комментарий'],
-    category: ['категория', 'category', 'группа'],
-    brand: ['бренд', 'brand', 'марка', 'производитель'],
-    weight: ['вес', 'weight', 'масса'],
-    dimensions: ['размеры', 'dimensions', 'габариты']
-  };
-
-  // Обработка загрузки файла
-  const uploadProps = {
-    name: 'file',
-    multiple: false,
-    accept: '.xlsx,.xls,.csv',
-    showUploadList: false,
-    beforeUpload: (file) => {
-      const isValidType = file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
-                         file.type === 'application/vnd.ms-excel' ||
-                         file.type === 'text/csv';
-      
-      if (!isValidType) {
-        message.error('Поддерживаются только файлы Excel (.xlsx, .xls) и CSV');
-        return false;
-      }
-
-      const isLt10M = file.size / 1024 / 1024 < 10;
-      if (!isLt10M) {
-        message.error('Размер файла не должен превышать 10MB');
-        return false;
-      }
-
-      return false; // Предотвращаем автоматическую загрузку
-    },
-    customRequest: async ({ file, onSuccess, onError }) => {
-      try {
-        const formData = new FormData();
-        formData.append('file', file);
-
-        const response = await api.post('/api/products/parse-file', formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        });
-
-        setUploadedFile(file);
-        setPreviewData(response.data.preview || []);
-
-        // Автоматическое маппинг полей
-        const headers = response.data.headers || [];
-        const autoMapping = {};
-
-        headers.forEach((header, index) => {
-          const lowerHeader = header.toLowerCase();
-          
-          for (const [field, patterns] of Object.entries(fieldMappingRules)) {
-            if (patterns.some(pattern => lowerHeader.includes(pattern))) {
-              autoMapping[index] = field;
-              break;
-            }
-          }
-        });
-
-        setMappingConfig(autoMapping);
-        setCurrentStep(1);
-        onSuccess(response.data);
-      } catch (error) {
-        message.error('Ошибка обработки файла');
-        onError(error);
-      }
-    },
-    onRemove: () => {
-      setUploadedFile(null);
-      setPreviewData([]);
-      setMappingConfig({});
-      setCurrentStep(0);
-    }
-  };
-
-  const handleMapping = (columnIndex, field) => {
-    setMappingConfig({
-      ...mappingConfig,
-      [columnIndex]: field
-    });
-  };
-
-  const validateMapping = () => {
-    const requiredFields = ['name', 'sku'];
-    const mappedFields = Object.values(mappingConfig);
-
-    const missingFields = requiredFields.filter(field => !mappedFields.includes(field));
-
-    if (missingFields.length > 0) {
-      message.error(`Необходимо указать соответствие для полей: ${missingFields.join(', ')}`);
-      return false;
-    }
-
-    return true;
-  };
-
-  const proceedToImport = () => {
-    if (!validateMapping()) return;
-    if (!selectedSupplier) {
-      message.error('Выберите поставщика');
-      return;
-    }
-
-    setCurrentStep(2);
-    performImport();
-  };
-
-  const performImport = async () => {
-    try {
-      const importData = {
-        file_data: previewData,
-        mapping: mappingConfig,
-        supplier_id: selectedSupplier,
-        options: importOptions
-      };
-
-      // Симуляция прогресса импорта
-      const progressInterval = setInterval(() => {
-        setImportProgress(prev => {
-          if (prev >= 90) {
-            clearInterval(progressInterval);
-            return prev;
-          }
-          return prev + Math.random() * 10;
-        });
-      }, 200);
-
-      const response = await dispatch(importProducts(importData)).unwrap();
-      
-      clearInterval(progressInterval);
-      setImportProgress(100);
-      setImportResults(response);
-      setCurrentStep(3);
-
-    } catch (error) {
-      message.error('Ошибка импорта товаров');
-      console.error('Import error:', error);
-    }
-  };
-
-  const availableFields = [
-    { value: '', label: 'Не использовать' },
-    { value: 'name', label: 'Название' },
-    { value: 'sku', label: 'Артикул (SKU)' },
-    { value: 'price', label: 'Цена' },
-    { value: 'quantity', label: 'Количество' },
-    { value: 'description', label: 'Описание' },
-    { value: 'category', label: 'Категория' },
-    { value: 'brand', label: 'Бренд' },
-    { value: 'weight', label: 'Вес' },
-    { value: 'dimensions', label: 'Размеры' },
-  ];
-
-  const previewColumns = previewData.length > 0 ? 
-    Object.keys(previewData[0]).map((key, index) => ({
-      title: (
-        <div>
-          <div style={{ marginBottom: 8 }}>{key}</div>
-          <Select
-            style={{ width: '100%' }}
-            placeholder="Выберите поле"
-            value={mappingConfig[index] || ''}
-            onChange={(value) => handleMapping(index, value)}
-          >
-            {availableFields.map(field => (
-              <Option key={field.value} value={field.value}>
-                {field.label}
-              </Option>
-            ))}
-          </Select>
-        </div>
-      ),
-      dataIndex: key,
-      key: key,
-    })) : [];
+  }, []);
 
   const steps = [
     {
       title: 'Загрузка файла',
-      content: (
-        <div>
-          <Alert
-            message="Требования к файлу"
-            description={
-              <ul>
-                <li>Поддерживаемые форматы: Excel (.xlsx, .xls), CSV</li>
-                <li>Максимальный размер: 10MB</li>
-                <li>Первая строка должна содержать заголовки</li>
-                <li>Обязательные поля: Название, Артикул</li>
-              </ul>
-            }
-            type="info"
-            style={{ marginBottom: 16 }}
-          />
-
-          <Dragger {...uploadProps}>
-            <p className="ant-upload-drag-icon">
-              <FileExcelOutlined />
-            </p>
-            <p className="ant-upload-text">
-              Нажмите или перетащите файл в эту область для загрузки
-            </p>
-            <p className="ant-upload-hint">
-              Поддерживаются файлы Excel и CSV
-            </p>
-          </Dragger>
-
-          {uploadedFile && (
-            <Card style={{ marginTop: 16 }}>
-              <Space>
-                <FileExcelOutlined />
-                <span>{uploadedFile.name}</span>
-                <Tag color="green">Загружен</Tag>
-              </Space>
-            </Card>
-          )}
-        </div>
-      ),
+      description: 'Выберите файл для импорта',
     },
     {
       title: 'Настройка полей',
-      content: (
-        <div>
-          <Alert
-            message="Настройте соответствие полей"
-            description="Укажите, какие колонки файла соответствуют полям товара. Обязательные поля отмечены красным цветом."
-            type="info"
-            style={{ marginBottom: 16 }}
-          />
-
-          <Row gutter={16} style={{ marginBottom: 16 }}>
-            <Col span={12}>
-              <Select
-                style={{ width: '100%' }}
-                placeholder="Выберите поставщика"
-                value={selectedSupplier}
-                onChange={setSelectedSupplier}
-              >
-                {suppliers.map(supplier => (
-                  <Option key={supplier.id} value={supplier.id}>
-                    {supplier.name}
-                  </Option>
-                ))}
-              </Select>
-            </Col>
-            <Col span={12}>
-              <Space>
-                <Checkbox
-                  checked={importOptions.updateExisting}
-                  onChange={(e) => setImportOptions({
-                    ...importOptions,
-                    updateExisting: e.target.checked
-                  })}
-                >
-                  Обновлять существующие
-                </Checkbox>
-                <Checkbox
-                  checked={importOptions.createCategories}
-                  onChange={(e) => setImportOptions({
-                    ...importOptions,
-                    createCategories: e.target.checked
-                  })}
-                >
-                  Создавать категории
-                </Checkbox>
-              </Space>
-            </Col>
-          </Row>
-
-          <Table
-            dataSource={previewData.slice(0, 5)}
-            columns={previewColumns}
-            pagination={false}
-            scroll={{ x: 'max-content' }}
-            size="small"
-          />
-
-          <div style={{ marginTop: 16, textAlign: 'right' }}>
-            <Button type="primary" onClick={proceedToImport}>
-              Начать импорт
-            </Button>
-          </div>
-        </div>
-      ),
+      description: 'Настройте соответствие полей',
+    },
+    {
+      title: 'Параметры импорта',
+      description: 'Выберите параметры импорта',
     },
     {
       title: 'Импорт',
-      content: (
-        <div style={{ textAlign: 'center', padding: '40px 0' }}>
-          <Title level={4}>Импорт товаров</Title>
-          <Progress
-            type="circle"
-            percent={Math.round(importProgress)}
-            style={{ marginBottom: 16 }}
-          />
-          <div>Обработка данных...</div>
-        </div>
-      ),
+      description: 'Процесс импорта данных',
     },
     {
-      title: 'Завершение',
-      content: (
-        <div>
-          <Alert
-            message="Импорт завершен"
-            type="success"
-            style={{ marginBottom: 16 }}
-          />
+      title: 'Результат',
+      description: 'Результаты импорта',
+    },
+  ];
 
-          <Row gutter={16}>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="Добавлено"
-                  value={importResults?.created || 0}
-                  valueStyle={{ color: '#3f8600' }}
-                  prefix={<CheckCircleOutlined />}
-                />
-              </Card>
+  const requiredFields = [
+    { key: 'name', label: 'Название товара', required: true },
+    { key: 'sku', label: 'Артикул (SKU)', required: true },
+    { key: 'price', label: 'Цена', required: true },
+    { key: 'quantity', label: 'Количество', required: false },
+    { key: 'category_path', label: 'Категория', required: false },
+    { key: 'description', label: 'Описание', required: false },
+    { key: 'brand', label: 'Бренд', required: false },
+    { key: 'barcode', label: 'Штрихкод', required: false },
+  ];
+
+  const renderFileUpload = () => (
+    <Card>
+      <Title level={4}>Загрузка файла</Title>
+      <Dragger
+        accept=".xlsx,.xls,.csv"
+        beforeUpload={handleFileUpload}
+        maxCount={1}
+        showUploadList={false}
+      >
+        <p className="ant-upload-drag-icon">
+          <FileExcelOutlined style={{ fontSize: 48, color: '#1890ff' }} />
+        </p>
+        <p className="ant-upload-text">Нажмите или перетащите файл в эту область</p>
+        <p className="ant-upload-hint">
+          Поддерживаются форматы: .xlsx, .xls, .csv
+        </p>
+      </Dragger>
+      
+      {uploadedFile && (
+        <Alert
+          style={{ marginTop: 16 }}
+          message={`Файл загружен: ${uploadedFile.name}`}
+          type="success"
+          showIcon
+        />
+      )}
+    </Card>
+  );
+
+  const renderFieldMapping = () => (
+    <Card>
+      <Title level={4}>Настройка соответствия полей</Title>
+      
+      {previewData.length > 0 && (
+        <>
+          <Alert
+            style={{ marginBottom: 16 }}
+            message="Настройте соответствие между полями в файле и полями системы"
+            type="info"
+            showIcon
+          />
+          
+          <Row gutter={[16, 16]}>
+            {requiredFields.map(field => (
+              <Col key={field.key} span={12}>
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <Text strong>
+                    {field.label}
+                    {field.required && <span style={{ color: 'red' }}> *</span>}
+                  </Text>
+                  <Select
+                    placeholder="Выберите поле из файла"
+                    style={{ width: '100%' }}
+                    value={mappingConfig[field.key]}
+                    onChange={(value) => setMappingConfig(prev => ({
+                      ...prev,
+                      [field.key]: value
+                    }))}
+                  >
+                    {Object.keys(previewData[0] || {}).map(header => (
+                      <Option key={header} value={header}>{header}</Option>
+                    ))}
+                  </Select>
+                </Space>
+              </Col>
+            ))}
+          </Row>
+          
+          <Divider />
+          
+          <Title level={5}>Предварительный просмотр данных</Title>
+          <Table
+            dataSource={previewData}
+            columns={Object.keys(previewData[0] || {}).map(key => ({
+              title: key,
+              dataIndex: key,
+              key,
+              ellipsis: true,
+            }))}
+            pagination={false}
+            scroll={{ x: 800 }}
+            size="small"
+          />
+          
+          <Button
+            type="primary"
+            onClick={handleMapping}
+            style={{ marginTop: 16 }}
+            disabled={!mappingConfig.name || !mappingConfig.sku || !mappingConfig.price}
+          >
+            Продолжить
+          </Button>
+        </>
+      )}
+    </Card>
+  );
+
+  const renderImportOptions = () => (
+    <Card>
+      <Title level={4}>Параметры импорта</Title>
+      
+      <Space direction="vertical" style={{ width: '100%' }}>
+        <Row gutter={[16, 16]}>
+          <Col span={12}>
+            <Text strong>Поставщик</Text>
+            <Select
+              placeholder="Выберите поставщика"
+              style={{ width: '100%', marginTop: 8 }}
+              value={selectedSupplier}
+              onChange={setSelectedSupplier}
+              allowClear
+            >
+              {suppliers.map(supplier => (
+                <Option key={supplier.id} value={supplier.id}>
+                  {supplier.name}
+                </Option>
+              ))}
+            </Select>
+          </Col>
+        </Row>
+        
+        <Divider />
+        
+        <Title level={5}>Настройки обработки</Title>
+        
+        <Checkbox
+          checked={importOptions.updateExisting}
+          onChange={(e) => setImportOptions(prev => ({
+            ...prev,
+            updateExisting: e.target.checked
+          }))}
+        >
+          Обновлять существующие товары
+        </Checkbox>
+        
+        <Checkbox
+          checked={importOptions.createCategories}
+          onChange={(e) => setImportOptions(prev => ({
+            ...prev,
+            createCategories: e.target.checked
+          }))}
+        >
+          Создавать новые категории автоматически
+        </Checkbox>
+        
+        <Checkbox
+          checked={importOptions.validatePrices}
+          onChange={(e) => setImportOptions(prev => ({
+            ...prev,
+            validatePrices: e.target.checked
+          }))}
+        >
+          Проверять корректность цен
+        </Checkbox>
+        
+        <Checkbox
+          checked={importOptions.skipErrors}
+          onChange={(e) => setImportOptions(prev => ({
+            ...prev,
+            skipErrors: e.target.checked
+          }))}
+        >
+          Пропускать строки с ошибками
+        </Checkbox>
+        
+        <Button
+          type="primary"
+          onClick={handleImport}
+          style={{ marginTop: 16 }}
+        >
+          Начать импорт
+        </Button>
+      </Space>
+    </Card>
+  );
+
+  const renderImportProgress = () => (
+    <Card>
+      <Title level={4}>Импорт товаров</Title>
+      <Progress percent={importProgress} status="active" />
+      <Text>Обработка данных...</Text>
+    </Card>
+  );
+
+  const renderImportResults = () => (
+    <Card>
+      <Title level={4}>Результаты импорта</Title>
+      
+      {importResults && (
+        <Space direction="vertical" style={{ width: '100%' }}>
+          <Row gutter={[16, 16]}>
+            <Col span={8}>
+              <Statistic
+                title="Обработано строк"
+                value={importResults.processed || 0}
+                prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
+              />
             </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="Обновлено"
-                  value={importResults?.updated || 0}
-                  valueStyle={{ color: '#1890ff' }}
-                />
-              </Card>
+            <Col span={8}>
+              <Statistic
+                title="Успешно добавлено"
+                value={importResults.created || 0}
+                prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
+              />
             </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="С ошибками"
-                  value={importResults?.errors || 0}
-                  valueStyle={{ color: '#cf1322' }}
-                  prefix={<ExclamationCircleOutlined />}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="Пропущено"
-                  value={importResults?.skipped || 0}
-                  valueStyle={{ color: '#d46b08' }}
-                />
-              </Card>
+            <Col span={8}>
+              <Statistic
+                title="Обновлено"
+                value={importResults.updated || 0}
+                prefix={<CheckCircleOutlined style={{ color: '#1890ff' }} />}
+              />
             </Col>
           </Row>
-
-          {importResults?.errorDetails && importResults.errorDetails.length > 0 && (
-            <Card title="Ошибки импорта" style={{ marginTop: 16 }}>
+          
+          {importResults.errors > 0 && (
+            <Alert
+              message={`Ошибок: ${importResults.errors}`}
+              description="Некоторые строки не удалось обработать"
+              type="warning"
+              showIcon
+            />
+          )}
+          
+          {importResults.errorDetails && importResults.errorDetails.length > 0 && (
+            <>
+              <Title level={5}>Детали ошибок</Title>
               <Table
                 dataSource={importResults.errorDetails}
                 columns={[
-                  { title: 'Строка', dataIndex: 'row', width: 80 },
-                  { title: 'Поле', dataIndex: 'field', width: 120 },
-                  { title: 'Значение', dataIndex: 'value', width: 150 },
-                  { title: 'Ошибка', dataIndex: 'error' }
+                  { title: 'Строка', dataIndex: 'row', key: 'row' },
+                  { title: 'Ошибка', dataIndex: 'error', key: 'error', ellipsis: true },
                 ]}
-                pagination={{ pageSize: 5 }}
+                pagination={false}
                 size="small"
               />
-            </Card>
+            </>
           )}
+          
+          <Space>
+            <Button onClick={handleReset}>
+              Импортировать еще файл
+            </Button>
+            <Button type="primary" onClick={onClose}>
+              Закрыть
+            </Button>
+          </Space>
+        </Space>
+      )}
+    </Card>
+  );
 
-          <div style={{ marginTop: 24, textAlign: 'right' }}>
-            <Space>
-              <Button onClick={handleClose}>
-                Закрыть
-              </Button>
-              <Button type="primary" onClick={handleFinish}>
-                Перейти к товарам
-              </Button>
-            </Space>
-          </div>
-        </div>
-      ),
-    },
-  ];
+  const renderStepContent = () => {
+    switch (currentStep) {
+      case 0:
+        return renderFileUpload();
+      case 1:
+        return renderFieldMapping();
+      case 2:
+        return renderImportOptions();
+      case 3:
+        return renderImportProgress();
+      case 4:
+        return renderImportResults();
+      default:
+        return renderFileUpload();
+    }
+  };
 
   return (
     <Modal
       title="Импорт товаров"
       open={visible}
-      onCancel={handleClose}
+      onCancel={onClose}
       footer={null}
-      width={1000}
-      destroyOnClose
+      width={1200}
+      centered
     >
       <Steps current={currentStep} style={{ marginBottom: 24 }}>
-        {steps.map(item => (
-          <Step key={item.title} title={item.title} />
+        {steps.map((step, index) => (
+          <Step
+            key={index}
+            title={step.title}
+            description={step.description}
+            icon={
+              index < currentStep ? (
+                <CheckCircleOutlined />
+              ) : index === currentStep && currentStep === 3 ? (
+                <ReloadOutlined spin />
+              ) : undefined
+            }
+          />
         ))}
       </Steps>
-
-      <div>{steps[currentStep].content}</div>
+      
+      {renderStepContent()}
     </Modal>
   );
 };

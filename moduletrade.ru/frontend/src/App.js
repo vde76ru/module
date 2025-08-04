@@ -1,6 +1,6 @@
 // ===================================================
 // ФАЙЛ: frontend/src/App.js
-// ОБНОВЛЕНО: Убран AuthProvider, добавлена инициализация Redux auth
+// ИСПРАВЛЕННАЯ ВЕРСИЯ: Восстановлен компонент AuthInitializer
 // ===================================================
 import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
@@ -19,6 +19,7 @@ import Layout from './components/Layout/Layout';
 
 // Auth страницы
 import Login from './pages/Auth/Login';
+import Register from './pages/Auth/Register';
 import Dashboard from './pages/Dashboard/Dashboard';
 
 // Основные страницы
@@ -64,6 +65,7 @@ function AppContent() {
           <Routes>
             {/* Публичные маршруты */}
             <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
             <Route path="/403" element={<ForbiddenPage />} />
             <Route path="/account-suspended" element={<AccountSuspendedPage />} />
 
@@ -112,10 +114,10 @@ function AppContent() {
                 </ProtectedRoute>
               } />
 
-              {/* Синхронизация - требуется право синхронизации */}
-              <Route path="sync" element={
-                <ProtectedRoute permission={PERMISSIONS.SYNC_EXECUTE}>
-                  <SyncPage />
+              {/* Пользователи - требуется право просмотра пользователей */}
+              <Route path="users/*" element={
+                <ProtectedRoute permission={PERMISSIONS.USERS_VIEW}>
+                  <UsersPage />
                 </ProtectedRoute>
               } />
 
@@ -126,18 +128,22 @@ function AppContent() {
                 </ProtectedRoute>
               } />
 
-              {/* Пользователи - только для админов */}
-              <Route path="users/*" element={
-                <ProtectedRoute adminOnly>
-                  <UsersPage />
+              {/* Синхронизация - требуется право просмотра синхронизации */}
+              <Route path="sync/*" element={
+                <ProtectedRoute permission={PERMISSIONS.SYNC_VIEW}>
+                  <SyncPage />
                 </ProtectedRoute>
               } />
 
-              {/* Настройки - доступны всем */}
-              <Route path="settings/*" element={<SettingsPage />} />
+              {/* Настройки - требуется право просмотра настроек */}
+              <Route path="settings/*" element={
+                <ProtectedRoute permission={PERMISSIONS.SETTINGS_VIEW}>
+                  <SettingsPage />
+                </ProtectedRoute>
+              } />
             </Route>
 
-            {/* 404 страница */}
+            {/* 404 для всех остальных маршрутов */}
             <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </Router>
@@ -146,6 +152,9 @@ function AppContent() {
   );
 }
 
+// ===================================================
+// КОРНЕВОЙ КОМПОНЕНТ С REDUX PROVIDER
+// ===================================================
 function App() {
   return (
     <Provider store={store}>

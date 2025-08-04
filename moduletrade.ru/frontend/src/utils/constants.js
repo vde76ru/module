@@ -1,5 +1,6 @@
 // ===================================================
 // ФАЙЛ: frontend/src/utils/constants.js
+// ✅ ИСПРАВЛЕНО: Добавлены недостающие функции для работы с правами
 // ===================================================
 
 // =====================================
@@ -18,6 +19,7 @@ export const API_ENDPOINTS = {
 
   // Товары
   PRODUCTS: '/products',
+  PRODUCT_DETAILS: '/products/:id',
   PRODUCTS_IMPORT: '/products/import',
   PRODUCTS_EXPORT: '/products/export',
   PRODUCTS_SEARCH: '/products/search',
@@ -26,9 +28,11 @@ export const API_ENDPOINTS = {
 
   // Склады
   WAREHOUSES: '/warehouses',
+  WAREHOUSE_DETAILS: '/warehouses/:id',
   WAREHOUSE_TRANSFER: '/warehouses/transfer',
   WAREHOUSE_STOCK: '/warehouses/:id/stock',
   WAREHOUSE_MOVEMENTS: '/warehouses/:id/movements',
+  WAREHOUSE_UPDATE_STOCK: '/warehouses/stock',
 
   // Синхронизация
   SYNC_STOCK: '/sync/stock',
@@ -38,11 +42,13 @@ export const API_ENDPOINTS = {
 
   // Поставщики
   SUPPLIERS: '/suppliers',
+  SUPPLIER_DETAILS: '/suppliers/:id',
   SUPPLIER_PRODUCTS: '/suppliers/:id/products',
   SUPPLIER_SYNC: '/suppliers/:id/sync',
 
   // Маркетплейсы
   MARKETPLACES: '/marketplaces',
+  MARKETPLACE_DETAILS: '/marketplaces/:id',
   MARKETPLACE_ORDERS: '/marketplaces/:id/orders',
   MARKETPLACE_CONNECT: '/marketplaces/connect',
   MARKETPLACE_TEST: '/marketplaces/:id/test',
@@ -73,6 +79,53 @@ export const API_ENDPOINTS = {
   BILLING_PAYMENT_METHODS: '/billing/payment-methods',
 
   // Настройки
+  SETTINGS_PROFILE: '/settings/profile',
+  SETTINGS_INTEGRATIONS: '/settings/integrations',
+  SETTINGS_NOTIFICATIONS: '/settings/notifications',
+  SETTINGS_API_KEYS: '/settings/api-keys',
+};
+
+// =====================================
+// Storage Keys
+// =====================================
+export const STORAGE_KEYS = {
+  AUTH_TOKEN: 'authToken',
+  REFRESH_TOKEN: 'refreshToken',
+  USER_DATA: 'userData',
+  THEME: 'theme',
+  LANGUAGE: 'language',
+  PREFERENCES: 'userPreferences',
+};
+
+// =====================================
+// Маршруты
+// =====================================
+export const ROUTES = {
+  HOME: '/',
+  LOGIN: '/login',
+  REGISTER: '/register',
+  DASHBOARD: '/dashboard',
+  
+  // Основные страницы
+  PRODUCTS: '/products',
+  PRODUCTS_CREATE: '/products/new',
+  PRODUCTS_EDIT: '/products/:id/edit',
+  
+  ORDERS: '/orders',
+  ORDERS_DETAILS: '/orders/:id',
+  
+  WAREHOUSES: '/warehouses',
+  WAREHOUSES_CREATE: '/warehouses/new',
+  WAREHOUSES_EDIT: '/warehouses/:id/edit',
+  
+  MARKETPLACES: '/marketplaces',
+  SUPPLIERS: '/suppliers',
+  USERS: '/users',
+  ANALYTICS: '/analytics',
+  SYNC: '/sync',
+  
+  // Настройки
+  SETTINGS: '/settings',
   SETTINGS_PROFILE: '/settings/profile',
   SETTINGS_INTEGRATIONS: '/settings/integrations',
   SETTINGS_NOTIFICATIONS: '/settings/notifications',
@@ -120,6 +173,7 @@ export const PERMISSIONS = {
   ORDERS_CREATE: 'orders.create',
   ORDERS_UPDATE: 'orders.update',
   ORDERS_DELETE: 'orders.delete',
+  ORDERS_EXPORT: 'orders.export',
 
   // Маркетплейсы
   MARKETPLACES_VIEW: 'marketplaces.view',
@@ -132,6 +186,7 @@ export const PERMISSIONS = {
   WAREHOUSES_CREATE: 'warehouses.create',
   WAREHOUSES_UPDATE: 'warehouses.update',
   WAREHOUSES_DELETE: 'warehouses.delete',
+  WAREHOUSES_TRANSFER: 'warehouses.transfer',
 
   // Поставщики
   SUPPLIERS_VIEW: 'suppliers.view',
@@ -163,146 +218,54 @@ export const PERMISSIONS = {
 };
 
 // =====================================
-// Права по ролям (на основе middleware auth.js)
+// Права по ролям (на основе middleware)
 // =====================================
+
+// Базовые права для viewer
+const VIEWER_PERMISSIONS = [
+  PERMISSIONS.PRODUCTS_VIEW,
+  PERMISSIONS.ORDERS_VIEW,
+  PERMISSIONS.WAREHOUSES_VIEW,
+  PERMISSIONS.SUPPLIERS_VIEW,
+  PERMISSIONS.MARKETPLACES_VIEW,
+  PERMISSIONS.ANALYTICS_VIEW,
+];
+
+// Дополнительные права для operator
+const OPERATOR_ADDITIONAL_PERMISSIONS = [
+  PERMISSIONS.PRODUCTS_UPDATE,
+  PERMISSIONS.ORDERS_UPDATE,
+  PERMISSIONS.WAREHOUSES_TRANSFER,
+  PERMISSIONS.SYNC_EXECUTE,
+];
+
+// Дополнительные права для manager
+const MANAGER_ADDITIONAL_PERMISSIONS = [
+  PERMISSIONS.PRODUCTS_CREATE,
+  PERMISSIONS.PRODUCTS_DELETE,
+  PERMISSIONS.ORDERS_CREATE,
+  PERMISSIONS.ORDERS_DELETE,
+  PERMISSIONS.ORDERS_EXPORT,
+  PERMISSIONS.WAREHOUSES_CREATE,
+  PERMISSIONS.WAREHOUSES_UPDATE,
+  PERMISSIONS.SUPPLIERS_UPDATE,
+  PERMISSIONS.MARKETPLACES_UPDATE,
+  PERMISSIONS.USERS_VIEW,
+  PERMISSIONS.BILLING_VIEW,
+];
+
 export const ROLE_PERMISSIONS = {
-  [USER_ROLES.ADMIN]: [
-    PERMISSIONS.PRODUCTS_VIEW,
-    PERMISSIONS.PRODUCTS_CREATE,
-    PERMISSIONS.PRODUCTS_UPDATE,
-    PERMISSIONS.PRODUCTS_DELETE,
-    PERMISSIONS.PRODUCTS_IMPORT,
-    PERMISSIONS.PRODUCTS_EXPORT,
-    PERMISSIONS.ORDERS_VIEW,
-    PERMISSIONS.ORDERS_CREATE,
-    PERMISSIONS.ORDERS_UPDATE,
-    PERMISSIONS.ORDERS_DELETE,
-    PERMISSIONS.MARKETPLACES_VIEW,
-    PERMISSIONS.MARKETPLACES_CREATE,
-    PERMISSIONS.MARKETPLACES_UPDATE,
-    PERMISSIONS.MARKETPLACES_DELETE,
-    PERMISSIONS.WAREHOUSES_VIEW,
-    PERMISSIONS.WAREHOUSES_CREATE,
-    PERMISSIONS.WAREHOUSES_UPDATE,
-    PERMISSIONS.WAREHOUSES_DELETE,
-    PERMISSIONS.SUPPLIERS_VIEW,
-    PERMISSIONS.SUPPLIERS_CREATE,
-    PERMISSIONS.SUPPLIERS_UPDATE,
-    PERMISSIONS.SUPPLIERS_DELETE,
-    PERMISSIONS.USERS_VIEW,
-    PERMISSIONS.USERS_CREATE,
-    PERMISSIONS.USERS_UPDATE,
-    PERMISSIONS.SYNC_EXECUTE,
-    PERMISSIONS.SYNC_VIEW_LOGS,
-    PERMISSIONS.ANALYTICS_VIEW,
-    PERMISSIONS.ANALYTICS_EXPORT,
-    PERMISSIONS.BILLING_VIEW,
-    PERMISSIONS.TENANT_ADMIN,
-  ],
-
-  [USER_ROLES.MANAGER]: [
-    PERMISSIONS.PRODUCTS_VIEW,
-    PERMISSIONS.PRODUCTS_CREATE,
-    PERMISSIONS.PRODUCTS_UPDATE,
-    PERMISSIONS.PRODUCTS_IMPORT,
-    PERMISSIONS.PRODUCTS_EXPORT,
-    PERMISSIONS.ORDERS_VIEW,
-    PERMISSIONS.ORDERS_CREATE,
-    PERMISSIONS.ORDERS_UPDATE,
-    PERMISSIONS.MARKETPLACES_VIEW,
-    PERMISSIONS.WAREHOUSES_VIEW,
-    PERMISSIONS.SUPPLIERS_VIEW,
-    PERMISSIONS.SYNC_EXECUTE,
-    PERMISSIONS.SYNC_VIEW_LOGS,
-    PERMISSIONS.ANALYTICS_VIEW,
-    PERMISSIONS.BILLING_VIEW,
-  ],
-
+  [USER_ROLES.VIEWER]: VIEWER_PERMISSIONS,
   [USER_ROLES.OPERATOR]: [
-    PERMISSIONS.PRODUCTS_VIEW,
-    PERMISSIONS.PRODUCTS_UPDATE,
-    PERMISSIONS.ORDERS_VIEW,
-    PERMISSIONS.ORDERS_UPDATE,
-    PERMISSIONS.WAREHOUSES_VIEW,
-    PERMISSIONS.SYNC_EXECUTE,
-    PERMISSIONS.ANALYTICS_VIEW,
+    ...VIEWER_PERMISSIONS,
+    ...OPERATOR_ADDITIONAL_PERMISSIONS,
   ],
-
-  [USER_ROLES.VIEWER]: [
-    PERMISSIONS.PRODUCTS_VIEW,
-    PERMISSIONS.ORDERS_VIEW,
-    PERMISSIONS.MARKETPLACES_VIEW,
-    PERMISSIONS.WAREHOUSES_VIEW,
-    PERMISSIONS.SUPPLIERS_VIEW,
-    PERMISSIONS.ANALYTICS_VIEW,
+  [USER_ROLES.MANAGER]: [
+    ...VIEWER_PERMISSIONS,
+    ...OPERATOR_ADDITIONAL_PERMISSIONS,
+    ...MANAGER_ADDITIONAL_PERMISSIONS,
   ],
-};
-
-// =====================================
-// Функции для проверки прав
-// =====================================
-export const hasPermission = (userRole, permission) => {
-  if (!userRole || !permission) return false;
-  if (userRole === USER_ROLES.ADMIN) return true; // Админы имеют все права
-  const rolePermissions = ROLE_PERMISSIONS[userRole] || [];
-  return rolePermissions.includes(permission);
-};
-
-export const hasPermissions = (userRole, permissions, requireAll = true) => {
-  if (!userRole || !permissions || !Array.isArray(permissions)) return false;
-  if (requireAll) {
-    return permissions.every(permission => hasPermission(userRole, permission));
-  } else {
-    return permissions.some(permission => hasPermission(userRole, permission));
-  }
-};
-
-export const isAdmin = (userRole) => {
-  return userRole === USER_ROLES.ADMIN;
-};
-
-export const isSuperAdmin = (userRole) => {
-  // В текущей БД нет super_admin роли, поэтому возвращаем false
-  return false;
-};
-
-export const getRolePermissions = (userRole) => {
-  return ROLE_PERMISSIONS[userRole] || [];
-};
-
-// =====================================
-// Тарифы (на основе БД)
-// =====================================
-export const TARIFF_TYPES = {
-  FREE: 'free',
-  BASIC: 'basic',
-  STANDARD: 'standard',
-  PROFESSIONAL: 'professional',
-  ENTERPRISE: 'enterprise',
-};
-
-export const TARIFF_LABELS = {
-  [TARIFF_TYPES.FREE]: 'Бесплатный',
-  [TARIFF_TYPES.BASIC]: 'Базовый',
-  [TARIFF_TYPES.STANDARD]: 'Стандарт',
-  [TARIFF_TYPES.PROFESSIONAL]: 'Профессиональный',
-  [TARIFF_TYPES.ENTERPRISE]: 'Корпоративный',
-};
-
-export const TARIFF_COLORS = {
-  [TARIFF_TYPES.FREE]: 'default',
-  [TARIFF_TYPES.BASIC]: 'blue',
-  [TARIFF_TYPES.STANDARD]: 'green',
-  [TARIFF_TYPES.PROFESSIONAL]: 'gold',
-  [TARIFF_TYPES.ENTERPRISE]: 'purple',
-};
-
-// =====================================
-// Статусы товаров (на основе БД)
-// =====================================
-export const PRODUCT_STATUS_COLORS = {
-  ACTIVE: 'green',
-  INACTIVE: 'red',
+  [USER_ROLES.ADMIN]: Object.values(PERMISSIONS),
 };
 
 // =====================================
@@ -371,41 +334,104 @@ export const ORDER_STATUS_COLORS = {
   [ORDER_STATUSES.NEW]: 'blue',
   [ORDER_STATUSES.CONFIRMED]: 'cyan',
   [ORDER_STATUSES.PROCESSING]: 'orange',
-  [ORDER_STATUSES.SHIPPED]: 'geekblue',
+  [ORDER_STATUSES.SHIPPED]: 'purple',
   [ORDER_STATUSES.DELIVERED]: 'green',
   [ORDER_STATUSES.CANCELLED]: 'red',
-  [ORDER_STATUSES.RETURNED]: 'volcano',
+  [ORDER_STATUSES.RETURNED]: 'yellow',
 };
 
 // =====================================
-// Статусы синхронизации
+// Статусы товаров
 // =====================================
-export const SYNC_STATUSES = {
-  PENDING: 'pending',
-  RUNNING: 'running',
-  SUCCESS: 'success',
-  ERROR: 'error',
-  CANCELLED: 'cancelled',
+export const PRODUCT_STATUSES = {
+  ACTIVE: 'active',
+  INACTIVE: 'inactive',
+  OUT_OF_STOCK: 'out_of_stock',
+  DISCONTINUED: 'discontinued',
 };
 
-export const SYNC_STATUS_LABELS = {
-  [SYNC_STATUSES.PENDING]: 'Ожидание',
-  [SYNC_STATUSES.RUNNING]: 'Выполняется',
-  [SYNC_STATUSES.SUCCESS]: 'Успешно',
-  [SYNC_STATUSES.ERROR]: 'Ошибка',
-  [SYNC_STATUSES.CANCELLED]: 'Отменено',
+export const PRODUCT_STATUS_LABELS = {
+  [PRODUCT_STATUSES.ACTIVE]: 'Активный',
+  [PRODUCT_STATUSES.INACTIVE]: 'Неактивный',
+  [PRODUCT_STATUSES.OUT_OF_STOCK]: 'Нет в наличии',
+  [PRODUCT_STATUSES.DISCONTINUED]: 'Снят с производства',
 };
 
-export const SYNC_STATUS_COLORS = {
-  [SYNC_STATUSES.PENDING]: 'default',
-  [SYNC_STATUSES.RUNNING]: 'processing',
-  [SYNC_STATUSES.SUCCESS]: 'success',
-  [SYNC_STATUSES.ERROR]: 'error',
-  [SYNC_STATUSES.CANCELLED]: 'warning',
+export const PRODUCT_STATUS_COLORS = {
+  [PRODUCT_STATUSES.ACTIVE]: 'green',
+  [PRODUCT_STATUSES.INACTIVE]: 'default',
+  [PRODUCT_STATUSES.OUT_OF_STOCK]: 'orange',
+  [PRODUCT_STATUSES.DISCONTINUED]: 'red',
 };
 
 // =====================================
-// Размеры пагинации
+// ✅ ФУНКЦИИ ДЛЯ РАБОТЫ С ПРАВАМИ
 // =====================================
-export const PAGINATION_SIZES = [20, 50, 100];
-export const DEFAULT_PAGE_SIZE = 50;
+
+/**
+ * Проверка наличия права у роли
+ * @param {string} userRole - Роль пользователя
+ * @param {string} permission - Требуемое право
+ * @returns {boolean}
+ */
+export const hasPermission = (userRole, permission) => {
+  if (!userRole || !permission) return false;
+  
+  // Администраторы имеют все права
+  if (userRole === USER_ROLES.ADMIN) return true;
+  
+  const rolePermissions = ROLE_PERMISSIONS[userRole] || [];
+  return rolePermissions.includes(permission);
+};
+
+/**
+ * Проверка наличия нескольких прав у роли
+ * @param {string} userRole - Роль пользователя
+ * @param {string[]} permissions - Массив требуемых прав
+ * @param {boolean} requireAll - Требовать все права (true) или хотя бы одно (false)
+ * @returns {boolean}
+ */
+export const hasPermissions = (userRole, permissions, requireAll = true) => {
+  if (!userRole || !permissions || !Array.isArray(permissions)) return false;
+  
+  if (requireAll) {
+    return permissions.every(permission => hasPermission(userRole, permission));
+  } else {
+    return permissions.some(permission => hasPermission(userRole, permission));
+  }
+};
+
+/**
+ * Проверка роли администратора
+ * @param {string} userRole - Роль пользователя
+ * @returns {boolean}
+ */
+export const isAdmin = (userRole) => {
+  return userRole === USER_ROLES.ADMIN;
+};
+
+/**
+ * Проверка роли суперадминистратора (в текущей системе не используется)
+ * @param {string} userRole - Роль пользователя
+ * @returns {boolean}
+ */
+export const isSuperAdmin = (userRole) => {
+  // В текущей системе суперадминистраторов нет
+  return false;
+};
+
+/**
+ * Получение всех прав роли
+ * @param {string} userRole - Роль пользователя
+ * @returns {string[]}
+ */
+export const getRolePermissions = (userRole) => {
+  if (!userRole) return [];
+  
+  // Администраторы имеют все права
+  if (userRole === USER_ROLES.ADMIN) {
+    return Object.values(PERMISSIONS);
+  }
+  
+  return ROLE_PERMISSIONS[userRole] || [];
+};

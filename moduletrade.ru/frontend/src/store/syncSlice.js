@@ -1,18 +1,25 @@
-// frontend/src/store/syncSlice.js
+// ===================================================
+// ФАЙЛ: frontend/src/store/syncSlice.js  
+// ✅ ИСПРАВЛЕНО: Правильные импорты из новой API архитектуры
+// ===================================================
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { syncAPI, marketplacesAPI, suppliersAPI } from '../services/api';
+import { api } from '../services'; // ✅ ИСПРАВЛЕНО: Импорт из правильного места
 
-// Async thunks
+// =====================================
+// ASYNC THUNKS  
+// =====================================
+
 export const syncStock = createAsyncThunk(
   'sync/syncStock',
   async (data, { rejectWithValue }) => {
     try {
-      const response = await syncAPI.syncStock(data);
-      return response.data;
+      const response = await api.sync.syncStock(data);
+      return response;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || 'Ошибка синхронизации остатков'
-      );
+      return rejectWithValue({
+        message: error.message || 'Ошибка синхронизации остатков',
+        status: error.status
+      });
     }
   }
 );
@@ -21,12 +28,13 @@ export const syncOrders = createAsyncThunk(
   'sync/syncOrders',
   async (data, { rejectWithValue }) => {
     try {
-      const response = await syncAPI.syncOrders(data);
-      return response.data;
+      const response = await api.sync.syncOrders(data);
+      return response;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || 'Ошибка синхронизации заказов'
-      );
+      return rejectWithValue({
+        message: error.message || 'Ошибка синхронизации заказов',
+        status: error.status
+      });
     }
   }
 );
@@ -35,12 +43,13 @@ export const fetchSyncLogs = createAsyncThunk(
   'sync/fetchSyncLogs',
   async (params = {}, { rejectWithValue }) => {
     try {
-      const response = await syncAPI.getSyncLogs(params);
-      return response.data;
+      const response = await api.sync.getSyncLogs(params);
+      return response;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || 'Ошибка загрузки логов синхронизации'
-      );
+      return rejectWithValue({
+        message: error.message || 'Ошибка загрузки логов синхронизации',
+        status: error.status
+      });
     }
   }
 );
@@ -49,12 +58,13 @@ export const fetchSyncStatus = createAsyncThunk(
   'sync/fetchSyncStatus',
   async (_, { rejectWithValue }) => {
     try {
-      const response = await syncAPI.getSyncStatus();
-      return response.data;
+      const response = await api.sync.getSyncStatus();
+      return response;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || 'Ошибка загрузки статуса синхронизации'
-      );
+      return rejectWithValue({
+        message: error.message || 'Ошибка загрузки статуса синхронизации',
+        status: error.status
+      });
     }
   }
 );
@@ -63,12 +73,13 @@ export const fetchMarketplaces = createAsyncThunk(
   'sync/fetchMarketplaces',
   async (_, { rejectWithValue }) => {
     try {
-      const response = await marketplacesAPI.getMarketplaces();
-      return response.data;
+      const response = await api.marketplaces.getMarketplaces();
+      return response;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || 'Ошибка загрузки маркетплейсов'
-      );
+      return rejectWithValue({
+        message: error.message || 'Ошибка загрузки маркетплейсов',
+        status: error.status
+      });
     }
   }
 );
@@ -77,12 +88,13 @@ export const fetchSuppliers = createAsyncThunk(
   'sync/fetchSuppliers',
   async (_, { rejectWithValue }) => {
     try {
-      const response = await suppliersAPI.getSuppliers();
-      return response.data;
+      const response = await api.suppliers.getSuppliers();
+      return response;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || 'Ошибка загрузки поставщиков'
-      );
+      return rejectWithValue({
+        message: error.message || 'Ошибка загрузки поставщиков',
+        status: error.status
+      });
     }
   }
 );
@@ -91,12 +103,13 @@ export const testMarketplaceConnection = createAsyncThunk(
   'sync/testMarketplaceConnection',
   async (id, { rejectWithValue }) => {
     try {
-      const response = await marketplacesAPI.testMarketplaceConnection(id);
-      return { id, result: response.data };
+      const response = await api.marketplaces.testMarketplaceConnection(id);
+      return { id, result: response };
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || 'Ошибка тестирования подключения'
-      );
+      return rejectWithValue({
+        message: error.message || 'Ошибка тестирования подключения',
+        status: error.status
+      });
     }
   }
 );
@@ -105,12 +118,13 @@ export const testSupplierConnection = createAsyncThunk(
   'sync/testSupplierConnection',
   async (id, { rejectWithValue }) => {
     try {
-      const response = await suppliersAPI.testSupplierConnection(id);
-      return { id, result: response.data };
+      const response = await api.suppliers.testSupplierConnection(id);
+      return { id, result: response };
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || 'Ошибка тестирования подключения'
-      );
+      return rejectWithValue({
+        message: error.message || 'Ошибка тестирования подключения',
+        status: error.status
+      });
     }
   }
 );
@@ -119,15 +133,20 @@ export const importFromSupplier = createAsyncThunk(
   'sync/importFromSupplier',
   async ({ id, params }, { rejectWithValue }) => {
     try {
-      const response = await suppliersAPI.importFromSupplier(id, params);
-      return response.data;
+      const response = await api.suppliers.importFromSupplier(id, params);
+      return response;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || 'Ошибка импорта от поставщика'
-      );
+      return rejectWithValue({
+        message: error.message || 'Ошибка импорта от поставщика',
+        status: error.status
+      });
     }
   }
 );
+
+// =====================================
+// INITIAL STATE
+// =====================================
 
 const initialState = {
   logs: [],
@@ -154,6 +173,10 @@ const initialState = {
   }
 };
 
+// =====================================
+// SLICE
+// =====================================
+
 const syncSlice = createSlice({
   name: 'sync',
   initialState,
@@ -162,7 +185,7 @@ const syncSlice = createSlice({
       state.filters = { ...state.filters, ...action.payload };
     },
     resetFilters: (state) => {
-      state.filters = initialState.filters;
+      state.filters = { ...initialState.filters };
     },
     clearError: (state) => {
       state.error = null;
@@ -171,12 +194,12 @@ const syncSlice = createSlice({
       state.testing = {};
     },
     setTesting: (state, action) => {
-      const { id, loading } = action.payload;
-      state.testing[id] = loading;
+      const { id, value } = action.payload;
+      state.testing[id] = value;
     },
     setImporting: (state, action) => {
-      const { id, loading } = action.payload;
-      state.importing[id] = loading;
+      const { id, value } = action.payload;
+      state.importing[id] = value;
     },
   },
   extraReducers: (builder) => {
@@ -214,7 +237,7 @@ const syncSlice = createSlice({
       })
       .addCase(fetchSyncLogs.fulfilled, (state, action) => {
         state.loading = false;
-        state.logs = action.payload.items || action.payload;
+        state.logs = action.payload.logs || action.payload.data || [];
       })
       .addCase(fetchSyncLogs.rejected, (state, action) => {
         state.loading = false;
@@ -223,7 +246,7 @@ const syncSlice = createSlice({
       
       // Fetch sync status
       .addCase(fetchSyncStatus.fulfilled, (state, action) => {
-        state.status = action.payload;
+        state.status = action.payload.status || action.payload;
       })
       .addCase(fetchSyncStatus.rejected, (state, action) => {
         state.error = action.payload;
@@ -231,7 +254,7 @@ const syncSlice = createSlice({
       
       // Fetch marketplaces
       .addCase(fetchMarketplaces.fulfilled, (state, action) => {
-        state.marketplaces = action.payload;
+        state.marketplaces = action.payload.marketplaces || action.payload.data || [];
       })
       .addCase(fetchMarketplaces.rejected, (state, action) => {
         state.error = action.payload;
@@ -239,7 +262,7 @@ const syncSlice = createSlice({
       
       // Fetch suppliers
       .addCase(fetchSuppliers.fulfilled, (state, action) => {
-        state.suppliers = action.payload;
+        state.suppliers = action.payload.suppliers || action.payload.data || [];
       })
       .addCase(fetchSuppliers.rejected, (state, action) => {
         state.error = action.payload;
@@ -283,6 +306,10 @@ const syncSlice = createSlice({
       });
   },
 });
+
+// =====================================
+// EXPORTS
+// =====================================
 
 export const {
   setFilters,

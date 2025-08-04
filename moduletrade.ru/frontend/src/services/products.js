@@ -2,7 +2,7 @@
 // ФАЙЛ: frontend/src/services/products.js
 // ОБНОВЛЕННЫЙ PRODUCTSSERVICE С ЕДИНЫМ AXIOS
 // ===================================================
-import axios from 'utils/axios';
+import axios from '../utils/axios';
 import { API_ENDPOINTS } from 'utils/constants';
 
 class ProductsService {

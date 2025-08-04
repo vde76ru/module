@@ -1,5 +1,7 @@
 // ===================================================
 // ФАЙЛ: frontend/src/pages/Suppliers/SuppliersPage.jsx
+// ✅ ИСПРАВЛЕНО: Убран PermissionGuard, заменен на hasPermission условия
+// ✅ ИСПРАВЛЕНО: Убран дублирующий импорт usePermissions
 // ===================================================
 import React, { useState, useEffect } from 'react';
 import {
@@ -28,7 +30,7 @@ import {
   ExclamationCircleOutlined,
 } from '@ant-design/icons';
 
-import PermissionGuard from '../../components/Auth/PermissionGuard';
+// ✅ ИСПРАВЛЕНО: Только один импорт usePermissions, убран PermissionGuard
 import { usePermissions } from '../../hooks/usePermissions';
 import { PERMISSIONS } from '../../utils/constants';
 
@@ -43,6 +45,11 @@ const SuppliersPage = () => {
   const [form] = Form.useForm();
 
   const { hasPermission } = usePermissions();
+
+  // Проверяем права
+  const canCreate = hasPermission(PERMISSIONS.SUPPLIERS_CREATE);
+  const canUpdate = hasPermission(PERMISSIONS.SUPPLIERS_UPDATE);
+  const canDelete = hasPermission(PERMISSIONS.SUPPLIERS_DELETE);
 
   useEffect(() => {
     fetchSuppliers();
@@ -73,6 +80,16 @@ const SuppliersPage = () => {
             last_sync: new Date(Date.now() - 7200000).toISOString(),
             total_products: 8500,
             sync_status: 'warning',
+          },
+          {
+            id: '3',
+            name: 'Элемент Трейд',
+            code: 'element',
+            type: 'manual',
+            is_active: false,
+            last_sync: null,
+            total_products: 1200,
+            sync_status: 'error',
           },
         ]);
         setLoading(false);
@@ -105,43 +122,54 @@ const SuppliersPage = () => {
     }
   };
 
-  const handleSync = async (id) => {
+  const handleDelete = async (supplierId) => {
+    try {
+      message.success('Поставщик удален');
+      fetchSuppliers();
+    } catch (error) {
+      message.error('Ошибка удаления поставщика');
+    }
+  };
+
+  const handleSync = async (supplierId) => {
     try {
       message.success('Синхронизация запущена');
     } catch (error) {
-      message.error('Ошибка запуска синхронизации');
+      message.error('Ошибка синхронизации');
     }
   };
 
   const columns = [
     {
-      title: 'Поставщик',
+      title: 'Название',
       dataIndex: 'name',
       key: 'name',
-      render: (text, record) => (
-        <Space direction="vertical" size="small">
-          <strong>{text}</strong>
-          <Tag color="blue">{record.code}</Tag>
-        </Space>
-      ),
+    },
+    {
+      title: 'Код',
+      dataIndex: 'code',
+      key: 'code',
     },
     {
       title: 'Тип',
       dataIndex: 'type',
       key: 'type',
-      render: (type) => (
-        <Tag color={type === 'api' ? 'green' : 'default'}>
-          {type === 'api' ? 'API' : 'Ручной'}
-        </Tag>
-      ),
+      render: (type) => {
+        const typeLabels = {
+          api: 'API',
+          manual: 'Ручной',
+          file: 'Файл',
+        };
+        return <Tag>{typeLabels[type] || type}</Tag>;
+      },
     },
     {
       title: 'Статус',
       dataIndex: 'is_active',
       key: 'is_active',
-      render: (active) => (
-        <Tag color={active ? 'success' : 'default'}>
-          {active ? 'Активен' : 'Неактивен'}
+      render: (isActive) => (
+        <Tag color={isActive ? 'green' : 'red'}>
+          {isActive ? 'Активен' : 'Неактивен'}
         </Tag>
       ),
     },
@@ -149,62 +177,89 @@ const SuppliersPage = () => {
       title: 'Товары',
       dataIndex: 'total_products',
       key: 'total_products',
-      render: (count) => count?.toLocaleString('ru-RU') || 0,
+      render: (count) => count ? count.toLocaleString('ru-RU') : '0',
     },
     {
       title: 'Последняя синхронизация',
       dataIndex: 'last_sync',
       key: 'last_sync',
-      render: (date, record) => (
+      render: (lastSync, record) => (
         <Space>
-          {record.sync_status === 'success' ? (
-            <CheckCircleOutlined style={{ color: '#52c41a' }} />
-          ) : (
-            <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />
-          )}
-          {date ? new Date(date).toLocaleDateString('ru-RU') : 'Никогда'}
+          {record.sync_status === 'success' && <CheckCircleOutlined style={{ color: '#52c41a' }} />}
+          {record.sync_status === 'warning' && <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />}
+          {record.sync_status === 'error' && <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />}
+          <span>
+            {lastSync 
+              ? new Date(lastSync).toLocaleDateString('ru-RU')
+              : 'Никогда'
+            }
+          </span>
         </Space>
       ),
     },
     {
       title: 'Действия',
       key: 'actions',
-      width: 150,
-      render: (_, record) => (
-        <Space>
-          <Button
-            type="text"
-            icon={<SyncOutlined />}
-            onClick={() => handleSync(record.id)}
-            disabled={!record.is_active}
-          />
-          <PermissionGuard permission={PERMISSIONS.SUPPLIERS_UPDATE}>
+      render: (_, record) => {
+        const actions = [];
+
+        // Синхронизация - доступна всем кто может просматривать
+        if (record.is_active && record.type === 'api') {
+          actions.push(
             <Button
-              type="text"
+              key="sync"
+              type="link"
+              icon={<SyncOutlined />}
+              onClick={() => handleSync(record.id)}
+            >
+              Синхронизировать
+            </Button>
+          );
+        }
+
+        // Редактирование - только с правами UPDATE
+        if (canUpdate) {
+          actions.push(
+            <Button
+              key="edit"
+              type="link"
               icon={<EditOutlined />}
               onClick={() => handleEdit(record)}
-            />
-          </PermissionGuard>
-          <PermissionGuard permission={PERMISSIONS.SUPPLIERS_DELETE}>
+            >
+              Редактировать
+            </Button>
+          );
+        }
+
+        // Удаление - только с правами DELETE
+        if (canDelete) {
+          actions.push(
             <Button
-              type="text"
+              key="delete"
+              type="link"
               danger
               icon={<DeleteOutlined />}
               onClick={() => {
                 Modal.confirm({
                   title: 'Удалить поставщика?',
-                  onOk: () => message.success('Поставщик удален'),
+                  content: 'Это действие нельзя отменить',
+                  onOk: () => handleDelete(record.id),
                 });
               }}
-            />
-          </PermissionGuard>
-        </Space>
-      ),
+            >
+              Удалить
+            </Button>
+          );
+        }
+
+        return actions.length > 0 ? <Space size="small">{actions}</Space> : null;
+      },
     },
   ];
 
   return (
     <div>
+      {/* Статистика */}
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={8}>
           <Card>
@@ -230,15 +285,17 @@ const SuppliersPage = () => {
         </Col>
       </Row>
 
+      {/* Основная таблица */}
       <Card
         title={
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Title level={4} style={{ margin: 0 }}>Поставщики</Title>
-            <PermissionGuard permission={PERMISSIONS.SUPPLIERS_CREATE}>
+            {/* ✅ ИСПРАВЛЕНО: Заменен PermissionGuard на условие */}
+            {canCreate && (
               <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
                 Добавить поставщика
               </Button>
-            </PermissionGuard>
+            )}
           </div>
         }
       >
@@ -247,51 +304,107 @@ const SuppliersPage = () => {
           dataSource={suppliers}
           rowKey="id"
           loading={loading}
-          pagination={false}
+          pagination={{
+            pageSize: 20,
+            showSizeChanger: true,
+            showTotal: (total) => `Всего: ${total}`,
+          }}
         />
       </Card>
 
+      {/* Модальное окно создания/редактирования */}
       <Modal
         title={editingSupplier ? 'Редактировать поставщика' : 'Добавить поставщика'}
-        visible={isModalVisible}
+        open={isModalVisible}
         onCancel={() => setIsModalVisible(false)}
         footer={null}
+        width={600}
       >
-        <Form form={form} layout="vertical" onFinish={handleSubmit}>
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={handleSubmit}
+        >
           <Form.Item
-            label="Название"
             name="name"
-            rules={[{ required: true, message: 'Введите название' }]}
+            label="Название"
+            rules={[{ required: true, message: 'Введите название поставщика' }]}
           >
             <Input placeholder="Название поставщика" />
           </Form.Item>
 
           <Form.Item
-            label="Код"
             name="code"
-            rules={[{ required: true, message: 'Введите код' }]}
+            label="Код"
+            rules={[
+              { required: true, message: 'Введите код поставщика' },
+              { pattern: /^[a-z0-9_]+$/, message: 'Только латинские буквы, цифры и подчеркивания' }
+            ]}
           >
-            <Input placeholder="Уникальный код поставщика" />
+            <Input placeholder="supplier_code" />
           </Form.Item>
 
           <Form.Item
-            label="Тип"
             name="type"
-            rules={[{ required: true, message: 'Выберите тип' }]}
+            label="Тип интеграции"
+            rules={[{ required: true, message: 'Выберите тип интеграции' }]}
           >
             <Select placeholder="Выберите тип">
-              <Option value="api">API интеграция</Option>
+              <Option value="api">API</Option>
               <Option value="manual">Ручной ввод</Option>
+              <Option value="file">Файл</Option>
             </Select>
           </Form.Item>
 
-          <Form.Item label="Активен" name="is_active" valuePropName="checked">
-            <Switch />
+          <Form.Item
+            name="api_url"
+            label="URL API"
+            dependencies={['type']}
+            rules={[
+              ({ getFieldValue }) => ({
+                required: getFieldValue('type') === 'api',
+                message: 'Введите URL API',
+              }),
+            ]}
+          >
+            <Input placeholder="https://api.supplier.com/v1" />
           </Form.Item>
 
-          <Form.Item>
-            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-              <Button onClick={() => setIsModalVisible(false)}>Отмена</Button>
+          <Form.Item
+            name="api_key"
+            label="API ключ"
+            dependencies={['type']}
+            rules={[
+              ({ getFieldValue }) => ({
+                required: getFieldValue('type') === 'api',
+                message: 'Введите API ключ',
+              }),
+            ]}
+          >
+            <Input.Password placeholder="Введите API ключ" />
+          </Form.Item>
+
+          <Form.Item
+            name="description"
+            label="Описание"
+          >
+            <Input.TextArea rows={3} placeholder="Описание поставщика" />
+          </Form.Item>
+
+          <Form.Item
+            name="is_active"
+            label="Статус"
+            valuePropName="checked"
+            initialValue={true}
+          >
+            <Switch checkedChildren="Активен" unCheckedChildren="Неактивен" />
+          </Form.Item>
+
+          <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
+            <Space>
+              <Button onClick={() => setIsModalVisible(false)}>
+                Отмена
+              </Button>
               <Button type="primary" htmlType="submit">
                 {editingSupplier ? 'Сохранить' : 'Создать'}
               </Button>

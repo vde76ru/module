@@ -1,9 +1,7 @@
-// ===================================================
-// ФАЙЛ: frontend/src/components/Layout/Sidebar.jsx
-// ===================================================
 import React from 'react';
-import { Menu } from 'antd';
+import { Menu, Spin } from 'antd'; // Импортируем Spin для индикатора загрузки
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useSelector } from 'react-redux'; // Импортируем useSelector
 import {
   DashboardOutlined,
   ShoppingOutlined,
@@ -23,6 +21,25 @@ const Sidebar = ({ collapsed }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { hasPermission, isAdmin } = usePermissions();
+
+  // Получаем состояние аутентификации из Redux
+  const { user, loading } = useSelector(state => state.auth);
+
+  // ==================================================================
+  //                        ВОТ ИСПРАВЛЕНИЕ
+  // ==================================================================
+  // Если данные пользователя еще загружаются или отсутствуют,
+  // мы не пытаемся строить меню, а показываем индикатор загрузки.
+  // Это предотвращает любые ошибки, связанные с отсутствием user.permissions.
+  if (loading || !user) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
+        <Spin />
+      </div>
+    );
+  }
+  // ==================================================================
+
 
   // Определяем активный ключ на основе текущего пути
   const getSelectedKey = () => {

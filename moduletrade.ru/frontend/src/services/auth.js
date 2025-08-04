@@ -21,7 +21,7 @@ class AuthService {
 
       // Сохраняем токены через единый axios instance
       axios.setToken(token, refreshToken);
-      
+
       // Сохраняем данные пользователя
       this.setUser(user);
 
@@ -55,7 +55,7 @@ class AuthService {
   async logout() {
     try {
       const refreshToken = this.getRefreshToken();
-      
+
       if (refreshToken) {
         await axios.post(API_ENDPOINTS.LOGOUT, { refreshToken });
       }
@@ -74,7 +74,7 @@ class AuthService {
   async refreshToken() {
     try {
       const refreshToken = this.getRefreshToken();
-      
+
       if (!refreshToken) {
         throw new Error('No refresh token available');
       }
@@ -290,22 +290,22 @@ class AuthService {
   }
 
   /**
-   * Получение tenant_id пользователя
+   * Получение company_id пользователя
    */
   getTenantId() {
     const user = this.getUser();
-    return user?.tenant_id || null;
+    return user?.company_id || null;
   }
 
   /**
    * Обработка ошибок API
    */
   handleError(error) {
-    const errorMessage = error.response?.data?.message || 
-                        error.response?.data?.error || 
-                        error.message || 
+    const errorMessage = error.response?.data?.message ||
+                        error.response?.data?.error ||
+                        error.message ||
                         'Произошла неизвестная ошибка';
-    
+
     // В development режиме выводим подробную информацию об ошибке
     if (process.env.NODE_ENV === 'development') {
       console.error('Auth Service Error:', {
@@ -314,7 +314,7 @@ class AuthService {
         data: error.response?.data,
       });
     }
-    
+
     return new Error(errorMessage);
   }
 }
