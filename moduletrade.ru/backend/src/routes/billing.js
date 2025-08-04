@@ -2,10 +2,18 @@
 const express = require('express');
 const { authenticate, checkPermission } = require('../middleware/auth');
 const db = require('../config/database');
-const BillingService = require('../services/BillingService');
 
 const router = express.Router();
-const billingService = new BillingService();
+
+// Безопасная инициализация BillingService
+let BillingService, billingService;
+try {
+  BillingService = require('../services/BillingService');
+  billingService = new BillingService();
+} catch (error) {
+  console.warn('BillingService not available:', error.message);
+  billingService = null;
+}
 
 // Инициализация Stripe, если есть ключ
 if (process.env.STRIPE_SECRET_KEY) {

@@ -2,15 +2,31 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../config/database');
-const PIMService = require('../services/PIMService');
-const BillingService = require('../services/BillingService');
 const { authenticate, checkPermission } = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
 
-// Создаем экземпляры классов
-const pimService = new PIMService();
-const billingService = new BillingService();
+// Безопасная инициализация сервисов
+let PIMService, BillingService, pimService, billingService;
+
+try {
+  PIMService = require('../services/PIMService');
+  pimService = new PIMService();
+} catch (error) {
+  console.warn('PIMService not available:', error.message);
+}
+
+try {
+  BillingService = require('../services/BillingService');
+  billingService = new BillingService();
+} catch (error) {
+  console.warn('BillingService not available:', error.message);
+}
+
+const fs = require('fs');
+if (!fs.existsSync('uploads/imports/')) {
+  fs.mkdirSync('uploads/imports/', { recursive: true });
+}
 
 // Настройка загрузки файлов
 const storage = multer.diskStorage({
