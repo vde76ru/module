@@ -55,7 +55,7 @@ router.get('/', authenticate, async (req, res) => {
         };
 
         // ✅ ИСПРАВЛЕН ВЫЗОВ МЕТОДА СЕРВИСА
-        const result = await pimService.getAllProducts(req.user.tenantId, filters);
+        const result = await pimService.getAllProducts(req.user.companyId, filters);
 
         res.json({
             success: true,
@@ -75,7 +75,7 @@ router.get('/', authenticate, async (req, res) => {
 router.get('/:id', authenticate, async (req, res) => {
     try {
         // ✅ ИСПРАВЛЕН ВЫЗОВ МЕТОДА для получения товара по ID
-        const product = await pimService.getProductById(req.user.tenantId, req.params.id);
+        const product = await pimService.getProductById(req.user.companyId, req.params.id);
 
         if (!product) {
             return res.status(404).json({
@@ -101,7 +101,7 @@ router.get('/:id', authenticate, async (req, res) => {
 router.post('/', authenticate, checkPermission('products.create'), async (req, res) => {
     try {
         // Проверяем лимит тарифа
-        const currentProductsResult = await pimService.getAllProducts(req.user.tenantId, {
+        const currentProductsResult = await pimService.getAllProducts(req.user.companyId, {
             source_type: 'manual',
             limit: 1
         });
@@ -109,7 +109,7 @@ router.post('/', authenticate, checkPermission('products.create'), async (req, r
         const currentCount = currentProductsResult.pagination ? currentProductsResult.pagination.total : 0;
 
         const limitCheck = await billingService.checkLimit(
-            req.user.tenantId,
+            req.user.companyId,
             'products',
             currentCount + 1
         );
@@ -122,7 +122,7 @@ router.post('/', authenticate, checkPermission('products.create'), async (req, r
         }
 
         // ✅ ИСПРАВЛЕН ВЫЗОВ СОЗДАНИЯ ТОВАРА
-        const product = await pimService.createProduct(req.user.tenantId, req.body, req.user.id);
+        const product = await pimService.createProduct(req.user.companyId, req.body, req.user.id);
 
         res.status(201).json({
             success: true,
@@ -141,7 +141,7 @@ router.post('/', authenticate, checkPermission('products.create'), async (req, r
 router.put('/:id', authenticate, checkPermission('products.update'), async (req, res) => {
     try {
         const product = await pimService.updateProduct(
-            req.user.tenantId,
+            req.user.companyId,
             req.params.id,
             req.body,
             req.user.id
@@ -164,7 +164,7 @@ router.put('/:id', authenticate, checkPermission('products.update'), async (req,
 router.delete('/:id', authenticate, checkPermission('products.delete'), async (req, res) => {
     try {
         await pimService.updateProduct(
-            req.user.tenantId,
+            req.user.companyId,
             req.params.id,
             { is_active: false },
             req.user.id
@@ -196,7 +196,7 @@ router.post('/bulk-update', authenticate, checkPermission('products.update'), as
         }
 
         const result = await pimService.bulkUpdateProducts(
-            req.user.tenantId,
+            req.user.companyId,
             product_ids,
             updates,
             req.user.id
@@ -229,7 +229,7 @@ router.post('/bulk-delete', authenticate, checkPermission('products.delete'), as
         }
 
         const result = await pimService.bulkUpdateProducts(
-            req.user.tenantId,
+            req.user.companyId,
             product_ids,
             { is_active: false },
             req.user.id
@@ -260,7 +260,7 @@ router.post('/import', authenticate, checkPermission('products.import'), upload.
         }
 
         // Здесь должна быть логика импорта
-        // const result = await pimService.importProducts(req.user.tenantId, req.file.path, req.user.id);
+        // const result = await pimService.importProducts(req.user.companyId, req.file.path, req.user.id);
 
         res.json({
             success: true,
@@ -283,7 +283,7 @@ router.post('/import', authenticate, checkPermission('products.import'), upload.
 router.get('/export/yml', authenticate, async (req, res) => {
     try {
         // Получаем товары для экспорта
-        const products = await pimService.getAllProducts(req.user.tenantId, {
+        const products = await pimService.getAllProducts(req.user.companyId, {
             is_active: true,
             limit: 10000 // Большой лимит для экспорта
         });
@@ -324,11 +324,11 @@ router.post('/:id/marketplace-mapping', authenticate, checkPermission('products.
     try {
         const { marketplace_id, marketplace_product_id, mapping_data } = req.body;
 
-        const pool = await db.getPool(req.user.tenantId);
+        const pool = await db.getPool(req.user.companyId);
         const result = await pool.query(`
             INSERT INTO marketplace_product_links (
                 product_id, marketplace_id, marketplace_sku,
-                marketplace_product_id, tenant_id, is_active
+                marketplace_product_id, company_id, is_active
             ) VALUES ($1, $2, $3, $4, $5, true)
             ON CONFLICT (product_id, marketplace_id)
             DO UPDATE SET
@@ -341,7 +341,7 @@ router.post('/:id/marketplace-mapping', authenticate, checkPermission('products.
             marketplace_id,
             marketplace_product_id || req.params.id, // Используем ID товара как SKU по умолчанию
             marketplace_product_id,
-            req.user.tenantId
+            req.user.companyId
         ]);
 
         res.json({

@@ -20,13 +20,13 @@ class SyncService {
   async initializeWorkers() {
     try {
       console.log('Initializing sync workers...');
-      
+
       // Здесь можно добавить инициализацию RabbitMQ воркеров
       // для обработки очередей синхронизации
-      
+
       // Пример инициализации воркера для синхронизации поставщиков
       // this.setupSupplierSyncWorker();
-      
+
       console.log('Sync workers initialized successfully');
       return true;
     } catch (error) {
@@ -38,20 +38,20 @@ class SyncService {
   /**
    * Синхронизация товаров от всех активных поставщиков для тенанта
    */
-  async syncAllSuppliers(tenantId) {
-    logger.info(`Starting sync for all suppliers of tenant ${tenantId}`);
-    
+  async syncAllSuppliers(companyId) {
+    logger.info(`Starting sync for all suppliers of tenant ${companyId}`);
+
     try {
       // Получаем всех активных поставщиков
       const suppliers = await db('suppliers')
-        .where({ tenant_id: tenantId, is_active: true })
+        .where({ company_id: companyId, is_active: true })
         .select('*');
 
       const results = [];
-      
+
       for (const supplier of suppliers) {
         try {
-          const result = await this.syncSupplier(tenantId, supplier.id);
+          const result = await this.syncSupplier(companyId, supplier.id);
           results.push({
             supplierId: supplier.id,
             supplierName: supplier.name,
@@ -70,7 +70,7 @@ class SyncService {
       }
 
       // Обновляем рейтинги популярности после синхронизации
-      await this.analyticsService.updatePopularityScores(tenantId);
+      await this.analyticsService.updatePopularityScores(companyId);
 
       return {
         success: true,
@@ -86,13 +86,13 @@ class SyncService {
   /**
    * Синхронизация товаров от конкретного поставщика
    */
-  async syncSupplier(tenantId, supplierId) {
-    logger.info(`Starting sync for supplier ${supplierId} of tenant ${tenantId}`);
-    
+  async syncSupplier(companyId, supplierId) {
+    logger.info(`Starting sync for supplier ${supplierId} of tenant ${companyId}`);
+
     try {
       // Получаем информацию о поставщике
       const supplier = await db('suppliers')
-        .where({ id: supplierId, tenant_id: tenantId })
+        .where({ id: supplierId, company_id: companyId })
         .first();
 
       if (!supplier) {
@@ -101,20 +101,20 @@ class SyncService {
 
       // Получаем адаптер для типа поставщика
       const adapter = this.getSupplierAdapter(supplier.type);
-      
+
       // Получаем товары от поставщика
       const products = await adapter.fetchProducts(supplier.config);
-      
+
       let processed = 0;
       let errors = [];
-      
+
       // Обрабатываем товары в транзакции
       const trx = await db.transaction();
-      
+
       try {
         for (const productData of products) {
           try {
-            await this.processSupplierProduct(trx, tenantId, supplierId, productData);
+            await this.processSupplierProduct(trx, companyId, supplierId, productData);
             processed++;
           } catch (error) {
             logger.error(`Error processing product ${productData.sku}:`, error);
@@ -124,14 +124,14 @@ class SyncService {
             });
           }
         }
-        
+
         // Обновляем время последней синхронизации
         await trx('suppliers')
           .where({ id: supplierId })
           .update({ last_sync_at: new Date() });
-        
+
         await trx.commit();
-        
+
         return {
           processed,
           errors: errors.length,
@@ -150,7 +150,7 @@ class SyncService {
   /**
    * Обработка товара от поставщика
    */
-  async processSupplierProduct(trx, tenantId, supplierId, productData) {
+  async processSupplierProduct(trx, companyId, supplierId, productData) {
     // Нормализуем данные товара
     const normalizedData = await this.normalizationService.normalizeProduct(
       productData,
@@ -158,17 +158,17 @@ class SyncService {
     );
 
     // Получаем или создаем бренд
-    const brand = await this.getOrCreateBrand(trx, tenantId, normalizedData.brand);
-    
+    const brand = await this.getOrCreateBrand(trx, companyId, normalizedData.brand);
+
     // Получаем или создаем категорию
-    const categoryId = await this.getOrCreateCategory(trx, tenantId, normalizedData.category);
+    const categoryId = await this.getOrCreateCategory(trx, companyId, normalizedData.category);
 
     // Ищем существующий товар
     let product = await trx('products')
-      .where({ 
-        tenant_id: tenantId,
+      .where({
+        company_id: companyId,
         supplier_sku: normalizedData.sku,
-        supplier_id: supplierId 
+        supplier_id: supplierId
       })
       .first();
 
@@ -176,7 +176,7 @@ class SyncService {
 
     const productPayload = {
       id: productId,
-      tenant_id: tenantId,
+      company_id: companyId,
       supplier_id: supplierId,
       supplier_sku: normalizedData.sku,
       name: normalizedData.name,
@@ -218,20 +218,20 @@ class SyncService {
   /**
    * Получить или создать бренд
    */
-  async getOrCreateBrand(trx, tenantId, brandName) {
+  async getOrCreateBrand(trx, companyId, brandName) {
     if (!brandName) return null;
 
     const normalizedName = brandName.trim();
-    
+
     let brand = await trx('brands')
-      .where({ tenant_id: tenantId, name: normalizedName })
+      .where({ company_id: companyId, name: normalizedName })
       .first();
 
     if (!brand) {
       const brandId = uuidv4();
       await trx('brands').insert({
         id: brandId,
-        tenant_id: tenantId,
+        company_id: companyId,
         name: normalizedName,
         created_at: new Date()
       });
@@ -244,7 +244,7 @@ class SyncService {
   /**
    * Получить или создать категорию
    */
-  async getOrCreateCategory(trx, tenantId, categoryPath) {
+  async getOrCreateCategory(trx, companyId, categoryPath) {
     if (!categoryPath) return null;
 
     // Категории могут быть вложенными, разделенными "/"
@@ -256,10 +256,10 @@ class SyncService {
 
     for (const categoryName of parts) {
       let category = await trx('categories')
-        .where({ 
-          tenant_id: tenantId,
+        .where({
+          company_id: companyId,
           name: categoryName,
-          parent_id: parentId 
+          parent_id: parentId
         })
         .first();
 
@@ -267,7 +267,7 @@ class SyncService {
         categoryId = uuidv4();
         await trx('categories').insert({
           id: categoryId,
-          tenant_id: tenantId,
+          company_id: companyId,
           name: categoryName,
           parent_id: parentId,
           created_at: new Date()
@@ -305,21 +305,21 @@ class SyncService {
   /**
    * Обновить статусы синхронизации для всех поставщиков
    */
-  async updateSyncStatuses(tenantId) {
+  async updateSyncStatuses(companyId) {
     const suppliers = await db('suppliers')
-      .where({ tenant_id: tenantId })
+      .where({ company_id: companyId })
       .select('*');
 
     const results = [];
-    
+
     for (const supplier of suppliers) {
       try {
         const adapter = this.getSupplierAdapter(supplier.type);
         const status = await adapter.checkStatus(supplier.config);
-        
+
         await db('suppliers')
           .where({ id: supplier.id })
-          .update({ 
+          .update({
             status: status.isOnline ? 'online' : 'offline',
             last_check_at: new Date()
           });
@@ -348,10 +348,10 @@ class SyncService {
   async initializeWorkers() {
     try {
       console.log('Initializing sync workers...');
-      
+
       // Здесь можно добавить инициализацию RabbitMQ воркеров
       // для обработки очередей синхронизации
-      
+
       console.log('Sync workers initialized successfully');
       return true;
     } catch (error) {

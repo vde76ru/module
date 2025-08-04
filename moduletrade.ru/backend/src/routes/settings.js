@@ -7,22 +7,22 @@ const router = express.Router();
 
 /**
  * GET /api/settings
- * Получение настроек тенанта
+ * Получение настроек компании
  */
 router.get('/', authenticate, async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
 
-    const result = await db.mainPool.query(`
+    const result = await db.query(`
       SELECT settings
-      FROM tenants
+      FROM companies
       WHERE id = $1
-    `, [tenantId]);
+    `, [companyId]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        error: 'Tenant not found'
+        error: 'Company not found'
       });
     }
 
@@ -44,24 +44,24 @@ router.get('/', authenticate, async (req, res) => {
 
 /**
  * PUT /api/settings
- * Обновление настроек тенанта
+ * Обновление настроек компании
  */
 router.put('/', authenticate, checkRole(['admin', 'manager']), async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
     const updates = req.body;
 
     // Получаем текущие настройки
-    const currentResult = await db.mainPool.query(`
+    const currentResult = await db.query(`
       SELECT settings
-      FROM tenants
+      FROM companies
       WHERE id = $1
-    `, [tenantId]);
+    `, [companyId]);
 
     if (currentResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        error: 'Tenant not found'
+        error: 'Company not found'
       });
     }
 
@@ -69,12 +69,12 @@ router.put('/', authenticate, checkRole(['admin', 'manager']), async (req, res) 
     const newSettings = { ...currentSettings, ...updates };
 
     // Обновляем настройки
-    await db.mainPool.query(`
-      UPDATE tenants
+    await db.query(`
+      UPDATE companies
       SET settings = $1,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $2
-    `, [JSON.stringify(newSettings), tenantId]);
+    `, [JSON.stringify(newSettings), companyId]);
 
     res.json({
       success: true,
@@ -96,24 +96,25 @@ router.put('/', authenticate, checkRole(['admin', 'manager']), async (req, res) 
  */
 router.get('/integrations', authenticate, async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
 
-    const result = await db.mainPool.query(`
+    // ✅ ИСПРАВЛЕНО: используем marketplace_settings вместо tenant_integrations
+    const result = await db.query(`
       SELECT
         m.id,
         m.name,
         m.type,
         CASE
-          WHEN ti.id IS NOT NULL THEN true
+          WHEN ms.id IS NOT NULL THEN true
           ELSE false
         END as is_connected,
-        ti.settings,
-        ti.is_active,
-        ti.last_sync_at
+        ms.api_credentials as settings,
+        ms.is_active,
+        ms.last_sync_at
       FROM marketplaces m
-      LEFT JOIN tenant_integrations ti ON m.id = ti.marketplace_id AND ti.tenant_id = $1
+      LEFT JOIN marketplace_settings ms ON m.id = ms.marketplace_id AND ms.company_id = $1
       ORDER BY m.name ASC
-    `, [tenantId]);
+    `, [companyId]);
 
     res.json({
       success: true,
@@ -135,12 +136,12 @@ router.get('/integrations', authenticate, async (req, res) => {
  */
 router.put('/integrations/:marketplaceId', authenticate, checkRole(['admin', 'manager']), async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
     const marketplaceId = req.params.marketplaceId;
     const { settings, is_active } = req.body;
 
     // Проверяем существование маркетплейса
-    const marketplaceResult = await db.mainPool.query(`
+    const marketplaceResult = await db.query(`
       SELECT id FROM marketplaces WHERE id = $1
     `, [marketplaceId]);
 
@@ -151,17 +152,17 @@ router.put('/integrations/:marketplaceId', authenticate, checkRole(['admin', 'ma
       });
     }
 
-    // Обновляем или создаем интеграцию
-    const result = await db.mainPool.query(`
-      INSERT INTO tenant_integrations (tenant_id, marketplace_id, settings, is_active)
+    // ✅ ИСПРАВЛЕНО: используем marketplace_settings и правильное имя колонки
+    const result = await db.query(`
+      INSERT INTO marketplace_settings (company_id, marketplace_id, api_credentials, is_active)
       VALUES ($1, $2, $3, $4)
-      ON CONFLICT (tenant_id, marketplace_id)
+      ON CONFLICT (company_id, marketplace_id)
       DO UPDATE SET
-        settings = EXCLUDED.settings,
+        api_credentials = EXCLUDED.api_credentials,
         is_active = EXCLUDED.is_active,
         updated_at = CURRENT_TIMESTAMP
       RETURNING *
-    `, [tenantId, marketplaceId, JSON.stringify(settings), is_active]);
+    `, [companyId, marketplaceId, JSON.stringify(settings), is_active]);
 
     res.json({
       success: true,
@@ -183,36 +184,41 @@ router.put('/integrations/:marketplaceId', authenticate, checkRole(['admin', 'ma
  */
 router.get('/notifications', authenticate, async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
 
-    const result = await db.mainPool.query(`
+    const result = await db.query(`
       SELECT settings
-      FROM tenants
+      FROM companies
       WHERE id = $1
-    `, [tenantId]);
+    `, [companyId]);
 
     const settings = result.rows[0]?.settings || {};
-    const notifications = settings.notifications || {
+    const notificationSettings = settings.notifications || {
       email: {
-        newOrder: true,
-        lowStock: true,
-        syncErrors: true,
-        dailyReport: false
+        order_created: true,
+        order_status_changed: true,
+        stock_low: true,
+        sync_completed: true,
+        sync_failed: true
+      },
+      sms: {
+        order_created: false,
+        order_status_changed: false
       },
       push: {
-        newOrder: true,
-        lowStock: true,
-        syncErrors: true
+        order_created: true,
+        order_status_changed: true,
+        stock_low: true
       }
     };
 
     res.json({
       success: true,
-      data: notifications
+      data: notificationSettings
     });
 
   } catch (error) {
-    console.error('Get notifications error:', error);
+    console.error('Get notification settings error:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'
@@ -224,39 +230,70 @@ router.get('/notifications', authenticate, async (req, res) => {
  * PUT /api/settings/notifications
  * Обновление настроек уведомлений
  */
-router.put('/notifications', authenticate, async (req, res) => {
+router.put('/notifications', authenticate, checkRole(['admin', 'manager']), async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
-    const notifications = req.body;
+    const companyId = req.user.companyId;
+    const notificationSettings = req.body;
 
     // Получаем текущие настройки
-    const currentResult = await db.mainPool.query(`
+    const currentResult = await db.query(`
       SELECT settings
-      FROM tenants
+      FROM companies
       WHERE id = $1
-    `, [tenantId]);
+    `, [companyId]);
 
-    const currentSettings = currentResult.rows[0]?.settings || {};
-    const newSettings = {
-      ...currentSettings,
-      notifications
-    };
+    if (currentResult.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Company not found'
+      });
+    }
+
+    const currentSettings = currentResult.rows[0].settings || {};
+    currentSettings.notifications = notificationSettings;
 
     // Обновляем настройки
-    await db.mainPool.query(`
-      UPDATE tenants
+    await db.query(`
+      UPDATE companies
       SET settings = $1,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $2
-    `, [JSON.stringify(newSettings), tenantId]);
+    `, [JSON.stringify(currentSettings), companyId]);
 
     res.json({
       success: true,
-      data: notifications
+      data: notificationSettings
     });
 
   } catch (error) {
-    console.error('Update notifications error:', error);
+    console.error('Update notification settings error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+/**
+ * GET /api/settings/api-keys
+ * Получение API ключей
+ */
+router.get('/api-keys', authenticate, checkRole(['admin']), async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+
+    // В будущем здесь будет логика работы с API ключами
+    // Пока возвращаем заглушку
+    res.json({
+      success: true,
+      data: {
+        keys: [],
+        webhooks: []
+      }
+    });
+
+  } catch (error) {
+    console.error('Get API keys error:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'

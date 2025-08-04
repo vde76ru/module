@@ -2,393 +2,227 @@
 const jwt = require('jsonwebtoken');
 const db = require('../config/database');
 
-// ========================================
-// RATE LIMITING (простая реализация)
-// ========================================
-
-const rateLimitStore = new Map();
-
 /**
- * Простой rate limiter без внешних зависимостей
- * @param {number} maxRequests - Максимальное количество запросов
- * @param {number} windowMs - Окно времени в миллисекундах
- * @returns {Function} Express middleware
+ * Middleware для проверки аутентификации
  */
-function rateLimiter(maxRequests = 100, windowMs = 15 * 60 * 1000) {
-  return (req, res, next) => {
-    const clientId = req.ip || req.connection.remoteAddress || 'unknown';
-    const now = Date.now();
-    const windowStart = now - windowMs;
-
-    // Получаем или создаем записи для клиента
-    if (!rateLimitStore.has(clientId)) {
-      rateLimitStore.set(clientId, []);
-    }
-
-    const requests = rateLimitStore.get(clientId);
-
-    // Удаляем старые записи
-    const validRequests = requests.filter(time => time > windowStart);
-    rateLimitStore.set(clientId, validRequests);
-
-    // Проверяем лимит
-    if (validRequests.length >= maxRequests) {
-      return res.status(429).json({
-        success: false,
-        error: 'Too many requests',
-        retryAfter: Math.ceil(windowMs / 1000),
-        limit: maxRequests,
-        window: windowMs
-      });
-    }
-
-    // Добавляем текущий запрос
-    validRequests.push(now);
-
-    // Добавляем заголовки rate limit
-    res.set({
-      'X-RateLimit-Limit': maxRequests,
-      'X-RateLimit-Remaining': Math.max(0, maxRequests - validRequests.length),
-      'X-RateLimit-Reset': new Date(windowStart + windowMs).toISOString()
-    });
-
-    next();
-  };
-}
-
-// Очистка старых записей каждые 5 минут
-setInterval(() => {
-  const now = Date.now();
-  const fiveMinutesAgo = now - (5 * 60 * 1000);
-
-  for (const [clientId, requests] of rateLimitStore.entries()) {
-    const validRequests = requests.filter(time => time > fiveMinutesAgo);
-    if (validRequests.length === 0) {
-      rateLimitStore.delete(clientId);
-    } else {
-      rateLimitStore.set(clientId, validRequests);
-    }
-  }
-}, 5 * 60 * 1000);
-
-// ========================================
-// AUTHENTICATION MIDDLEWARE
-// ========================================
-
-/**
- * Middleware для проверки JWT токена
- */
-async function authenticate(req, res, next) {
+const authenticate = async (req, res, next) => {
   try {
+    // Получаем токен из заголовка
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({
         success: false,
-        error: 'Access token required',
-        code: 'TOKEN_MISSING'
+        error: 'No token provided'
       });
     }
 
-    const token = authHeader.substring(7);
+    const token = authHeader.substring(7); // Убираем "Bearer "
 
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid token format',
-        code: 'TOKEN_INVALID_FORMAT'
-      });
-    }
-
+    // Проверяем токен
+    let decoded;
     try {
-      // Верифицируем JWT токен
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-      if (!decoded.userId || !decoded.tenantId) {
+      decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    } catch (error) {
+      if (error.name === 'TokenExpiredError') {
         return res.status(401).json({
           success: false,
-          error: 'Invalid token payload',
-          code: 'TOKEN_INVALID_PAYLOAD'
+          error: 'Token expired',
+          code: 'TOKEN_EXPIRED'
         });
       }
-
-      // Проверяем существование пользователя и тенанта
-      const userResult = await db.query(`
-        SELECT
-          u.id,
-          u.email,
-          u.role,
-          u.name,
-          u.is_active,
-          u.tenant_id,
-          u.last_login,
-          u.created_at,
-          t.id as tenant_id,
-          t.name as tenant_name,
-          t.db_schema,
-          t.status as tenant_status,
-          t.settings as tenant_settings
-        FROM users u
-        JOIN tenants t ON u.tenant_id = t.id
-        WHERE u.id = $1 AND u.is_active = true AND t.status = 'active'
-      `, [decoded.userId]);
-
-      if (userResult.rows.length === 0) {
-        return res.status(401).json({
-          success: false,
-          error: 'User not found or inactive',
-          code: 'USER_NOT_FOUND'
-        });
-      }
-
-      const user = userResult.rows[0];
-
-      // Проверяем, что tenantId в токене соответствует пользователю
-      if (user.tenant_id !== decoded.tenantId) {
-        return res.status(401).json({
-          success: false,
-          error: 'Token tenant mismatch',
-          code: 'TENANT_MISMATCH'
-        });
-      }
-
-      // Добавляем информацию о пользователе к запросу
-      req.user = {
-        id: user.id,
-        email: user.email,
-        role: user.role,
-        name: user.name,
-        tenantId: user.tenant_id,
-        tenantSchema: user.db_schema,
-        tenantName: user.tenant_name,
-        tenantStatus: user.tenant_status,
-        tenantSettings: user.tenant_settings || {},
-        lastLogin: user.last_login,
-        createdAt: user.created_at
-      };
-
-      // Устанавливаем схему тенанта для последующих запросов
-      req.tenantSchema = user.db_schema;
-
-      next();
-
-    } catch (jwtError) {
-      let errorCode = 'TOKEN_INVALID';
-      let errorMessage = 'Invalid token';
-
-      if (jwtError.name === 'TokenExpiredError') {
-        errorCode = 'TOKEN_EXPIRED';
-        errorMessage = 'Token expired';
-      } else if (jwtError.name === 'JsonWebTokenError') {
-        errorCode = 'TOKEN_MALFORMED';
-        errorMessage = 'Malformed token';
-      } else if (jwtError.name === 'NotBeforeError') {
-        errorCode = 'TOKEN_NOT_ACTIVE';
-        errorMessage = 'Token not active';
-      }
-
       return res.status(401).json({
         success: false,
-        error: errorMessage,
-        code: errorCode
+        error: 'Invalid token',
+        code: 'INVALID_TOKEN'
       });
     }
 
-  } catch (error) {
-    console.error('Authentication middleware error:', error);
+    // Проверяем, что пользователь существует и активен
+    const userResult = await db.query(`
+      SELECT
+        u.id, u.email, u.name, u.phone, u.role, u.role_id, u.is_active,
+        u.company_id, u.last_login, u.created_at, u.first_name, u.last_name,
+        c.name as company_name, c.plan as company_plan, c.is_active as company_is_active,
+        c.subscription_status as company_status, c.settings as company_settings,
+        r.name as role_name, r.display_name as role_display_name
+      FROM users u
+      JOIN companies c ON u.company_id = c.id
+      LEFT JOIN roles r ON u.role_id = r.id
+      WHERE u.id = $1
+    `, [decoded.userId]);
 
-    return res.status(500).json({
-      success: false,
-      error: 'Authentication error',
-      code: 'AUTH_ERROR'
-    });
-  }
-}
-
-// ========================================
-// AUTHORIZATION MIDDLEWARE
-// ========================================
-
-/**
- * Middleware для проверки прав доступа по ролям
- * @param {string|Array} allowedRoles - Разрешенные роли
- * @returns {Function} Express middleware
- */
-function checkRole(allowedRoles) {
-  if (typeof allowedRoles === 'string') {
-    allowedRoles = [allowedRoles];
-  }
-
-  return (req, res, next) => {
-    if (!req.user) {
+    if (userResult.rows.length === 0) {
       return res.status(401).json({
         success: false,
-        error: 'Authentication required',
-        code: 'AUTH_REQUIRED'
+        error: 'User not found',
+        code: 'USER_NOT_FOUND'
       });
     }
 
-    if (!allowedRoles.includes(req.user.role)) {
+    const user = userResult.rows[0];
+
+    // Проверяем активность пользователя
+    if (!user.is_active) {
       return res.status(403).json({
         success: false,
-        error: 'Insufficient permissions',
-        code: 'INSUFFICIENT_PERMISSIONS',
-        requiredRoles: allowedRoles,
-        userRole: req.user.role
+        error: 'Account suspended',
+        code: 'ACCOUNT_SUSPENDED'
       });
     }
 
+    // Проверяем активность компании
+    if (!user.company_is_active) {
+      return res.status(403).json({
+        success: false,
+        error: 'Company account suspended',
+        code: 'COMPANY_SUSPENDED'
+      });
+    }
+
+    // Проверяем соответствие токена и компании
+    if (decoded.companyId && decoded.companyId !== user.company_id) {
+      return res.status(401).json({
+        success: false,
+        error: 'Token company mismatch',
+        code: 'COMPANY_MISMATCH'
+      });
+    }
+
+    // Добавляем информацию о пользователе к запросу
+    req.user = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      phone: user.phone,
+      role: user.role,  // Старое поле для обратной совместимости
+      roleId: user.role_id,  // Новое поле
+      roleName: user.role_name,
+      roleDisplayName: user.role_display_name,
+      companyId: user.company_id,
+      companyName: user.company_name,
+      companyPlan: user.company_plan,
+      companyStatus: user.company_status,
+      companySettings: user.company_settings,
+      isActive: user.is_active,
+      firstName: user.first_name,
+      lastName: user.last_name,
+    };
+
+    // Обновляем последнюю активность
+    db.query(
+      'UPDATE users SET last_activity = NOW() WHERE id = $1',
+      [user.id]
+    ).catch(err => console.error('Failed to update last activity:', err));
+
     next();
-  };
-}
+  } catch (error) {
+    console.error('Authentication error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+};
+
 
 /**
- * Middleware для проверки конкретных разрешений
- * @param {string} permission - Требуемое разрешение
- * @returns {Function} Express middleware
+ * Middleware для проверки роли
  */
-function checkPermission(permission) {
+const checkRole = (allowedRoles) => {
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({
         success: false,
-        error: 'Authentication required',
-        code: 'AUTH_REQUIRED'
+        error: 'Not authenticated'
       });
     }
 
-    const userRole = req.user.role;
+    const roles = Array.isArray(allowedRoles) ? allowedRoles : [allowedRoles];
 
-    // Администраторы имеют все права
-    if (userRole === 'admin' || userRole === 'super_admin') {
+    if (roles.includes(req.user.role) || (req.user.roleName && roles.includes(req.user.roleName))) {
       return next();
     }
 
-    // Простая система разрешений на основе ролей
-    const rolePermissions = {
-      manager: [
-        'products.read', 'products.create', 'products.update',
-        'orders.read', 'orders.create', 'orders.update',
-        'warehouses.read', 'warehouses.create', 'warehouses.update',
-        'suppliers.read', 'suppliers.create', 'suppliers.update',
-        'sync.read', 'sync.create',
-        'analytics.read'
-      ],
-      operator: [
-        'products.read', 'products.update',
-        'orders.read', 'orders.update',
-        'warehouses.read', 'warehouses.update',
-        'sync.read'
-      ],
-      viewer: [
-        'products.read',
-        'orders.read',
-        'warehouses.read',
-        'analytics.read'
-      ]
-    };
+    return res.status(403).json({
+      success: false,
+      error: 'Insufficient permissions',
+      code: 'FORBIDDEN'
+    });
+  };
+};
 
-    const userPermissions = rolePermissions[userRole] || [];
-
-    if (!userPermissions.includes(permission)) {
-      return res.status(403).json({
+/**
+ * Middleware для проверки разрешений (RBAC) - ПЕРЕПИСАНА
+ */
+const checkPermission = (requiredPermission) => {
+  return async (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
         success: false,
-        error: 'Permission denied',
-        code: 'PERMISSION_DENIED',
-        requiredPermission: permission,
-        userRole: userRole
+        error: 'Not authenticated'
       });
     }
 
-    next();
-  };
-}
+    const { roleName, roleId } = req.user;
 
-// ========================================
-// TENANT ISOLATION MIDDLEWARE
-// ========================================
+    // Администраторы имеют все права по определению
+    if (roleName === 'admin') {
+      return next();
+    }
 
-/**
- * Middleware для обеспечения изоляции тенантов
- */
-function ensureTenantIsolation(req, res, next) {
-  if (!req.user || !req.user.tenantSchema) {
-    return res.status(401).json({
+    if (!roleId) {
+        return res.status(403).json({
+            success: false,
+            error: 'User role not configured properly',
+            code: 'FORBIDDEN'
+        });
+    }
+
+    try {
+      // Проверяем разрешения через RBAC систему
+      const permissionResult = await db.query(`
+        SELECT 1
+        FROM role_permissions rp
+        JOIN permissions p ON rp.permission_id = p.id
+        WHERE rp.role_id = $1 AND p.name = $2 AND p.is_active = true
+        LIMIT 1
+      `, [roleId, requiredPermission]);
+
+      if (permissionResult.rows.length > 0) {
+        return next();
+      }
+    } catch (error) {
+      console.error('Permission check error:', error);
+      return res.status(500).json({ success: false, error: 'Internal server error during permission check' });
+    }
+
+    return res.status(403).json({
       success: false,
-      error: 'Tenant information missing',
-      code: 'TENANT_MISSING'
+      error: 'Insufficient permissions',
+      code: 'FORBIDDEN',
+      required_permission: requiredPermission
     });
-  }
+  };
+};
 
-  // Добавляем функцию для получения пула тенанта
-  req.getTenantPool = () => db.getTenantPool(req.user.tenantSchema);
-
-  next();
-}
-
-// ========================================
-// OPTIONAL AUTHENTICATION
-// ========================================
 
 /**
  * Middleware для опциональной аутентификации
- * Не возвращает ошибку если токена нет, но проверяет его если есть
  */
-async function optionalAuthenticate(req, res, next) {
+const optionalAuthenticate = async (req, res, next) => {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return next(); // Продолжаем без аутентификации
+    return next();
   }
 
-  // Если токен есть, используем обычную аутентификацию
   return authenticate(req, res, next);
-}
-
-// ========================================
-// UTILITY FUNCTIONS
-// ========================================
-
-/**
- * Генерирует JWT токен
- * @param {Object} payload - Данные для токена
- * @param {string} expiresIn - Время жизни токена
- * @returns {string} JWT токен
- */
-function generateToken(payload, expiresIn = '1h') {
-  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn });
-}
-
-/**
- * Генерирует refresh токен
- * @param {Object} payload - Данные для токена
- * @returns {string} Refresh токен
- */
-function generateRefreshToken(payload) {
-  return jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: '30d' });
-}
-
-/**
- * Верифицирует refresh токен
- * @param {string} token - Refresh токен
- * @returns {Object} Декодированные данные
- */
-function verifyRefreshToken(token) {
-  return jwt.verify(token, process.env.JWT_REFRESH_SECRET);
-}
-
-// ========================================
-// EXPORTS
-// ========================================
+};
 
 module.exports = {
-  rateLimiter,
   authenticate,
-  optionalAuthenticate,
   checkRole,
   checkPermission,
-  ensureTenantIsolation,
-  generateToken,
-  generateRefreshToken,
-  verifyRefreshToken
+  optionalAuthenticate
 };

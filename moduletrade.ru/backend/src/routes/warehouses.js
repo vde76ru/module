@@ -11,19 +11,19 @@ const router = express.Router();
  */
 router.get('/', authenticate, async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
     const { active_only = false } = req.query;
 
-    let whereConditions = ['tenant_id = $1'];
-    const queryParams = [tenantId];
+    let whereConditions = ['w.company_id = $1'];
+    const queryParams = [companyId];
 
     if (active_only === 'true') {
-      whereConditions.push('is_active = true');
+      whereConditions.push('w.is_active = true');
     }
 
     const whereClause = whereConditions.join(' AND ');
 
-    const result = await db.mainPool.query(`
+    const result = await db.query(`
       SELECT
         w.id,
         w.name,
@@ -64,10 +64,10 @@ router.get('/', authenticate, async (req, res) => {
  */
 router.get('/:id', authenticate, async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
     const warehouseId = req.params.id;
 
-    const result = await db.mainPool.query(`
+    const result = await db.query(`
       SELECT
         w.*,
         COUNT(wpl.product_id) as products_count,
@@ -75,9 +75,9 @@ router.get('/:id', authenticate, async (req, res) => {
         COALESCE(SUM(wpl.reserved_quantity), 0) as reserved_stock
       FROM warehouses w
       LEFT JOIN warehouse_product_links wpl ON w.id = wpl.warehouse_id
-      WHERE w.id = $1 AND w.tenant_id = $2
+      WHERE w.id = $1 AND w.company_id = $2
       GROUP BY w.id
-    `, [warehouseId, tenantId]);
+    `, [warehouseId, companyId]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -106,7 +106,7 @@ router.get('/:id', authenticate, async (req, res) => {
  */
 router.post('/', authenticate, checkPermission('warehouses.create'), async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
     const {
       name,
       type = 'physical',
@@ -132,15 +132,15 @@ router.post('/', authenticate, checkPermission('warehouses.create'), async (req,
       });
     }
 
-    const result = await db.mainPool.query(`
+    const result = await db.query(`
       INSERT INTO warehouses (
-        tenant_id, name, type, description, address,
+        company_id, name, type, description, address,
         is_active, priority, settings, created_at
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
       RETURNING *
     `, [
-      tenantId, name, type, description, address,
+      companyId, name, type, description, address,
       is_active, parseInt(priority), JSON.stringify(settings)
     ]);
 
@@ -164,12 +164,12 @@ router.post('/', authenticate, checkPermission('warehouses.create'), async (req,
  */
 router.put('/:id', authenticate, checkPermission('warehouses.update'), async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
     const warehouseId = req.params.id;
     const updateFields = req.body;
 
     delete updateFields.id;
-    delete updateFields.tenant_id;
+    delete updateFields.company_id;
     delete updateFields.created_at;
 
     if (Object.keys(updateFields).length === 0) {
@@ -199,12 +199,12 @@ router.put('/:id', authenticate, checkPermission('warehouses.update'), async (re
       .map((key, index) => `${key} = $${index + 3}`)
       .join(', ');
 
-    const queryParams = [warehouseId, tenantId, ...Object.values(updateFields)];
+    const queryParams = [warehouseId, companyId, ...Object.values(updateFields)];
 
-    const result = await db.mainPool.query(`
+    const result = await db.query(`
       UPDATE warehouses
       SET ${setClause}, updated_at = NOW()
-      WHERE id = $1 AND tenant_id = $2
+      WHERE id = $1 AND company_id = $2
       RETURNING *
     `, queryParams);
 
@@ -235,11 +235,11 @@ router.put('/:id', authenticate, checkPermission('warehouses.update'), async (re
  */
 router.delete('/:id', authenticate, checkPermission('warehouses.delete'), async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
     const warehouseId = req.params.id;
 
     // Проверяем что на складе нет товаров
-    const stockCheck = await db.mainPool.query(`
+    const stockCheck = await db.query(`
       SELECT COUNT(*) as count
       FROM warehouse_product_links
       WHERE warehouse_id = $1 AND quantity > 0
@@ -252,11 +252,11 @@ router.delete('/:id', authenticate, checkPermission('warehouses.delete'), async 
       });
     }
 
-    const result = await db.mainPool.query(`
+    const result = await db.query(`
       DELETE FROM warehouses
-      WHERE id = $1 AND tenant_id = $2
+      WHERE id = $1 AND company_id = $2
       RETURNING id, name
-    `, [warehouseId, tenantId]);
+    `, [warehouseId, companyId]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -288,7 +288,7 @@ router.delete('/:id', authenticate, checkPermission('warehouses.delete'), async 
  */
 router.get('/:id/stock', authenticate, async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
     const warehouseId = req.params.id;
     const { limit = 50, offset = 0, search = '' } = req.query;
 
@@ -296,10 +296,10 @@ router.get('/:id/stock', authenticate, async (req, res) => {
     let queryParams = [warehouseId];
     let paramIndex = 2;
 
-    // Проверяем что склад принадлежит тенанту
-    const warehouseCheck = await db.mainPool.query(`
-      SELECT id FROM warehouses WHERE id = $1 AND tenant_id = $2
-    `, [warehouseId, tenantId]);
+    // Проверяем что склад принадлежит компании
+    const warehouseCheck = await db.query(`
+      SELECT id FROM warehouses WHERE id = $1 AND company_id = $2
+    `, [warehouseId, companyId]);
 
     if (warehouseCheck.rows.length === 0) {
       return res.status(404).json({
@@ -309,36 +309,62 @@ router.get('/:id/stock', authenticate, async (req, res) => {
     }
 
     if (search) {
-      whereConditions.push(`(p.name ILIKE $${paramIndex} OR p.sku ILIKE $${paramIndex})`);
+      // ✅ ИСПРАВЛЕНО: добавлена поддержка поиска по sku и internal_code
+      whereConditions.push(`(
+        p.name ILIKE $${paramIndex}
+        OR p.sku ILIKE $${paramIndex}
+        OR p.internal_code ILIKE $${paramIndex}
+      )`);
       queryParams.push(`%${search}%`);
       paramIndex++;
     }
 
     const whereClause = whereConditions.join(' AND ');
 
-    const result = await db.mainPool.query(`
+    const result = await db.query(`
       SELECT
         wpl.id,
         wpl.product_id,
         wpl.quantity,
         wpl.reserved_quantity,
+        wpl.available_quantity,
         wpl.price,
         wpl.min_stock,
         wpl.max_stock,
         wpl.last_updated,
         p.name as product_name,
-        p.sku as product_sku,
-        p.image_url as product_image
+        p.sku,
+        p.internal_code,
+        p.barcode,
+        b.name as brand_name,
+        c.name as category_name
       FROM warehouse_product_links wpl
       JOIN products p ON wpl.product_id = p.id
+      LEFT JOIN internal_brands b ON p.brand_id = b.id
+      LEFT JOIN internal_categories c ON p.category_id = c.id
       WHERE ${whereClause}
       ORDER BY p.name ASC
       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
-    `, [...queryParams, parseInt(limit), parseInt(offset)]);
+    `, [...queryParams, limit, offset]);
+
+    // Получаем общее количество
+    const countResult = await db.query(`
+      SELECT COUNT(*) as total
+      FROM warehouse_product_links wpl
+      JOIN products p ON wpl.product_id = p.id
+      WHERE ${whereClause}
+    `, queryParams);
 
     res.json({
       success: true,
-      data: result.rows
+      data: {
+        items: result.rows,
+        pagination: {
+          limit: parseInt(limit),
+          offset: parseInt(offset),
+          total: parseInt(countResult.rows[0].total)
+        }
+      }
     });
 
   } catch (error) {
@@ -356,7 +382,7 @@ router.get('/:id/stock', authenticate, async (req, res) => {
  */
 router.post('/transfer', authenticate, checkPermission('warehouses.transfer'), async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
     const {
       product_id,
       from_warehouse_id,
@@ -380,7 +406,7 @@ router.post('/transfer', authenticate, checkPermission('warehouses.transfer'), a
     }
 
     // Проверяем наличие товара на исходном складе
-    const stockCheck = await db.mainPool.query(`
+    const stockCheck = await db.query(`
       SELECT quantity
       FROM warehouse_product_links
       WHERE warehouse_id = $1 AND product_id = $2
@@ -394,18 +420,18 @@ router.post('/transfer', authenticate, checkPermission('warehouses.transfer'), a
     }
 
     // Выполняем трансфер в транзакции
-    await db.mainPool.query('BEGIN');
+    const client = await db.getClient(); await client.query('BEGIN');
 
     try {
       // Уменьшаем остаток на исходном складе
-      await db.mainPool.query(`
+      await db.query(`
         UPDATE warehouse_product_links
         SET quantity = quantity - $1, last_updated = NOW()
         WHERE warehouse_id = $2 AND product_id = $3
       `, [parseInt(quantity), from_warehouse_id, product_id]);
 
       // Увеличиваем остаток на целевом складе
-      await db.mainPool.query(`
+      await db.query(`
         INSERT INTO warehouse_product_links (warehouse_id, product_id, quantity, last_updated)
         VALUES ($1, $2, $3, NOW())
         ON CONFLICT (warehouse_id, product_id)
@@ -415,15 +441,15 @@ router.post('/transfer', authenticate, checkPermission('warehouses.transfer'), a
       `, [to_warehouse_id, product_id, parseInt(quantity)]);
 
       // Записываем движение
-      await db.mainPool.query(`
+      await db.query(`
         INSERT INTO warehouse_movements (
-          tenant_id, product_id, from_warehouse_id, to_warehouse_id,
+          company_id, product_id, from_warehouse_id, to_warehouse_id,
           quantity, movement_type, reason, user_id, created_at
         )
         VALUES ($1, $2, $3, $4, $5, 'transfer', $6, $7, NOW())
-      `, [tenantId, product_id, from_warehouse_id, to_warehouse_id, parseInt(quantity), reason, req.user.userId]);
+      `, [companyId, product_id, from_warehouse_id, to_warehouse_id, parseInt(quantity), reason, req.user.userId]);
 
-      await db.mainPool.query('COMMIT');
+      await client.query('COMMIT'); client.release();
 
       res.json({
         success: true,
@@ -440,7 +466,7 @@ router.post('/transfer', authenticate, checkPermission('warehouses.transfer'), a
       });
 
     } catch (error) {
-      await db.mainPool.query('ROLLBACK');
+      await client.query('ROLLBACK'); client.release();
       throw error;
     }
 

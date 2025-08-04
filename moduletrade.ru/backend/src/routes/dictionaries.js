@@ -1,9 +1,91 @@
 // backend/src/routes/dictionaries.js
 const express = require('express');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, checkPermission } = require('../middleware/auth');
 const db = require('../config/database');
 
 const router = express.Router();
+
+// ========================================
+// УНИВЕРСАЛЬНЫЙ ЭНДПОИНТ ДЛЯ СПРАВОЧНИКОВ
+// ========================================
+
+/**
+ * ✅ НОВЫЙ ЭНДПОИНТ: GET /api/dictionaries?type={type}
+ * Универсальный роут для получения справочников по типу
+ * Задача 0.2: Реализация базовой логики для API GET /api/dictionaries?type={type}
+ */
+router.get('/', authenticate, async (req, res) => {
+  try {
+    const { type, search = '', limit = 100, offset = 0 } = req.query;
+
+    if (!type) {
+      return res.status(400).json({
+        success: false,
+        error: 'Dictionary type is required',
+        supportedTypes: [
+          'categories', 'brands', 'suppliers', 'warehouses',
+          'marketplaces', 'units', 'currencies', 'roles'
+        ]
+      });
+    }
+
+    let result;
+
+    switch (type) {
+      case 'categories':
+        result = await getDictionaryCategories(search, limit, offset);
+        break;
+      case 'brands':
+        result = await getDictionaryBrands(search, limit, offset);
+        break;
+      case 'suppliers':
+        result = await getDictionarySuppliers(req.user.companyId, search, limit, offset);
+        break;
+      case 'warehouses':
+        result = await getDictionaryWarehouses(req.user.companyId, search, limit, offset);
+        break;
+      case 'marketplaces':
+        result = await getDictionaryMarketplaces(search, limit, offset);
+        break;
+      case 'units':
+        result = await getDictionaryUnits(search, limit, offset);
+        break;
+      case 'currencies':
+        result = await getDictionaryCurrencies(search, limit, offset);
+        break;
+      case 'roles':
+        result = await getDictionaryRoles(search, limit, offset);
+        break;
+      default:
+        return res.status(400).json({
+          success: false,
+          error: `Unsupported dictionary type: ${type}`,
+          supportedTypes: [
+            'categories', 'brands', 'suppliers', 'warehouses',
+            'marketplaces', 'units', 'currencies', 'roles'
+          ]
+        });
+    }
+
+    res.json({
+      success: true,
+      type: type,
+      data: result.data,
+      pagination: result.pagination || null
+    });
+
+  } catch (error) {
+    console.error('Get dictionary error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+// ========================================
+// СПЕЦИАЛИЗИРОВАННЫЕ ЭНДПОИНТЫ
+// ========================================
 
 /**
  * GET /api/dictionaries/categories
@@ -11,24 +93,13 @@ const router = express.Router();
  */
 router.get('/categories', authenticate, async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const { search = '', limit = 100, parent_id = null } = req.query;
 
-    // ✅ ИСПРАВЛЕНО: Изменена таблица с product_categories на categories
-    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
-    const result = await db.query(`
-      SELECT 
-        id, 
-        canonical_name as name, 
-        parent_id, 
-        path as description, 
-        created_at
-      FROM categories
-      ORDER BY parent_id NULLS FIRST, canonical_name ASC
-    `);
+    const result = await getDictionaryCategories(search, limit, 0, parent_id);
 
     res.json({
       success: true,
-      data: result.rows
+      data: result.data
     });
 
   } catch (error) {
@@ -41,39 +112,18 @@ router.get('/categories', authenticate, async (req, res) => {
 });
 
 /**
- * ✅ НОВЫЙ ЭНДПОИНТ: GET /api/dictionaries/brands
+ * GET /api/dictionaries/brands
  * Получение списка брендов
  */
 router.get('/brands', authenticate, async (req, res) => {
   try {
     const { search = '', limit = 100 } = req.query;
 
-    let query = `
-      SELECT 
-        id, 
-        canonical_name as name,
-        created_at
-      FROM brands
-    `;
-    
-    const queryParams = [];
-    let paramIndex = 1;
-
-    if (search) {
-      query += ` WHERE canonical_name ILIKE $${paramIndex}`;
-      queryParams.push(`%${search}%`);
-      paramIndex++;
-    }
-
-    query += ` ORDER BY canonical_name ASC LIMIT $${paramIndex}`;
-    queryParams.push(limit);
-
-    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
-    const result = await db.query(query, queryParams);
+    const result = await getDictionaryBrands(search, limit, 0);
 
     res.json({
       success: true,
-      data: result.rows
+      data: result.data
     });
 
   } catch (error) {
@@ -86,54 +136,24 @@ router.get('/brands', authenticate, async (req, res) => {
 });
 
 /**
- * ✅ НОВЫЙ ЭНДПОИНТ: GET /api/dictionaries/suppliers
+ * GET /api/dictionaries/suppliers
  * Получение списка поставщиков
  */
 router.get('/suppliers', authenticate, async (req, res) => {
   try {
-    const { search = '', is_active = null, limit = 100 } = req.query;
+    const { search = '', is_active = 'true', limit = 100 } = req.query;
 
-    let whereConditions = [];
-    const queryParams = [];
-    let paramIndex = 1;
-
-    if (search) {
-      whereConditions.push(`(name ILIKE $${paramIndex} OR code ILIKE $${paramIndex})`);
-      queryParams.push(`%${search}%`);
-      paramIndex++;
-    }
-
-    if (is_active !== null) {
-      // Предполагаем, что у поставщиков может быть поле is_active
-      whereConditions.push(`(api_config IS NOT NULL)`); // Простая проверка активности
-    }
-
-    const whereClause = whereConditions.length > 0 ? 
-      `WHERE ${whereConditions.join(' AND ')}` : '';
-
-    const query = `
-      SELECT 
-        id,
-        code,
-        name,
-        api_type,
-        is_main,
-        priority,
-        created_at
-      FROM suppliers
-      ${whereClause}
-      ORDER BY priority DESC, name ASC
-      LIMIT $${paramIndex}
-    `;
-
-    queryParams.push(limit);
-
-    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
-    const result = await db.query(query, queryParams);
+    const result = await getDictionarySuppliers(
+      req.user.companyId,
+      search,
+      limit,
+      0,
+      is_active === 'true'
+    );
 
     res.json({
       success: true,
-      data: result.rows
+      data: result.data
     });
 
   } catch (error) {
@@ -146,31 +166,28 @@ router.get('/suppliers', authenticate, async (req, res) => {
 });
 
 /**
- * GET /api/dictionaries/units
- * Получение списка единиц измерения
+ * GET /api/dictionaries/warehouses
+ * Получение списка складов
  */
-router.get('/units', authenticate, async (req, res) => {
+router.get('/warehouses', authenticate, async (req, res) => {
   try {
-    const units = [
-      { id: 'pcs', name: 'Штук', short: 'шт' },
-      { id: 'kg', name: 'Килограмм', short: 'кг' },
-      { id: 'g', name: 'Грамм', short: 'г' },
-      { id: 'l', name: 'Литр', short: 'л' },
-      { id: 'ml', name: 'Миллилитр', short: 'мл' },
-      { id: 'm', name: 'Метр', short: 'м' },
-      { id: 'cm', name: 'Сантиметр', short: 'см' },
-      { id: 'box', name: 'Коробка', short: 'кор' },
-      { id: 'pack', name: 'Упаковка', short: 'уп' },
-      { id: 'pair', name: 'Пара', short: 'пар' }
-    ];
+    const { search = '', is_active = 'true', limit = 100 } = req.query;
+
+    const result = await getDictionaryWarehouses(
+      req.user.companyId,
+      search,
+      limit,
+      0,
+      is_active === 'true'
+    );
 
     res.json({
       success: true,
-      data: units
+      data: result.data
     });
 
   } catch (error) {
-    console.error('Get units error:', error);
+    console.error('Get warehouses error:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'
@@ -179,83 +196,401 @@ router.get('/units', authenticate, async (req, res) => {
 });
 
 /**
- * GET /api/dictionaries/statuses
- * Получение списка статусов
+ * GET /api/dictionaries/roles
+ * Получение списка ролей (только для администраторов)
  */
-router.get('/statuses', authenticate, async (req, res) => {
+router.get('/roles', authenticate, checkPermission('users.view'), async (req, res) => {
   try {
-    const { type = 'order' } = req.query;
+    const { search = '', limit = 50 } = req.query;
 
-    const statuses = {
-      order: [
-        { id: 'new', name: 'Новый', color: '#1890ff' },
-        { id: 'processing', name: 'В обработке', color: '#faad14' },
-        { id: 'confirmed', name: 'Подтвержден', color: '#52c41a' },
-        { id: 'packed', name: 'Упакован', color: '#13c2c2' },
-        { id: 'shipped', name: 'Отправлен', color: '#2f54eb' },
-        { id: 'delivered', name: 'Доставлен', color: '#52c41a' },
-        { id: 'cancelled', name: 'Отменен', color: '#f5222d' },
-        { id: 'returned', name: 'Возврат', color: '#fa541c' }
-      ],
-      product: [
-        { id: 'active', name: 'Активный', color: '#52c41a' },
-        { id: 'inactive', name: 'Неактивный', color: '#d9d9d9' },
-        { id: 'out_of_stock', name: 'Нет в наличии', color: '#f5222d' },
-        { id: 'low_stock', name: 'Мало на складе', color: '#faad14' },
-        { id: 'discontinued', name: 'Снят с производства', color: '#8c8c8c' }
-      ],
-      warehouse: [
-        { id: 'active', name: 'Активный', color: '#52c41a' },
-        { id: 'inactive', name: 'Неактивный', color: '#d9d9d9' },
-        { id: 'maintenance', name: 'На обслуживании', color: '#faad14' }
-      ]
-    };
+    const result = await getDictionaryRoles(search, limit, 0);
 
     res.json({
       success: true,
-      data: statuses[type] || []
+      data: result.data
     });
 
   } catch (error) {
-    console.error('Get statuses error:', error);
+    console.error('Get roles error:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'
     });
   }
 });
+
+// ========================================
+// HELPER FUNCTIONS
+// ========================================
 
 /**
- * GET /api/dictionaries/countries
- * Получение списка стран
+ * Получение справочника категорий
  */
-router.get('/countries', authenticate, async (req, res) => {
-  try {
-    const countries = [
-      { id: 'RU', name: 'Россия', code: 'RU' },
-      { id: 'CN', name: 'Китай', code: 'CN' },
-      { id: 'US', name: 'США', code: 'US' },
-      { id: 'DE', name: 'Германия', code: 'DE' },
-      { id: 'IT', name: 'Италия', code: 'IT' },
-      { id: 'FR', name: 'Франция', code: 'FR' },
-      { id: 'KR', name: 'Южная Корея', code: 'KR' },
-      { id: 'JP', name: 'Япония', code: 'JP' },
-      { id: 'TR', name: 'Турция', code: 'TR' },
-      { id: 'IN', name: 'Индия', code: 'IN' }
-    ];
+async function getDictionaryCategories(search = '', limit = 100, offset = 0, parentId = null) {
+  let whereConditions = [];
+  const queryParams = [];
+  let paramIndex = 1;
 
-    res.json({
-      success: true,
-      data: countries
-    });
-
-  } catch (error) {
-    console.error('Get countries error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
+  if (search) {
+    whereConditions.push(`(name ILIKE $${paramIndex} OR canonical_name ILIKE $${paramIndex})`);
+    queryParams.push(`%${search}%`);
+    paramIndex++;
   }
-});
+
+  if (parentId !== null) {
+    if (parentId === 'null' || parentId === '') {
+      whereConditions.push('parent_id IS NULL');
+    } else {
+      whereConditions.push(`parent_id = $${paramIndex}`);
+      queryParams.push(parentId);
+      paramIndex++;
+    }
+  }
+
+  const whereClause = whereConditions.length > 0
+    ? `WHERE ${whereConditions.join(' AND ')}`
+    : '';
+
+  const query = `
+    SELECT
+      id,
+      name,
+      parent_id,
+      path as description,
+      created_at
+    FROM categories
+    ${whereClause}
+    ORDER BY parent_id NULLS FIRST, name ASC
+    LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+  `;
+
+  queryParams.push(limit, offset);
+
+  const result = await db.query(query, queryParams);
+
+  return {
+    data: result.rows,
+    pagination: {
+      limit,
+      offset,
+      total: result.rows.length
+    }
+  };
+}
+
+/**
+ * Получение справочника брендов
+ */
+async function getDictionaryBrands(search = '', limit = 100, offset = 0) {
+  let whereConditions = [];
+  const queryParams = [];
+  let paramIndex = 1;
+
+  if (search) {
+    whereConditions.push(`(name ILIKE $${paramIndex} OR canonical_name ILIKE $${paramIndex})`);
+    queryParams.push(`%${search}%`);
+    paramIndex++;
+  }
+
+  const whereClause = whereConditions.length > 0
+    ? `WHERE ${whereConditions.join(' AND ')}`
+    : '';
+
+  const query = `
+    SELECT
+      id,
+      name,
+      created_at
+    FROM brands
+    ${whereClause}
+    ORDER BY name ASC
+    LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+  `;
+
+  queryParams.push(limit, offset);
+
+  const result = await db.query(query, queryParams);
+
+  return {
+    data: result.rows,
+    pagination: {
+      limit,
+      offset,
+      total: result.rows.length
+    }
+  };
+}
+
+/**
+ * Получение справочника поставщиков
+ */
+async function getDictionarySuppliers(companyId, search = '', limit = 100, offset = 0, isActive = true) {
+  let whereConditions = ['company_id = $1'];
+  const queryParams = [companyId];
+  let paramIndex = 2;
+
+  if (search) {
+    whereConditions.push(`(name ILIKE $${paramIndex} OR code ILIKE $${paramIndex})`);
+    queryParams.push(`%${search}%`);
+    paramIndex++;
+  }
+
+  if (isActive !== null) {
+    whereConditions.push(`(api_config IS NOT NULL)`); // Простая проверка активности
+  }
+
+  const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
+
+  const query = `
+    SELECT
+      id,
+      name,
+      code,
+      contact_info,
+      created_at
+    FROM suppliers
+    ${whereClause}
+    ORDER BY name ASC
+    LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+  `;
+
+  queryParams.push(limit, offset);
+
+  const result = await db.query(query, queryParams);
+
+  return {
+    data: result.rows,
+    pagination: {
+      limit,
+      offset,
+      total: result.rows.length
+    }
+  };
+}
+
+/**
+ * Получение справочника складов
+ */
+async function getDictionaryWarehouses(companyId, search = '', limit = 100, offset = 0, isActive = true) {
+  let whereConditions = ['company_id = $1'];
+  const queryParams = [companyId];
+  let paramIndex = 2;
+
+  if (search) {
+    whereConditions.push(`name ILIKE $${paramIndex}`);
+    queryParams.push(`%${search}%`);
+    paramIndex++;
+  }
+
+  if (isActive !== null) {
+    whereConditions.push(`is_active = $${paramIndex}`);
+    queryParams.push(isActive);
+    paramIndex++;
+  }
+
+  const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
+
+  const query = `
+    SELECT
+      id,
+      name,
+      type,
+      address,
+      is_active,
+      created_at
+    FROM warehouses
+    ${whereClause}
+    ORDER BY name ASC
+    LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+  `;
+
+  queryParams.push(limit, offset);
+
+  const result = await db.query(query, queryParams);
+
+  return {
+    data: result.rows,
+    pagination: {
+      limit,
+      offset,
+      total: result.rows.length
+    }
+  };
+}
+
+/**
+ * Получение справочника маркетплейсов
+ */
+async function getDictionaryMarketplaces(search = '', limit = 100, offset = 0) {
+  let whereConditions = [];
+  const queryParams = [];
+  let paramIndex = 1;
+
+  if (search) {
+    whereConditions.push(`name ILIKE $${paramIndex}`);
+    queryParams.push(`%${search}%`);
+    paramIndex++;
+  }
+
+  const whereClause = whereConditions.length > 0
+    ? `WHERE ${whereConditions.join(' AND ')}`
+    : '';
+
+  const query = `
+    SELECT
+      id,
+      name,
+      code,
+      api_type,
+      created_at
+    FROM marketplaces
+    ${whereClause}
+    ORDER BY name ASC
+    LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+  `;
+
+  queryParams.push(limit, offset);
+
+  const result = await db.query(query, queryParams);
+
+  return {
+    data: result.rows,
+    pagination: {
+      limit,
+      offset,
+      total: result.rows.length
+    }
+  };
+}
+
+/**
+ * Получение справочника единиц измерения
+ */
+async function getDictionaryUnits(search = '', limit = 100, offset = 0) {
+  const units = [
+    { id: 'шт', name: 'Штуки', category: 'quantity' },
+    { id: 'кг', name: 'Килограммы', category: 'weight' },
+    { id: 'г', name: 'Граммы', category: 'weight' },
+    { id: 'л', name: 'Литры', category: 'volume' },
+    { id: 'мл', name: 'Миллилитры', category: 'volume' },
+    { id: 'м', name: 'Метры', category: 'length' },
+    { id: 'см', name: 'Сантиметры', category: 'length' },
+    { id: 'мм', name: 'Миллиметры', category: 'length' },
+    { id: 'м2', name: 'Квадратные метры', category: 'area' },
+    { id: 'м3', name: 'Кубические метры', category: 'volume' },
+    { id: 'упак', name: 'Упаковки', category: 'package' }
+  ];
+
+  let filteredUnits = units;
+
+  if (search) {
+    const searchLower = search.toLowerCase();
+    filteredUnits = units.filter(unit =>
+      unit.name.toLowerCase().includes(searchLower) ||
+      unit.id.toLowerCase().includes(searchLower)
+    );
+  }
+
+  const startIndex = offset;
+  const endIndex = Math.min(startIndex + limit, filteredUnits.length);
+  const paginatedUnits = filteredUnits.slice(startIndex, endIndex);
+
+  return {
+    data: paginatedUnits,
+    pagination: {
+      limit,
+      offset,
+      total: filteredUnits.length
+    }
+  };
+}
+
+/**
+ * Получение справочника валют
+ */
+async function getDictionaryCurrencies(search = '', limit = 100, offset = 0) {
+  const currencies = [
+    { id: 'RUB', name: 'Российский рубль', symbol: '₽' },
+    { id: 'USD', name: 'Доллар США', symbol: '$' },
+    { id: 'EUR', name: 'Евро', symbol: '€' },
+    { id: 'KZT', name: 'Тенге', symbol: '₸' },
+    { id: 'BYN', name: 'Белорусский рубль', symbol: 'Br' },
+    { id: 'UAH', name: 'Гривна', symbol: '₴' }
+  ];
+
+  let filteredCurrencies = currencies;
+
+  if (search) {
+    const searchLower = search.toLowerCase();
+    filteredCurrencies = currencies.filter(currency =>
+      currency.name.toLowerCase().includes(searchLower) ||
+      currency.id.toLowerCase().includes(searchLower)
+    );
+  }
+
+  const startIndex = offset;
+  const endIndex = Math.min(startIndex + limit, filteredCurrencies.length);
+  const paginatedCurrencies = filteredCurrencies.slice(startIndex, endIndex);
+
+  return {
+    data: paginatedCurrencies,
+    pagination: {
+      limit,
+      offset,
+      total: filteredCurrencies.length
+    }
+  };
+}
+
+/**
+ * Получение справочника ролей
+ */
+async function getDictionaryRoles(search = '', limit = 50, offset = 0) {
+  let whereConditions = ['is_active = true'];
+  const queryParams = [];
+  let paramIndex = 1;
+
+  if (search) {
+    whereConditions.push(`(name ILIKE $${paramIndex} OR display_name ILIKE $${paramIndex})`);
+    queryParams.push(`%${search}%`);
+    paramIndex++;
+  }
+
+  const whereClause = `WHERE ${whereConditions.join(' AND ')}`;
+
+  const query = `
+    SELECT
+      id,
+      name,
+      display_name,
+      description,
+      created_at
+    FROM roles
+    ${whereClause}
+    ORDER BY
+      CASE name
+        WHEN 'admin' THEN 1
+        WHEN 'manager' THEN 2
+        WHEN 'operator' THEN 3
+        WHEN 'viewer' THEN 4
+        ELSE 5
+      END,
+      display_name ASC
+    LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
+  `;
+
+  queryParams.push(limit, offset);
+
+  const result = await db.query(query, queryParams);
+
+  return {
+    data: result.rows,
+    pagination: {
+      limit,
+      offset,
+      total: result.rows.length
+    }
+  };
+}
 
 module.exports = router;

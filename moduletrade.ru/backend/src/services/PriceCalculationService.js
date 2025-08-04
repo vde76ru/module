@@ -7,28 +7,28 @@ class PriceCalculationService {
   /**
    * Пересчет цен для всех товаров тенанта
    */
-  async recalculateAllPrices(tenantId) {
-    logger.info(`Starting price recalculation for tenant ${tenantId}`);
-    
+  async recalculateAllPrices(companyId) {
+    logger.info(`Starting price recalculation for tenant ${companyId}`);
+
     const trx = await db.transaction();
-    
+
     try {
       // Получаем все товары с поставщиками
       const products = await trx('products')
-        .where({ 'products.tenant_id': tenantId })
+        .where({ 'products.company_id': companyId })
         .select('products.id');
 
       let updated = 0;
       for (const product of products) {
-        await this.recalculatePricesForProduct(trx, tenantId, product.id);
+        await this.recalculatePricesForProduct(trx, companyId, product.id);
         updated++;
       }
 
       await trx.commit();
-      
+
       logger.info(`Price recalculation completed. Updated ${updated} products`);
       return { success: true, updated };
-      
+
     } catch (error) {
       await trx.rollback();
       logger.error('Error in price recalculation:', error);
@@ -39,11 +39,11 @@ class PriceCalculationService {
   /**
    * Пересчет цен для конкретного товара
    */
-  async recalculatePricesForProduct(trx, tenantId, productId) {
+  async recalculatePricesForProduct(trx, companyId, productId) {
     try {
       // Получаем информацию о товаре
       const product = await trx('products')
-        .where({ id: productId, tenant_id: tenantId })
+        .where({ id: productId, company_id: companyId })
         .first();
 
       if (!product) {
@@ -94,10 +94,10 @@ class PriceCalculationService {
    */
   async calculatePrice(trx, product, marketplaceLink, exchangeRates) {
     const calculationLog = [];
-    
+
     // Получаем минимальную цену поставщика с учетом доступности
     const supplierPrices = await trx('product_suppliers')
-      .where({ 
+      .where({
         product_id: product.id,
         is_available: true
       })
@@ -140,7 +140,7 @@ class PriceCalculationService {
           supplier.currency,
           exchangeRates
         );
-        
+
         if (!mrcPrice || mrcInRub > mrcPrice) {
           mrcPrice = mrcInRub;
         }
@@ -148,7 +148,7 @@ class PriceCalculationService {
     }
 
     calculationLog.push(`Selected supplier price: ${minSupplierPrice} RUB`);
-    
+
     // Применяем правила ценообразования маркетплейса
     const pricingRules = JSON.parse(marketplaceLink.pricing_rules || '{}');
     let calculatedPrice = minSupplierPrice;
@@ -219,7 +219,7 @@ class PriceCalculationService {
    */
   async getExchangeRates(trx) {
     const rates = await trx('exchange_rates').select('*');
-    
+
     const ratesMap = {};
     rates.forEach(rate => {
       ratesMap[rate.currency_code] = rate.rate;
@@ -278,37 +278,37 @@ class PriceCalculationService {
     switch (roundingRule) {
       case 'up_10':
         return Math.ceil(price / 10) * 10;
-      
+
       case 'up_50':
         return Math.ceil(price / 50) * 50;
-      
+
       case 'up_100':
         return Math.ceil(price / 100) * 100;
-      
+
       case 'down_10':
         return Math.floor(price / 10) * 10;
-      
+
       case 'down_50':
         return Math.floor(price / 50) * 50;
-      
+
       case 'down_100':
         return Math.floor(price / 100) * 100;
-      
+
       case 'nearest_10':
         return Math.round(price / 10) * 10;
-      
+
       case 'nearest_50':
         return Math.round(price / 50) * 50;
-      
+
       case 'nearest_100':
         return Math.round(price / 100) * 100;
-      
+
       case '99_ending':
         return Math.floor(price / 100) * 100 + 99;
-      
+
       case '90_ending':
         return Math.floor(price / 100) * 100 + 90;
-      
+
       default:
         return price;
     }
@@ -319,7 +319,7 @@ class PriceCalculationService {
    */
   async updateExchangeRates(rates) {
     const trx = await db.transaction();
-    
+
     try {
       for (const [currency, rate] of Object.entries(rates)) {
         await trx('exchange_rates')
@@ -338,7 +338,7 @@ class PriceCalculationService {
 
       await trx.commit();
       logger.info('Exchange rates updated successfully');
-      
+
     } catch (error) {
       await trx.rollback();
       logger.error('Error updating exchange rates:', error);
@@ -394,9 +394,9 @@ class PriceCalculationService {
   /**
    * Массовое обновление цен с оптимизацией
    */
-  async bulkUpdatePrices(tenantId, productIds = null) {
-    logger.info(`Starting bulk price update for tenant ${tenantId}`);
-    
+  async bulkUpdatePrices(companyId, productIds = null) {
+    logger.info(`Starting bulk price update for tenant ${companyId}`);
+
     const batchSize = 100;
     let offset = 0;
     let totalUpdated = 0;
@@ -407,7 +407,7 @@ class PriceCalculationService {
     while (true) {
       // Получаем батч товаров
       let query = db('products')
-        .where({ tenant_id: tenantId })
+        .where({ company_id: companyId })
         .limit(batchSize)
         .offset(offset);
 
@@ -423,13 +423,13 @@ class PriceCalculationService {
 
       // Обновляем цены для батча
       const trx = await db.transaction();
-      
+
       try {
         for (const product of products) {
-          await this.recalculatePricesForProduct(trx, tenantId, product.id);
+          await this.recalculatePricesForProduct(trx, companyId, product.id);
           totalUpdated++;
         }
-        
+
         await trx.commit();
       } catch (error) {
         await trx.rollback();
@@ -437,7 +437,7 @@ class PriceCalculationService {
       }
 
       offset += batchSize;
-      
+
       // Небольшая пауза между батчами
       await new Promise(resolve => setTimeout(resolve, 100));
     }

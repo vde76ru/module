@@ -11,7 +11,7 @@ const router = express.Router();
  */
 router.get('/dashboard', authenticate, async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
 
     // Получаем статистику за последние 30 дней
     const thirtyDaysAgo = new Date();
@@ -19,40 +19,40 @@ router.get('/dashboard', authenticate, async (req, res) => {
 
     const [ordersStats, productsStats, syncStats] = await Promise.all([
       // Статистика заказов
-      // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+      // ✅ ИСПРАВЛЕНО: Удален companyId из вызова db.query
       db.query(`
-        SELECT 
+        SELECT
           COUNT(*) as total_orders,
           COALESCE(SUM(total_amount), 0) as total_revenue,
           COALESCE(AVG(total_amount), 0) as avg_order_value,
           COUNT(DISTINCT DATE(order_date)) as active_days
-        FROM orders 
-        WHERE tenant_id = $1 AND order_date >= $2
-      `, [tenantId, thirtyDaysAgo.toISOString()]),
+        FROM orders
+        WHERE company_id = $1 AND order_date >= $2
+      `, [companyId, thirtyDaysAgo.toISOString()]),
 
       // Статистика товаров
-      // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+      // ✅ ИСПРАВЛЕНО: Удален companyId из вызова db.query
       db.query(`
-        SELECT 
+        SELECT
           COUNT(*) as total_products,
           COUNT(CASE WHEN is_active = true THEN 1 END) as active_products,
           COUNT(DISTINCT brand_id) as total_brands,
           COUNT(DISTINCT category_id) as total_categories
-        FROM products 
-        WHERE tenant_id = $1
-      `, [tenantId]),
+        FROM products
+        WHERE company_id = $1
+      `, [companyId]),
 
       // Статистика синхронизации (с проверкой существования таблицы)
-      // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+      // ✅ ИСПРАВЛЕНО: Удален companyId из вызова db.query
       db.query(`
-        SELECT 
+        SELECT
           COUNT(*) as total_syncs,
           COUNT(CASE WHEN status = 'completed' THEN 1 END) as successful_syncs,
           COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_syncs,
           MAX(started_at) as last_sync
-        FROM sync_logs 
-        WHERE tenant_id = $1 AND started_at >= $2
-      `, [tenantId, thirtyDaysAgo.toISOString()]).catch((error) => {
+        FROM sync_logs
+        WHERE company_id = $1 AND started_at >= $2
+      `, [companyId, thirtyDaysAgo.toISOString()]).catch((error) => {
         // Если таблица не существует, возвращаем нули
         return { rows: [{ total_syncs: 0, successful_syncs: 0, failed_syncs: 0, last_sync: null }] };
       })
@@ -62,23 +62,23 @@ router.get('/dashboard', authenticate, async (req, res) => {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+    // ✅ ИСПРАВЛЕНО: Удален companyId из вызова db.query
     const dailyStats = await db.query(`
-      SELECT 
+      SELECT
         DATE(order_date) as date,
         COUNT(*) as orders_count,
         COALESCE(SUM(total_amount), 0) as revenue
-      FROM orders 
-      WHERE tenant_id = $1 AND order_date >= $2
+      FROM orders
+      WHERE company_id = $1 AND order_date >= $2
       GROUP BY DATE(order_date)
       ORDER BY date DESC
       LIMIT 7
-    `, [tenantId, sevenDaysAgo.toISOString()]);
+    `, [companyId, sevenDaysAgo.toISOString()]);
 
     // Топ товары по продажам
-    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+    // ✅ ИСПРАВЛЕНО: Удален companyId из вызова db.query
     const topProducts = await db.query(`
-      SELECT 
+      SELECT
         p.name as product_name,
         p.internal_code,
         COUNT(oi.id) as orders_count,
@@ -87,11 +87,11 @@ router.get('/dashboard', authenticate, async (req, res) => {
       FROM products p
       JOIN order_items oi ON p.id = oi.product_id
       JOIN orders o ON oi.order_id = o.id
-      WHERE p.tenant_id = $1 AND o.order_date >= $2
+      WHERE p.company_id = $1 AND o.order_date >= $2
       GROUP BY p.id, p.name, p.internal_code
       ORDER BY total_revenue DESC
       LIMIT 5
-    `, [tenantId, thirtyDaysAgo.toISOString()]);
+    `, [companyId, thirtyDaysAgo.toISOString()]);
 
     res.json({
       success: true,
@@ -121,11 +121,11 @@ router.get('/dashboard', authenticate, async (req, res) => {
  */
 router.get('/sales', authenticate, async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
     const { date_from, date_to, marketplace_id } = req.query;
 
-    let whereConditions = ['o.tenant_id = $1'];
-    const queryParams = [tenantId];
+    let whereConditions = ['o.company_id = $1'];
+    const queryParams = [companyId];
     let paramIndex = 2;
 
     if (date_from) {
@@ -148,9 +148,9 @@ router.get('/sales', authenticate, async (req, res) => {
 
     const whereClause = whereConditions.join(' AND ');
 
-    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+    // ✅ ИСПРАВЛЕНО: Удален companyId из вызова db.query
     const salesData = await db.query(`
-      SELECT 
+      SELECT
         DATE(o.order_date) as date,
         COUNT(DISTINCT o.id) as orders_count,
         SUM(o.total_amount) as revenue,
@@ -159,7 +159,7 @@ router.get('/sales', authenticate, async (req, res) => {
         m.name as marketplace_name
       FROM orders o
       LEFT JOIN marketplaces m ON o.marketplace_id = m.id
-      WHERE ${whereClause}
+      WHERE o.company_id = $1 AND ${whereClause}
       GROUP BY DATE(o.order_date), m.name
       ORDER BY date DESC
     `, queryParams);
@@ -184,11 +184,11 @@ router.get('/sales', authenticate, async (req, res) => {
  */
 router.get('/profit', authenticate, async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
     const { date_from, date_to, marketplace_id } = req.query;
 
-    let whereConditions = ['o.tenant_id = $1'];
-    const queryParams = [tenantId];
+    let whereConditions = ['o.company_id = $1'];
+    const queryParams = [companyId];
     let paramIndex = 2;
 
     if (date_from) {
@@ -211,9 +211,9 @@ router.get('/profit', authenticate, async (req, res) => {
 
     const whereClause = whereConditions.join(' AND ');
 
-    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+    // ✅ ИСПРАВЛЕНО: Удален companyId из вызова db.query
     const profitData = await db.query(`
-      SELECT 
+      SELECT
         DATE(o.order_date) as date,
         SUM(o.total_amount) as revenue,
         SUM(o.commission_amount) as commission,
@@ -223,7 +223,7 @@ router.get('/profit', authenticate, async (req, res) => {
       FROM orders o
       JOIN order_items oi ON o.id = oi.order_id
       LEFT JOIN product_suppliers ps ON oi.product_id = ps.product_id
-      WHERE ${whereClause}
+      WHERE o.company_id = $1 AND ${whereClause}
       GROUP BY DATE(o.order_date)
       ORDER BY date DESC
     `, queryParams);
@@ -248,7 +248,7 @@ router.get('/profit', authenticate, async (req, res) => {
  */
 router.get('/products', authenticate, async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
     const { limit = 50, sort = 'revenue:desc' } = req.query;
 
     const [sortField, sortDirection] = sort.split(':');
@@ -256,9 +256,9 @@ router.get('/products', authenticate, async (req, res) => {
     const finalSort = validSorts.includes(sortField) ? sortField : 'revenue';
     const finalDirection = sortDirection === 'asc' ? 'ASC' : 'DESC';
 
-    // ✅ ИСПРАВЛЕНО: Удален tenantId из вызова db.query
+    // ✅ ИСПРАВЛЕНО: Удален companyId из вызова db.query
     const productStats = await db.query(`
-      SELECT 
+      SELECT
         p.id,
         p.name,
         p.internal_code,
@@ -272,12 +272,12 @@ router.get('/products', authenticate, async (req, res) => {
       LEFT JOIN order_items oi ON p.id = oi.product_id
       LEFT JOIN brands b ON p.brand_id = b.id
       LEFT JOIN categories c ON p.category_id = c.id
-      WHERE p.tenant_id = $1
+      WHERE p.company_id = $1
       GROUP BY p.id, p.name, p.internal_code, b.canonical_name, c.canonical_name
       HAVING COUNT(oi.id) > 0
       ORDER BY ${finalSort} ${finalDirection}
       LIMIT $2
-    `, [tenantId, limit]);
+    `, [companyId, limit]);
 
     res.json({
       success: true,

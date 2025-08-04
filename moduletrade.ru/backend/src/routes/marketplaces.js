@@ -8,7 +8,7 @@ const { authenticate, checkPermission } = require('../middleware/auth');
 router.get('/', authenticate, async (req, res) => {
     try {
         // ✅ ИСПРАВЛЕНО: правильное использование db manager
-        const result = await db.mainPool.query(`
+        const result = await db.query(`
             SELECT
                 id, code, name, api_type, api_config,
                 commission_rules, created_at, updated_at
@@ -16,13 +16,13 @@ router.get('/', authenticate, async (req, res) => {
             WHERE id IN (
                 SELECT DISTINCT marketplace_id
                 FROM marketplace_product_links
-                WHERE tenant_id = $1
+                WHERE company_id = $1
             )
             OR id IN (
                 SELECT id FROM marketplaces WHERE api_type = 'public'
             )
             ORDER BY name
-        `, [req.user.tenantId]);
+        `, [req.user.companyId]);
 
         res.json({
             success: true,
@@ -40,7 +40,7 @@ router.get('/', authenticate, async (req, res) => {
 // Получение одного маркетплейса
 router.get('/:id', authenticate, async (req, res) => {
     try {
-        const result = await db.mainPool.query(
+        const result = await db.query(
             'SELECT * FROM marketplaces WHERE id = $1',
             [req.params.id]
         );
@@ -77,7 +77,7 @@ router.post('/', authenticate, checkPermission('marketplaces.create'), async (re
             });
         }
 
-        const result = await db.mainPool.query(`
+        const result = await db.query(`
             INSERT INTO marketplaces (code, name, api_type, api_config, commission_rules)
             VALUES ($1, $2, $3, $4, $5)
             RETURNING *
@@ -141,7 +141,7 @@ router.put('/:id', authenticate, checkPermission('marketplaces.update'), async (
         updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
         values.push(req.params.id);
 
-        const result = await db.mainPool.query(`
+        const result = await db.query(`
             UPDATE marketplaces
             SET ${updateFields.join(', ')}
             WHERE id = $${paramIndex}
@@ -172,7 +172,7 @@ router.put('/:id', authenticate, checkPermission('marketplaces.update'), async (
 router.delete('/:id', authenticate, checkPermission('marketplaces.delete'), async (req, res) => {
     try {
         // Проверяем, есть ли связанные товары
-        const linkedProducts = await db.mainPool.query(
+        const linkedProducts = await db.query(
             'SELECT COUNT(*) as count FROM marketplace_product_links WHERE marketplace_id = $1',
             [req.params.id]
         );
@@ -184,7 +184,7 @@ router.delete('/:id', authenticate, checkPermission('marketplaces.delete'), asyn
             });
         }
 
-        const result = await db.mainPool.query(
+        const result = await db.query(
             'DELETE FROM marketplaces WHERE id = $1 RETURNING *',
             [req.params.id]
         );
@@ -212,7 +212,7 @@ router.delete('/:id', authenticate, checkPermission('marketplaces.delete'), asyn
 // Проверка подключения к маркетплейсу
 router.post('/:id/test', authenticate, async (req, res) => {
     try {
-        const result = await db.mainPool.query(
+        const result = await db.query(
             'SELECT * FROM marketplaces WHERE id = $1',
             [req.params.id]
         );
@@ -257,7 +257,7 @@ router.post('/:id/test', authenticate, async (req, res) => {
 // Получение складов маркетплейса
 router.get('/:id/warehouses', authenticate, async (req, res) => {
     try {
-        const result = await db.mainPool.query(`
+        const result = await db.query(`
             SELECT mw.*, s.name as supplier_name
             FROM marketplace_warehouses mw
             LEFT JOIN suppliers s ON mw.supplier_id = s.id
@@ -289,8 +289,8 @@ router.get('/:id/orders', authenticate, async (req, res) => {
             date_to
         } = req.query;
 
-        let whereConditions = ['o.marketplace_id = $1', 'o.tenant_id = $2'];
-        const queryParams = [req.params.id, req.user.tenantId];
+        let whereConditions = ['o.marketplace_id = $1', 'o.company_id = $2'];
+        const queryParams = [req.params.id, req.user.companyId];
         let paramIndex = 3;
 
         if (status) {
@@ -313,24 +313,24 @@ router.get('/:id/orders', authenticate, async (req, res) => {
 
         const whereClause = whereConditions.join(' AND ');
 
-        const result = await db.query(req.user.tenantId, `
+        const result = await db.query(req.user.companyId, `
             SELECT
                 o.*,
                 COUNT(oi.id) as items_count,
                 SUM(oi.quantity) as total_quantity
             FROM orders o
             LEFT JOIN order_items oi ON o.id = oi.order_id
-            WHERE ${whereClause}
+            WHERE o.company_id = $1 AND ${whereClause}
             GROUP BY o.id
             ORDER BY o.order_date DESC
             LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
         `, [...queryParams, limit, offset]);
 
         // Подсчет общего количества
-        const countResult = await db.query(req.user.tenantId, `
+        const countResult = await db.query(req.user.companyId, `
             SELECT COUNT(*) as total
             FROM orders o
-            WHERE ${whereClause}
+            WHERE o.company_id = $1 AND ${whereClause}
         `, queryParams);
 
         res.json({
@@ -359,7 +359,7 @@ router.post('/:id/sync', authenticate, checkPermission('sync.execute'), async (r
         // Здесь должна быть логика синхронизации
         // const syncResult = await syncService.syncMarketplace(
         //     req.params.id,
-        //     req.user.tenantId,
+        //     req.user.companyId,
         //     sync_type
         // );
 

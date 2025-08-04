@@ -13,7 +13,7 @@ const billingService = new BillingService();
  */
 router.get('/tariffs', async (req, res) => {
   try {
-    const result = await db.mainPool.query(`
+    const result = await db.query(`
       SELECT id, name, description, price, limits, features, active
       FROM tariffs
       WHERE active = true
@@ -40,13 +40,13 @@ router.get('/tariffs', async (req, res) => {
  */
 router.get('/current-tariff', authenticate, async (req, res) => {
   try {
-    const result = await db.mainPool.query(`
+    const result = await db.query(`
       SELECT t.id, t.name, t.description, t.price, t.limits, t.features,
              ten.created_at as subscription_start
-      FROM tenants ten
+      FROM companies ten
       JOIN tariffs t ON ten.tariff_id = t.id
       WHERE ten.id = $1
-    `, [req.user.tenantId]);
+    `, [req.user.companyId]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -76,7 +76,7 @@ router.get('/current-tariff', authenticate, async (req, res) => {
 router.get('/usage', authenticate, async (req, res) => {
   try {
     const { period = 'current_month' } = req.query;
-    
+
     let dateFilter = '';
     switch (period) {
       case 'current_month':
@@ -93,40 +93,40 @@ router.get('/usage', authenticate, async (req, res) => {
     }
 
     // Получаем использование API
-    const apiUsageResult = await db.mainPool.query(`
-      SELECT 
+    const apiUsageResult = await db.query(`
+      SELECT
         COUNT(*) as total_requests,
         COUNT(CASE WHEN status = 'success' THEN 1 END) as successful_requests,
         COUNT(CASE WHEN status = 'rate_limited' THEN 1 END) as rate_limited_requests
       FROM api_logs
-      WHERE tenant_id = $1 
+      WHERE company_id = $1
         AND created_at >= ${dateFilter}
-    `, [req.user.tenantId]);
+    `, [req.user.companyId]);
 
     // Получаем количество товаров
-    const productsResult = await db.mainPool.query(`
+    const productsResult = await db.query(`
       SELECT COUNT(*) as total_products
       FROM products
-      WHERE tenant_id = $1
-    `, [req.user.tenantId]);
+      WHERE company_id = $1
+    `, [req.user.companyId]);
 
     // Получаем количество заказов
-    const ordersResult = await db.mainPool.query(`
-      SELECT 
+    const ordersResult = await db.query(`
+      SELECT
         COUNT(*) as total_orders,
         SUM(total_amount) as total_revenue
       FROM orders
-      WHERE tenant_id = $1 
+      WHERE company_id = $1
         AND created_at >= ${dateFilter}
-    `, [req.user.tenantId]);
+    `, [req.user.companyId]);
 
     // Получаем лимиты тарифа
-    const tariffResult = await db.mainPool.query(`
+    const tariffResult = await db.query(`
       SELECT t.limits
-      FROM tenants ten
+      FROM companies ten
       JOIN tariffs t ON ten.tariff_id = t.id
       WHERE ten.id = $1
-    `, [req.user.tenantId]);
+    `, [req.user.companyId]);
 
     const limits = tariffResult.rows[0]?.limits || {};
     const apiUsage = apiUsageResult.rows[0];
@@ -176,22 +176,22 @@ router.get('/transactions', authenticate, async (req, res) => {
     const { page = 1, limit = 20 } = req.query;
     const offset = (page - 1) * limit;
 
-    const result = await db.mainPool.query(`
-      SELECT 
-        id, type, amount, description, status, 
+    const result = await db.query(`
+      SELECT
+        id, type, amount, description, status,
         created_at, updated_at,
         metadata
       FROM billing_transactions
-      WHERE tenant_id = $1
+      WHERE company_id = $1
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3
-    `, [req.user.tenantId, limit, offset]);
+    `, [req.user.companyId, limit, offset]);
 
-    const countResult = await db.mainPool.query(`
+    const countResult = await db.query(`
       SELECT COUNT(*) as total
       FROM billing_transactions
-      WHERE tenant_id = $1
-    `, [req.user.tenantId]);
+      WHERE company_id = $1
+    `, [req.user.companyId]);
 
     res.json({
       success: true,
@@ -230,7 +230,7 @@ router.post('/change-tariff', authenticate, checkPermission('billing.manage'), a
     }
 
     // Проверяем, существует ли тариф
-    const tariffResult = await db.mainPool.query(`
+    const tariffResult = await db.query(`
       SELECT id, name, price, limits
       FROM tariffs
       WHERE id = $1 AND active = true
@@ -246,12 +246,12 @@ router.post('/change-tariff', authenticate, checkPermission('billing.manage'), a
     const newTariff = tariffResult.rows[0];
 
     // Получаем текущий тариф
-    const currentTariffResult = await db.mainPool.query(`
+    const currentTariffResult = await db.query(`
       SELECT t.id, t.name, t.price
-      FROM tenants ten
+      FROM companies ten
       JOIN tariffs t ON ten.tariff_id = t.id
       WHERE ten.id = $1
-    `, [req.user.tenantId]);
+    `, [req.user.companyId]);
 
     const currentTariff = currentTariffResult.rows[0];
 
@@ -264,25 +264,25 @@ router.post('/change-tariff', authenticate, checkPermission('billing.manage'), a
     }
 
     // Начинаем транзакцию
-    await db.mainPool.query('BEGIN');
+    const client = await db.getClient(); await client.query('BEGIN');
 
     try {
       // Обновляем тариф у тенанта
-      await db.mainPool.query(`
-        UPDATE tenants
+      await db.query(`
+        UPDATE companies
         SET tariff_id = $1, updated_at = NOW()
         WHERE id = $2
-      `, [tariff_id, req.user.tenantId]);
+      `, [tariff_id, req.user.companyId]);
 
       // Создаем запись о смене тарифа
-      await db.mainPool.query(`
+      await db.query(`
         INSERT INTO billing_transactions (
-          tenant_id, type, amount, description, status, created_at,
+          company_id, type, amount, description, status, created_at,
           metadata
         )
         VALUES ($1, 'tariff_change', $2, $3, 'completed', NOW(), $4)
       `, [
-        req.user.tenantId,
+        req.user.companyId,
         newTariff.price,
         `Смена тарифа с "${currentTariff.name}" на "${newTariff.name}"`,
         JSON.stringify({
@@ -293,7 +293,7 @@ router.post('/change-tariff', authenticate, checkPermission('billing.manage'), a
         })
       ]);
 
-      await db.mainPool.query('COMMIT');
+      await client.query('COMMIT'); client.release();
 
       res.json({
         success: true,
@@ -304,7 +304,7 @@ router.post('/change-tariff', authenticate, checkPermission('billing.manage'), a
       });
 
     } catch (error) {
-      await db.mainPool.query('ROLLBACK');
+      await client.query('ROLLBACK'); client.release();
       throw error;
     }
 
@@ -333,7 +333,7 @@ router.post('/create-payment-intent', authenticate, async (req, res) => {
     }
 
     // Получаем информацию о тарифе
-    const tariffResult = await db.mainPool.query(`
+    const tariffResult = await db.query(`
       SELECT id, name, price
       FROM tariffs
       WHERE id = $1 AND active = true
@@ -353,7 +353,7 @@ router.post('/create-payment-intent', authenticate, async (req, res) => {
       amount: Math.round(tariff.price * 100), // Stripe работает с копейками
       currency: 'rub',
       metadata: {
-        tenant_id: req.user.tenantId,
+        company_id: req.user.companyId,
         tariff_id: tariff_id,
         tariff_name: tariff.name
       }
@@ -384,7 +384,7 @@ router.post('/create-payment-intent', authenticate, async (req, res) => {
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
     const signature = req.headers['stripe-signature'];
-    
+
     // Проверяем подпись webhook
     const event = billingService.verifyWebhookSignature(req.body, signature);
 
@@ -415,27 +415,27 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
  * Обработка успешного платежа
  */
 async function handlePaymentSuccess(paymentIntent) {
-  const { tenant_id, tariff_id, tariff_name } = paymentIntent.metadata;
+  const { company_id, tariff_id, tariff_name } = paymentIntent.metadata;
 
-  await db.mainPool.query('BEGIN');
+  const client = await db.getClient(); await client.query('BEGIN');
 
   try {
     // Обновляем тариф у тенанта
-    await db.mainPool.query(`
-      UPDATE tenants
+    await db.query(`
+      UPDATE companies
       SET tariff_id = $1, updated_at = NOW()
       WHERE id = $2
-    `, [tariff_id, tenant_id]);
+    `, [tariff_id, company_id]);
 
     // Создаем запись о платеже
-    await db.mainPool.query(`
+    await db.query(`
       INSERT INTO billing_transactions (
-        tenant_id, type, amount, description, status, created_at,
+        company_id, type, amount, description, status, created_at,
         metadata
       )
       VALUES ($1, 'payment', $2, $3, 'completed', NOW(), $4)
     `, [
-      tenant_id,
+      company_id,
       paymentIntent.amount / 100,
       `Оплата тарифа "${tariff_name}"`,
       JSON.stringify({
@@ -445,10 +445,10 @@ async function handlePaymentSuccess(paymentIntent) {
       })
     ]);
 
-    await db.mainPool.query('COMMIT');
+    await client.query('COMMIT'); client.release();
 
   } catch (error) {
-    await db.mainPool.query('ROLLBACK');
+    await client.query('ROLLBACK'); client.release();
     throw error;
   }
 }
@@ -457,17 +457,17 @@ async function handlePaymentSuccess(paymentIntent) {
  * Обработка неудачного платежа
  */
 async function handlePaymentFailed(paymentIntent) {
-  const { tenant_id, tariff_name } = paymentIntent.metadata;
+  const { company_id, tariff_name } = paymentIntent.metadata;
 
   // Логируем неудачный платеж
-  await db.mainPool.query(`
+  await db.query(`
     INSERT INTO billing_transactions (
-      tenant_id, type, amount, description, status, created_at,
+      company_id, type, amount, description, status, created_at,
       metadata
     )
     VALUES ($1, 'payment', $2, $3, 'failed', NOW(), $4)
   `, [
-    tenant_id,
+    company_id,
     paymentIntent.amount / 100,
     `Неудачная оплата тарифа "${tariff_name}"`,
     JSON.stringify({

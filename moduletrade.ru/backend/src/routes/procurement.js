@@ -13,9 +13,9 @@ const pool = new Pool({
 router.get('/supplier-orders', authenticateToken, async (req, res) => {
   try {
     const { status = 'draft', supplier_id, batch_id } = req.query;
-    
+
     let query = `
-      SELECT 
+      SELECT
         so.*,
         s.name as supplier_name,
         s.email as supplier_email,
@@ -25,10 +25,10 @@ router.get('/supplier-orders', authenticateToken, async (req, res) => {
       JOIN suppliers s ON s.id = so.supplier_id
       LEFT JOIN supplier_order_items soi ON soi.order_id = so.id
       LEFT JOIN users u ON u.id = so.created_by_user_id
-      WHERE so.tenant_id = $1
+      WHERE so.company_id = $1
     `;
 
-    const params = [req.user.tenant_id];
+    const params = [req.user.company_id];
     let paramIndex = 2;
 
     if (status) {
@@ -55,16 +55,16 @@ router.get('/supplier-orders', authenticateToken, async (req, res) => {
     `;
 
     const result = await pool.query(query, params);
-    
+
     res.json({
       success: true,
       orders: result.rows
     });
   } catch (error) {
     logger.error('Error fetching supplier orders:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to fetch supplier orders' 
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch supplier orders'
     });
   }
 });
@@ -73,10 +73,10 @@ router.get('/supplier-orders', authenticateToken, async (req, res) => {
 router.get('/supplier-orders/:orderId', authenticateToken, async (req, res) => {
   try {
     const { orderId } = req.params;
-    
+
     // Получаем заказ
     const orderResult = await pool.query(`
-      SELECT 
+      SELECT
         so.*,
         s.name as supplier_name,
         s.email as supplier_email,
@@ -84,13 +84,13 @@ router.get('/supplier-orders/:orderId', authenticateToken, async (req, res) => {
         s.api_config
       FROM supplier_orders so
       JOIN suppliers s ON s.id = so.supplier_id
-      WHERE so.id = $1 AND so.tenant_id = $2
-    `, [orderId, req.user.tenant_id]);
+      WHERE so.id = $1 AND so.company_id = $2
+    `, [orderId, req.user.company_id]);
 
     if (orderResult.rows.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Order not found' 
+      return res.status(404).json({
+        success: false,
+        error: 'Order not found'
       });
     }
 
@@ -98,7 +98,7 @@ router.get('/supplier-orders/:orderId', authenticateToken, async (req, res) => {
 
     // Получаем позиции заказа
     const itemsResult = await pool.query(`
-      SELECT 
+      SELECT
         soi.*,
         p.name as product_name,
         p.sku,
@@ -106,7 +106,7 @@ router.get('/supplier-orders/:orderId', authenticateToken, async (req, res) => {
         ps.availability_status
       FROM supplier_order_items soi
       JOIN products p ON p.id = soi.product_id
-      LEFT JOIN product_suppliers ps ON ps.product_id = soi.product_id 
+      LEFT JOIN product_suppliers ps ON ps.product_id = soi.product_id
         AND ps.supplier_id = $2
       WHERE soi.order_id = $1
       ORDER BY p.name
@@ -139,9 +139,9 @@ router.get('/supplier-orders/:orderId', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     logger.error('Error fetching supplier order details:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to fetch order details' 
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch order details'
     });
   }
 });
@@ -153,37 +153,37 @@ router.put('/supplier-orders/:orderId/items/:itemId', authenticateToken, async (
     const { quantity } = req.body;
 
     if (!quantity || quantity < 0) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Invalid quantity' 
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid quantity'
       });
     }
 
     // Проверяем, что заказ принадлежит тенанту и имеет статус draft
     const checkResult = await pool.query(`
-      SELECT so.status 
+      SELECT so.status
       FROM supplier_orders so
       JOIN supplier_order_items soi ON soi.order_id = so.id
-      WHERE so.id = $1 AND soi.id = $2 AND so.tenant_id = $3
-    `, [orderId, itemId, req.user.tenant_id]);
+      WHERE so.id = $1 AND soi.id = $2 AND so.company_id = $3
+    `, [orderId, itemId, req.user.company_id]);
 
     if (checkResult.rows.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Order item not found' 
+      return res.status(404).json({
+        success: false,
+        error: 'Order item not found'
       });
     }
 
     if (checkResult.rows[0].status !== 'draft') {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Can only edit draft orders' 
+      return res.status(400).json({
+        success: false,
+        error: 'Can only edit draft orders'
       });
     }
 
     // Обновляем количество
     const updateResult = await pool.query(`
-      UPDATE supplier_order_items 
+      UPDATE supplier_order_items
       SET quantity = $1
       WHERE id = $2
       RETURNING *
@@ -206,9 +206,9 @@ router.put('/supplier-orders/:orderId/items/:itemId', authenticateToken, async (
     });
   } catch (error) {
     logger.error('Error updating order item:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to update order item' 
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update order item'
     });
   }
 });
@@ -216,29 +216,29 @@ router.put('/supplier-orders/:orderId/items/:itemId', authenticateToken, async (
 // Удалить позицию из заказа поставщику (создать override)
 router.delete('/supplier-orders/:orderId/items/:itemId', authenticateToken, async (req, res) => {
   const client = await pool.connect();
-  
+
   try {
     await client.query('BEGIN');
-    
+
     const { orderId, itemId } = req.params;
     const { reason = 'manual_removal', notes } = req.body;
 
     // Получаем информацию о позиции
     const itemResult = await client.query(`
-      SELECT 
+      SELECT
         soi.*,
         so.status,
-        so.tenant_id
+        so.company_id
       FROM supplier_order_items soi
       JOIN supplier_orders so ON so.id = soi.order_id
-      WHERE soi.id = $1 AND so.id = $2 AND so.tenant_id = $3
-    `, [itemId, orderId, req.user.tenant_id]);
+      WHERE soi.id = $1 AND so.id = $2 AND so.company_id = $3
+    `, [itemId, orderId, req.user.company_id]);
 
     if (itemResult.rows.length === 0) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Order item not found' 
+      return res.status(404).json({
+        success: false,
+        error: 'Order item not found'
       });
     }
 
@@ -246,9 +246,9 @@ router.delete('/supplier-orders/:orderId/items/:itemId', authenticateToken, asyn
 
     if (item.status !== 'draft') {
       await client.query('ROLLBACK');
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Can only remove items from draft orders' 
+      return res.status(400).json({
+        success: false,
+        error: 'Can only remove items from draft orders'
       });
     }
 
@@ -264,15 +264,15 @@ router.delete('/supplier-orders/:orderId/items/:itemId', authenticateToken, asyn
     for (const clientItem of clientItemsResult.rows) {
       await client.query(`
         INSERT INTO procurement_overrides (
-          tenant_id,
+          company_id,
           order_item_id,
           reason,
           created_by_user_id,
           notes
         ) VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (tenant_id, order_item_id) DO NOTHING
+        ON CONFLICT (company_id, order_item_id) DO NOTHING
       `, [
-        req.user.tenant_id,
+        req.user.company_id,
         clientItem.id,
         reason,
         req.user.id,
@@ -307,9 +307,9 @@ router.delete('/supplier-orders/:orderId/items/:itemId', authenticateToken, asyn
   } catch (error) {
     await client.query('ROLLBACK');
     logger.error('Error removing order item:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to remove order item' 
+    res.status(500).json({
+      success: false,
+      error: 'Failed to remove order item'
     });
   } finally {
     client.release();
@@ -319,23 +319,23 @@ router.delete('/supplier-orders/:orderId/items/:itemId', authenticateToken, asyn
 // Подтвердить и отправить заказ поставщику
 router.post('/supplier-orders/:orderId/confirm', authenticateToken, async (req, res) => {
   const client = await pool.connect();
-  
+
   try {
     await client.query('BEGIN');
-    
+
     const { orderId } = req.params;
 
     // Проверяем заказ
     const orderResult = await client.query(`
       SELECT * FROM supplier_orders
-      WHERE id = $1 AND tenant_id = $2 AND status = 'draft'
-    `, [orderId, req.user.tenant_id]);
+      WHERE id = $1 AND company_id = $2 AND status = 'draft'
+    `, [orderId, req.user.company_id]);
 
     if (orderResult.rows.length === 0) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Draft order not found' 
+      return res.status(404).json({
+        success: false,
+        error: 'Draft order not found'
       });
     }
 
@@ -351,9 +351,9 @@ router.post('/supplier-orders/:orderId/confirm', authenticateToken, async (req, 
   } catch (error) {
     await client.query('ROLLBACK');
     logger.error('Error confirming order:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to confirm order' 
+    res.status(500).json({
+      success: false,
+      error: 'Failed to confirm order'
     });
   } finally {
     client.release();
@@ -367,14 +367,14 @@ router.post('/sales-channels/:channelId/trigger-procurement', authenticateToken,
 
     // Проверяем, что канал принадлежит тенанту
     const checkResult = await pool.query(
-      'SELECT id FROM sales_channels WHERE id = $1 AND tenant_id = $2',
-      [channelId, req.user.tenant_id]
+      'SELECT id FROM sales_channels WHERE id = $1 AND company_id = $2',
+      [channelId, req.user.company_id]
     );
 
     if (checkResult.rows.length === 0) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Sales channel not found' 
+      return res.status(404).json({
+        success: false,
+        error: 'Sales channel not found'
       });
     }
 
@@ -387,9 +387,9 @@ router.post('/sales-channels/:channelId/trigger-procurement', authenticateToken,
     });
   } catch (error) {
     logger.error('Error triggering procurement:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to trigger procurement' 
+    res.status(500).json({
+      success: false,
+      error: 'Failed to trigger procurement'
     });
   }
 });
@@ -401,7 +401,7 @@ router.get('/procurement-history', authenticateToken, async (req, res) => {
 
     const result = await pool.query(`
       WITH procurement_stats AS (
-        SELECT 
+        SELECT
           DATE(so.created_at) as date,
           COUNT(DISTINCT so.id) as orders_count,
           COUNT(DISTINCT so.supplier_id) as suppliers_count,
@@ -409,13 +409,13 @@ router.get('/procurement-history', authenticateToken, async (req, res) => {
           COUNT(DISTINCT soi.product_id) as products_count
         FROM supplier_orders so
         JOIN supplier_order_items soi ON soi.order_id = so.id
-        WHERE so.tenant_id = $1
+        WHERE so.company_id = $1
           AND so.created_at >= CURRENT_DATE - INTERVAL '%s days'
         GROUP BY DATE(so.created_at)
       )
       SELECT * FROM procurement_stats
       ORDER BY date DESC
-    `, [req.user.tenant_id, parseInt(days)]);
+    `, [req.user.company_id, parseInt(days)]);
 
     res.json({
       success: true,
@@ -423,9 +423,9 @@ router.get('/procurement-history', authenticateToken, async (req, res) => {
     });
   } catch (error) {
     logger.error('Error fetching procurement history:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to fetch procurement history' 
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch procurement history'
     });
   }
 });

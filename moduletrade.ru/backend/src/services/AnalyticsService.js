@@ -6,9 +6,9 @@ class AnalyticsService {
   /**
    * Обновление рейтингов популярности товаров
    */
-  async updatePopularityScores(tenantId) {
+  async updatePopularityScores(companyId) {
     try {
-      logger.info(`Updating popularity scores for tenant ${tenantId}`);
+      logger.info(`Updating popularity scores for tenant ${companyId}`);
 
       const result = await db.raw(`
         UPDATE products p
@@ -21,12 +21,12 @@ class AnalyticsService {
             COALESCE(AVG(p.view_count), 0) * 1 as score
           FROM products p
           LEFT JOIN order_items oi ON oi.product_id = p.id
-          WHERE p.tenant_id = ?
+          WHERE p.company_id = ?
           GROUP BY p.id
         ) AS subquery
         WHERE p.id = subquery.id
-          AND p.tenant_id = ?
-      `, [tenantId, tenantId]);
+          AND p.company_id = ?
+      `, [companyId, companyId]);
 
       logger.info(`Popularity scores updated for ${result.rowCount} products`);
       return { success: true, updated: result.rowCount };
@@ -39,10 +39,10 @@ class AnalyticsService {
   /**
    * Получение аналитики по продажам
    */
-  async getSalesAnalytics(tenantId, dateFrom, dateTo) {
+  async getSalesAnalytics(companyId, dateFrom, dateTo) {
     try {
       const analytics = await db('orders')
-        .where({ tenant_id: tenantId })
+        .where({ company_id: companyId })
         .whereBetween('created_at', [dateFrom, dateTo])
         .select(
           db.raw('COUNT(*) as total_orders'),
@@ -62,10 +62,10 @@ class AnalyticsService {
   /**
    * Получение топ товаров
    */
-  async getTopProducts(tenantId, limit = 10) {
+  async getTopProducts(companyId, limit = 10) {
     try {
       const products = await db('products')
-        .where({ 'products.tenant_id': tenantId })
+        .where({ 'products.company_id': companyId })
         .join('order_items', 'products.id', 'order_items.product_id')
         .select(
           'products.id',
@@ -89,10 +89,10 @@ class AnalyticsService {
   /**
    * Анализ производительности маркетплейсов
    */
-  async getMarketplacePerformance(tenantId) {
+  async getMarketplacePerformance(companyId) {
     try {
       const performance = await db('orders')
-        .where({ 'orders.tenant_id': tenantId })
+        .where({ 'orders.company_id': companyId })
         .join('marketplaces', 'orders.marketplace_id', 'marketplaces.id')
         .select(
           'marketplaces.id',
@@ -113,10 +113,10 @@ class AnalyticsService {
   /**
    * Получение статистики по складам
    */
-  async getWarehouseStats(tenantId) {
+  async getWarehouseStats(companyId) {
     try {
       const stats = await db('warehouse_stock')
-        .where({ tenant_id: tenantId })
+        .where({ company_id: companyId })
         .join('warehouses', 'warehouse_stock.warehouse_id', 'warehouses.id')
         .select(
           'warehouses.id',
@@ -137,10 +137,10 @@ class AnalyticsService {
   /**
    * Анализ эффективности поставщиков
    */
-  async getSupplierPerformance(tenantId) {
+  async getSupplierPerformance(companyId) {
     try {
       const performance = await db('supplier_orders')
-        .where({ 'supplier_orders.tenant_id': tenantId })
+        .where({ 'supplier_orders.company_id': companyId })
         .join('suppliers', 'supplier_orders.supplier_id', 'suppliers.id')
         .select(
           'suppliers.id',
@@ -162,7 +162,7 @@ class AnalyticsService {
   /**
    * Получение трендов продаж
    */
-  async getSalesTrends(tenantId, period = 'day', days = 30) {
+  async getSalesTrends(companyId, period = 'day', days = 30) {
     try {
       let dateFormat;
       switch(period) {
@@ -183,7 +183,7 @@ class AnalyticsService {
       }
 
       const trends = await db('orders')
-        .where({ tenant_id: tenantId })
+        .where({ company_id: companyId })
         .where('created_at', '>=', db.raw(`CURRENT_DATE - INTERVAL '${days} days'`))
         .select(
           db.raw(`TO_CHAR(created_at, '${dateFormat}') as period`),

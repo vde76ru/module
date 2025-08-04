@@ -15,7 +15,7 @@ class WarehouseService {
     /**
      * Создание нового склада
      */
-    async createWarehouse(tenantId, warehouseData) {
+    async createWarehouse(companyId, warehouseData) {
         const {
             name,
             type = 'physical',
@@ -25,22 +25,21 @@ class WarehouseService {
             settings = {}
         } = warehouseData;
 
-        const pool = await db.getPool(tenantId);
         const warehouseId = uuidv4();
 
         try {
-            await pool.query(`
+            await db.query(`
                 INSERT INTO warehouses (
-                    id, tenant_id, name, type, description, 
+                    id, company_id, name, type, description,
                     address, priority, settings, is_active
                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             `, [
-                warehouseId, tenantId, name, type, description,
+                warehouseId, companyId, name, type, description,
                 address, priority, JSON.stringify(settings), true
             ]);
 
             // Очищаем кеш
-            this.warehouseCache.delete(tenantId);
+            this.warehouseCache.delete(companyId);
 
             return warehouseId;
         } catch (error) {
@@ -52,24 +51,23 @@ class WarehouseService {
     /**
      * Получение списка складов
      */
-    async getWarehouses(tenantId, filters = {}) {
-        const cacheKey = `${tenantId}-warehouses`;
-        
+    async getWarehouses(companyId, filters = {}) {
+        const cacheKey = `${companyId}-warehouses`;
+
         if (!filters.skipCache && this.warehouseCache.has(cacheKey)) {
             return this.warehouseCache.get(cacheKey);
         }
 
-        const pool = await db.getPool(tenantId);
         let query = `
-            SELECT w.*, 
+            SELECT w.*,
                    COUNT(DISTINCT wpl.product_id) as product_count,
                    SUM(wpl.quantity * wpl.price) as total_value
             FROM warehouses w
             LEFT JOIN warehouse_product_links wpl ON w.id = wpl.warehouse_id
-            WHERE w.tenant_id = $1
+            WHERE w.company_id = $1
         `;
 
-        const params = [tenantId];
+        const params = [companyId];
 
         if (filters.type) {
             params.push(filters.type);
@@ -83,8 +81,8 @@ class WarehouseService {
 
         query += ` GROUP BY w.id ORDER BY w.priority DESC, w.name`;
 
-        const result = await pool.query(query, params);
-        
+        const result = await db.query(query, params);
+
         this.warehouseCache.set(cacheKey, result.rows);
         return result.rows;
     }
@@ -92,25 +90,24 @@ class WarehouseService {
     /**
      * Получение основного склада
      */
-    async getDefaultWarehouse(tenantId) {
-        const warehouses = await this.getWarehouses(tenantId, { is_active: true });
-        return warehouses.find(w => w.type === 'physical' && w.name === 'Основной склад') || 
+    async getDefaultWarehouse(companyId) {
+        const warehouses = await this.getWarehouses(companyId, { is_active: true });
+        return warehouses.find(w => w.type === 'physical' && w.name === 'Основной склад') ||
                warehouses[0] || null;
     }
 
     /**
      * Обновление остатков на складе
      */
-    async updateStock(tenantId, warehouseId, productId, quantity, price = null) {
-        const pool = await db.getPool(tenantId);
-        const client = await pool.connect();
+    async updateStock(companyId, warehouseId, productId, quantity, price = null) {
+        const client = await db.getClient();
 
         try {
             await client.query('BEGIN');
 
             // Проверяем существующую запись
             const existing = await client.query(`
-                SELECT quantity, reserved_quantity, price 
+                SELECT quantity, reserved_quantity, price
                 FROM warehouse_product_links
                 WHERE warehouse_id = $1 AND product_id = $2
             `, [warehouseId, productId]);
@@ -118,10 +115,10 @@ class WarehouseService {
             if (existing.rows.length > 0) {
                 // Обновляем существующую запись
                 const updatePrice = price !== null ? price : existing.rows[0].price;
-                
+
                 await client.query(`
                     UPDATE warehouse_product_links
-                    SET quantity = $3, 
+                    SET quantity = $3,
                         price = $4,
                         last_updated = CURRENT_TIMESTAMP
                     WHERE warehouse_id = $1 AND product_id = $2
@@ -131,7 +128,7 @@ class WarehouseService {
                 const difference = quantity - existing.rows[0].quantity;
                 if (difference !== 0) {
                     await this.recordMovement(client, {
-                        tenantId,
+                        companyId,
                         productId,
                         warehouseId,
                         quantity: Math.abs(difference),
@@ -149,7 +146,7 @@ class WarehouseService {
 
                 if (quantity > 0) {
                     await this.recordMovement(client, {
-                        tenantId,
+                        companyId,
                         productId,
                         toWarehouseId: warehouseId,
                         quantity,
@@ -164,7 +161,7 @@ class WarehouseService {
             // Публикуем событие об изменении остатков
             await rabbitmq.publishMessage(rabbitmq.queues.STOCK_UPDATE, {
                 type: 'stock_updated',
-                tenantId,
+                companyId,
                 warehouseId,
                 productId,
                 quantity,
@@ -183,9 +180,8 @@ class WarehouseService {
     /**
      * Резервирование товара для заказа
      */
-    async reserveStock(tenantId, reservations) {
-        const pool = await db.getPool(tenantId);
-        const client = await pool.connect();
+    async reserveStock(companyId, reservations) {
+        const client = await db.getClient();
 
         try {
             await client.query('BEGIN');
@@ -200,22 +196,22 @@ class WarehouseService {
                     SELECT wpl.*, w.priority, w.type
                     FROM warehouse_product_links wpl
                     JOIN warehouses w ON wpl.warehouse_id = w.id
-                    WHERE wpl.product_id = $1 
-                      AND w.tenant_id = $2
+                    WHERE wpl.product_id = $1
+                      AND w.company_id = $2
                       AND w.is_active = TRUE
                       AND (wpl.quantity - wpl.reserved_quantity) >= $3
-                    ORDER BY 
+                    ORDER BY
                         CASE WHEN wpl.warehouse_id = $4 THEN 0 ELSE 1 END,
                         w.priority DESC,
                         wpl.price ASC
-                `, [productId, tenantId, quantity, preferredWarehouseId || '00000000-0000-0000-0000-000000000000']);
+                `, [productId, companyId, quantity, preferredWarehouseId || '00000000-0000-0000-0000-000000000000']);
 
                 if (availableStock.rows.length === 0) {
                     // Проверяем можно ли собрать с нескольких складов
                     availableStock = await this.findMultiWarehouseStock(
-                        client, 
-                        tenantId, 
-                        productId, 
+                        client,
+                        companyId,
+                        productId,
                         quantity
                     );
                 }
@@ -223,7 +219,7 @@ class WarehouseService {
                 if (availableStock.rows.length > 0) {
                     // Резервируем на первом подходящем складе
                     const stock = availableStock.rows[0];
-                    
+
                     await client.query(`
                         UPDATE warehouse_product_links
                         SET reserved_quantity = reserved_quantity + $3
@@ -262,10 +258,8 @@ class WarehouseService {
     /**
      * Снятие резерва
      */
-    async releaseReservation(tenantId, warehouseId, productId, quantity) {
-        const pool = await db.getPool(tenantId);
-        
-        await pool.query(`
+    async releaseReservation(companyId, warehouseId, productId, quantity) {
+        await db.query(`
             UPDATE warehouse_product_links
             SET reserved_quantity = GREATEST(0, reserved_quantity - $3)
             WHERE warehouse_id = $1 AND product_id = $2
@@ -275,9 +269,8 @@ class WarehouseService {
     /**
      * Подтверждение резерва (списание товара)
      */
-    async confirmReservation(tenantId, warehouseId, productId, quantity, orderId) {
-        const pool = await db.getPool(tenantId);
-        const client = await pool.connect();
+    async confirmReservation(companyId, warehouseId, productId, quantity, orderId) {
+        const client = await db.getClient();
 
         try {
             await client.query('BEGIN');
@@ -292,7 +285,7 @@ class WarehouseService {
 
             // Записываем движение
             await this.recordMovement(client, {
-                tenantId,
+                companyId,
                 productId,
                 fromWarehouseId: warehouseId,
                 quantity,
@@ -313,9 +306,8 @@ class WarehouseService {
     /**
      * Перемещение товара между складами
      */
-    async moveStock(tenantId, fromWarehouseId, toWarehouseId, productId, quantity, userId, reason) {
-        const pool = await db.getPool(tenantId);
-        const client = await pool.connect();
+    async moveStock(companyId, fromWarehouseId, toWarehouseId, productId, quantity, userId, reason) {
+        const client = await db.getClient();
 
         try {
             await client.query('BEGIN');
@@ -349,14 +341,14 @@ class WarehouseService {
                     warehouse_id, product_id, quantity, price
                 ) VALUES ($1, $2, $3, $4)
                 ON CONFLICT (warehouse_id, product_id)
-                DO UPDATE SET 
+                DO UPDATE SET
                     quantity = warehouse_product_links.quantity + $3,
                     last_updated = CURRENT_TIMESTAMP
             `, [toWarehouseId, productId, quantity, sourceStock.rows[0].price]);
 
             // Записываем движение
             await this.recordMovement(client, {
-                tenantId,
+                companyId,
                 productId,
                 fromWarehouseId,
                 toWarehouseId,
@@ -379,15 +371,14 @@ class WarehouseService {
     /**
      * Создание мульти-склада
      */
-    async createMultiWarehouse(tenantId, name, componentWarehouseIds, settings = {}) {
-        const pool = await db.getPool(tenantId);
-        const client = await pool.connect();
+    async createMultiWarehouse(companyId, name, componentWarehouseIds, settings = {}) {
+        const client = await db.getClient();
 
         try {
             await client.query('BEGIN');
 
             // Создаем мульти-склад
-            const multiWarehouseId = await this.createWarehouse(tenantId, {
+            const multiWarehouseId = await this.createWarehouse(companyId, {
                 name,
                 type: 'multi',
                 settings
@@ -405,7 +396,7 @@ class WarehouseService {
             await client.query('COMMIT');
 
             // Пересчитываем остатки на мульти-складе
-            await this.recalculateMultiWarehouseStock(tenantId, multiWarehouseId);
+            await this.recalculateMultiWarehouseStock(companyId, multiWarehouseId);
 
             return multiWarehouseId;
 
@@ -420,11 +411,9 @@ class WarehouseService {
     /**
      * Пересчет остатков мульти-склада
      */
-    async recalculateMultiWarehouseStock(tenantId, multiWarehouseId) {
-        const pool = await db.getPool(tenantId);
-        
+    async recalculateMultiWarehouseStock(companyId, multiWarehouseId) {
         // Вызываем хранимую процедуру пересчета
-        await pool.query(`
+        await db.query(`
             SELECT recalculate_multi_warehouse_stock($1)
         `, [multiWarehouseId]);
     }
@@ -432,11 +421,9 @@ class WarehouseService {
     /**
      * Получение товаров с остатками
      */
-    async getProductsWithStock(tenantId, filters = {}) {
-        const pool = await db.getPool(tenantId);
-        
+    async getProductsWithStock(companyId, filters = {}) {
         let query = `
-            SELECT 
+            SELECT
                 p.*,
                 b.canonical_name as brand_name,
                 c.canonical_name as category_name,
@@ -448,10 +435,10 @@ class WarehouseService {
             LEFT JOIN brands b ON p.brand_id = b.id
             LEFT JOIN categories c ON p.category_id = c.id
             LEFT JOIN v_product_total_stock stock ON p.id = stock.product_id
-            WHERE p.tenant_id = $1
+            WHERE p.company_id = $1
         `;
 
-        const params = [tenantId];
+        const params = [companyId];
 
         // Применяем фильтры
         if (filters.search) {
@@ -472,7 +459,7 @@ class WarehouseService {
         if (filters.warehouse_id) {
             query += ` AND EXISTS (
                 SELECT 1 FROM warehouse_product_links wpl
-                WHERE wpl.product_id = p.id 
+                WHERE wpl.product_id = p.id
                   AND wpl.warehouse_id = $${params.length + 1}
                   AND wpl.quantity > 0
             )`;
@@ -503,18 +490,16 @@ class WarehouseService {
             query += ` OFFSET $${params.length}`;
         }
 
-        const result = await pool.query(query, params);
+        const result = await db.query(query, params);
         return result.rows;
     }
 
     /**
      * Получение истории движения товара
      */
-    async getProductMovements(tenantId, productId, warehouseId = null) {
-        const pool = await db.getPool(tenantId);
-        
+    async getProductMovements(companyId, productId, warehouseId = null) {
         let query = `
-            SELECT 
+            SELECT
                 wm.*,
                 fw.name as from_warehouse_name,
                 tw.name as to_warehouse_name,
@@ -523,10 +508,10 @@ class WarehouseService {
             LEFT JOIN warehouses fw ON wm.from_warehouse_id = fw.id
             LEFT JOIN warehouses tw ON wm.to_warehouse_id = tw.id
             LEFT JOIN users u ON wm.user_id = u.id
-            WHERE wm.tenant_id = $1 AND wm.product_id = $2
+            WHERE wm.company_id = $1 AND wm.product_id = $2
         `;
 
-        const params = [tenantId, productId];
+        const params = [companyId, productId];
 
         if (warehouseId) {
             params.push(warehouseId);
@@ -535,7 +520,7 @@ class WarehouseService {
 
         query += ` ORDER BY wm.created_at DESC LIMIT 100`;
 
-        const result = await pool.query(query, params);
+        const result = await db.query(query, params);
         return result.rows;
     }
 
@@ -544,7 +529,7 @@ class WarehouseService {
      */
     async recordMovement(client, movementData) {
         const {
-            tenantId,
+            companyId,
             productId,
             fromWarehouseId,
             toWarehouseId,
@@ -556,11 +541,11 @@ class WarehouseService {
 
         await client.query(`
             INSERT INTO warehouse_movements (
-                tenant_id, product_id, from_warehouse_id, 
+                company_id, product_id, from_warehouse_id,
                 to_warehouse_id, quantity, movement_type, reason, user_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         `, [
-            tenantId, productId, fromWarehouseId,
+            companyId, productId, fromWarehouseId,
             toWarehouseId, quantity, type, reason, userId
         ]);
     }
@@ -568,31 +553,29 @@ class WarehouseService {
     /**
      * Поиск остатков на нескольких складах
      */
-    async findMultiWarehouseStock(client, tenantId, productId, requiredQuantity) {
+    async findMultiWarehouseStock(client, companyId, productId, requiredQuantity) {
         return await client.query(`
-            SELECT 
+            SELECT
                 wpl.*,
                 w.priority,
                 w.type,
                 SUM(wpl.quantity - wpl.reserved_quantity) OVER (ORDER BY w.priority DESC) as cumulative_available
             FROM warehouse_product_links wpl
             JOIN warehouses w ON wpl.warehouse_id = w.id
-            WHERE wpl.product_id = $1 
-              AND w.tenant_id = $2
+            WHERE wpl.product_id = $1
+              AND w.company_id = $2
               AND w.is_active = TRUE
               AND (wpl.quantity - wpl.reserved_quantity) > 0
             ORDER BY w.priority DESC, wpl.price ASC
-        `, [productId, tenantId]);
+        `, [productId, companyId]);
     }
 
     /**
      * Получение сводки по складу
      */
-    async getWarehouseSummary(tenantId, warehouseId) {
-        const pool = await db.getPool(tenantId);
-        
-        const result = await pool.query(`
-            SELECT 
+    async getWarehouseSummary(companyId, warehouseId) {
+        const result = await db.query(`
+            SELECT
                 COUNT(DISTINCT product_id) as product_count,
                 SUM(quantity) as total_items,
                 SUM(quantity * price) as total_value,

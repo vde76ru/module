@@ -14,7 +14,7 @@ class OrderOrchestrationService {
   async initialize() {
     logger.info('Initializing Order Orchestration Service');
     await this.setupSchedules();
-    
+
     // Обновляем расписание каждые 5 минут
     cron.schedule('*/5 * * * *', async () => {
       await this.setupSchedules();
@@ -24,13 +24,13 @@ class OrderOrchestrationService {
   async setupSchedules() {
     try {
       const result = await this.pool.query(`
-        SELECT id, tenant_id, name, settings
+        SELECT id, company_id, name, settings
         FROM sales_channels
         WHERE is_active = true
       `);
 
       const channels = result.rows;
-      
+
       // Удаляем старые задачи
       for (const [channelId, task] of this.scheduledTasks) {
         if (!channels.find(ch => ch.id === channelId)) {
@@ -42,7 +42,7 @@ class OrderOrchestrationService {
       // Создаем или обновляем задачи
       for (const channel of channels) {
         const schedule = channel.settings?.procurement_schedule || [];
-        
+
         if (schedule.length > 0) {
           this.scheduleChannelProcurement(channel);
         }
@@ -54,7 +54,7 @@ class OrderOrchestrationService {
 
   scheduleChannelProcurement(channel) {
     const schedules = channel.settings?.procurement_schedule || [];
-    
+
     // Удаляем старую задачу если есть
     if (this.scheduledTasks.has(channel.id)) {
       this.scheduledTasks.get(channel.id).stop();
@@ -64,7 +64,7 @@ class OrderOrchestrationService {
     schedules.forEach(time => {
       const [hours, minutes] = time.split(':');
       const cronExpression = `${minutes} ${hours} * * *`;
-      
+
       const task = cron.schedule(cronExpression, async () => {
         logger.info(`Running procurement for channel ${channel.name} at ${time}`);
         await this.runProcurement(channel);
@@ -76,13 +76,13 @@ class OrderOrchestrationService {
 
   async runProcurement(channel) {
     const client = await this.pool.connect();
-    
+
     try {
       await client.query('BEGIN');
 
       // Собираем все потребности
       const needs = await this.collectNeeds(client, channel);
-      
+
       if (needs.length === 0) {
         logger.info(`No procurement needs for channel ${channel.name}`);
         return;
@@ -90,13 +90,13 @@ class OrderOrchestrationService {
 
       // Группируем по поставщикам
       const groupedNeeds = this.groupNeedsBySupplier(needs);
-      
+
       // Создаем заказы для каждого поставщика
       for (const [supplierId, items] of Object.entries(groupedNeeds)) {
         const orderId = await this.createSupplierOrder(
-          client, 
-          channel, 
-          supplierId, 
+          client,
+          channel,
+          supplierId,
           items
         );
 
@@ -107,16 +107,16 @@ class OrderOrchestrationService {
       }
 
       await client.query('COMMIT');
-      
+
       // Отправляем уведомление
       await sendSlackNotification(
         `✅ Автоматическая закупка для канала "${channel.name}" выполнена. Создано ${Object.keys(groupedNeeds).length} заказов.`
       );
-      
+
     } catch (error) {
       await client.query('ROLLBACK');
       logger.error('Error in procurement:', error);
-      
+
       await sendSlackNotification(
         `❌ Ошибка автоматической закупки для канала "${channel.name}": ${error.message}`
       );
@@ -128,11 +128,11 @@ class OrderOrchestrationService {
   async collectNeeds(client, channel) {
     const result = await client.query(`
       WITH pending_items AS (
-        SELECT 
+        SELECT
           oi.id,
           oi.product_id,
           oi.quantity,
-          o.tenant_id,
+          o.company_id,
           p.name as product_name,
           ps.supplier_id,
           ps.supplier_sku,
@@ -145,7 +145,7 @@ class OrderOrchestrationService {
         WHERE o.sales_channel_id = $1
           AND oi.procurement_status = 'pending'
           AND NOT EXISTS (
-            SELECT 1 FROM procurement_overrides po 
+            SELECT 1 FROM procurement_overrides po
             WHERE po.order_item_id = oi.id
           )
       )
@@ -158,17 +158,17 @@ class OrderOrchestrationService {
 
   groupNeedsBySupplier(needs) {
     const grouped = {};
-    
+
     for (const need of needs) {
       if (!grouped[need.supplier_id]) {
         grouped[need.supplier_id] = [];
       }
-      
+
       // Проверяем, есть ли уже такой товар в группе
       const existing = grouped[need.supplier_id].find(
         item => item.product_id === need.product_id
       );
-      
+
       if (existing) {
         // Суммируем количество
         existing.quantity += need.quantity;
@@ -185,7 +185,7 @@ class OrderOrchestrationService {
         });
       }
     }
-    
+
     return grouped;
   }
 
@@ -203,9 +203,9 @@ class OrderOrchestrationService {
     // Создаем заказ поставщику
     const orderResult = await client.query(`
       INSERT INTO supplier_orders (
-        tenant_id, 
-        supplier_id, 
-        status, 
+        company_id,
+        supplier_id,
+        status,
         total_amount,
         aggregation_batch_id,
         created_by_user_id
@@ -213,7 +213,7 @@ class OrderOrchestrationService {
       VALUES ($1, $2, $3, $4, $5, NULL)
       RETURNING id
     `, [
-      channel.tenant_id,
+      channel.company_id,
       supplierId,
       'draft',
       this.calculateTotalAmount(items),
@@ -246,7 +246,7 @@ class OrderOrchestrationService {
       // Обновляем статус позиций клиентских заказов
       for (const orderItemId of item.order_item_ids) {
         await client.query(`
-          UPDATE order_items 
+          UPDATE order_items
           SET procurement_status = 'ordered'
           WHERE id = $1
         `, [orderItemId]);
@@ -254,7 +254,7 @@ class OrderOrchestrationService {
     }
 
     logger.info(`Created supplier order ${orderId} for ${supplier.name} with ${items.length} items`);
-    
+
     return orderId;
   }
 
@@ -287,17 +287,17 @@ class OrderOrchestrationService {
       // Здесь должна быть интеграция с API поставщика
       // Пока просто меняем статус на confirmed
       await client.query(`
-        UPDATE supplier_orders 
-        SET status = 'confirmed', 
+        UPDATE supplier_orders
+        SET status = 'confirmed',
             sent_at = CURRENT_TIMESTAMP
         WHERE id = $1
       `, [orderId]);
 
       logger.info(`Order ${orderId} sent to supplier ${order.supplier_name}`);
-      
+
     } catch (error) {
       logger.error(`Error sending order ${orderId}:`, error);
-      
+
       // Откатываем статусы позиций
       await client.query(`
         UPDATE order_items oi
@@ -307,7 +307,7 @@ class OrderOrchestrationService {
           AND soi.product_id = oi.product_id
           AND oi.procurement_status = 'ordered'
       `, [orderId]);
-      
+
       throw error;
     }
   }

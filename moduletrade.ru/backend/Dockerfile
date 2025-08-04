@@ -1,56 +1,65 @@
-# Многоступенчатая сборка для оптимизации
-FROM node:18-alpine AS builder
+# =================================================
+# DOCKERFILE ДЛЯ БЭКЕНДА (Оптимизированный)
+# =================================================
+
+# -----------------
+# ЭТАП 1: Установка зависимостей
+# На этом этапе мы устанавливаем все зависимости, включая devDependencies для сборки.
+# -----------------
+FROM node:18-alpine AS dependencies
 
 WORKDIR /app
 
-# Устанавливаем системные зависимости для native модулей
-RUN apk add --no-cache \
-    python3 \
-    make \
-    g++ \
-    bash
+# Устанавливаем системные пакеты, которые могут понадобиться для сборки нативных модулей
+RUN apk add --no-cache python3 make g++
 
-# Копируем файлы зависимостей
+# Копируем только package.json и package-lock.json (если есть)
+# Это позволяет Docker кэшировать установленные модули и не переустанавливать их при каждом изменении кода
 COPY package*.json ./
 
-# Используем npm install вместо npm ci для правильной установки всех зависимостей
-RUN npm install --production=false && npm cache clean --force
+# Устанавливаем все зависимости.
+# Использование --production=false важно, если для сборки нужны devDependencies
+RUN npm install --production=false --silent && npm cache clean --force
 
-# Production стадия
+
+# -----------------
+# ЭТАП 2: Production-образ
+# Создаем чистый и легковесный образ для запуска приложения.
+# -----------------
 FROM node:18-alpine
 
 WORKDIR /app
 
-# Устанавливаем только runtime зависимости
-RUN apk add --no-cache \
-    bash \
-    curl \
-    && addgroup -g 1001 -S nodejs \
-    && adduser -S nodejs -u 1001 -G nodejs
+# Устанавливаем только те системные пакеты, что нужны для работы приложения
+# dumb-init - для корректной обработки сигналов (PID 1)
+RUN apk add --no-cache dumb-init
 
-# Копируем node_modules из builder стадии
-COPY --from=builder /app/node_modules ./node_modules
+# Создаем группу и пользователя с ограниченными правами для безопасности
+RUN addgroup -S nodejs && adduser -S nodejs -G nodejs
 
-# Копируем package.json для запуска скриптов
-COPY package*.json ./
+# Копируем node_modules с предыдущего этапа
+COPY --from=dependencies /app/node_modules ./node_modules
 
-# Копируем исходный код
+# Копируем остальные файлы приложения
 COPY . .
 
-# Создаем необходимые директории с правильными правами
-RUN mkdir -p uploads/imports uploads/exports logs temp \
-    && chown -R nodejs:nodejs /app \
-    && chmod 755 uploads/imports uploads/exports logs temp
+# Создаем необходимые директории и передаем права нашему пользователю
+# Это нужно делать до смены пользователя
+RUN mkdir -p uploads/imports uploads/exports logs temp scripts && \
+    chown -R nodejs:nodejs /app
 
 # Переключаемся на непривилегированного пользователя
 USER nodejs
 
-# Указываем порт
+# Открываем порт
 EXPOSE 3000
 
-# Health check для Docker
+# Healthcheck для мониторинга состояния контейнера
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD curl -f http://localhost:3000/health || exit 1
+  CMD [ "node", "-e", "require('http').get('http://localhost:3000/health', (res) => res.statusCode === 200 ? process.exit(0) : process.exit(1))" ]
 
-# Запускаем приложение
+# Используем dumb-init для запуска приложения
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+
+# Команда для запуска приложения в production-режиме
 CMD ["npm", "run", "start:prod"]

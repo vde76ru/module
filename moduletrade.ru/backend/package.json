@@ -14,12 +14,14 @@
     "test": "jest",
     "lint": "eslint src/",
     "db:backup": "pg_dump -h ${DB_HOST:-postgres} -U ${DB_USER:-postgres} -d ${DB_NAME:-saas_platform} > backup_$(date +%Y%m%d_%H%M%S).sql",
-    "db:status": "node scripts/migration_status.js"
+    "db:status": "node scripts/migration_status.js",
+    "create:user": "node scripts/createUser.js"
   },
   "dependencies": {
     "amqplib": "^0.10.3",
     "axios": "^1.6.2",
     "bcrypt": "^5.1.1",
+    "commander": "^11.1.0",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
     "csv-parse": "^5.5.2",

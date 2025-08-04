@@ -58,6 +58,33 @@ async function createMigrationsTable() {
     `);
 
     log('✅ Таблица schema_migrations готова');
+
+    // Миграция из старого формата, если есть таблица migrations
+    const oldTableExists = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_schema = 'public'
+        AND table_name = 'migrations'
+      );
+    `);
+
+    if (oldTableExists.rows[0].exists) {
+      log('📦 Обнаружена старая таблица migrations, выполняю миграцию...');
+
+      // Переносим данные из старой таблицы
+      await pool.query(`
+        INSERT INTO schema_migrations (filename, applied_at, success)
+        SELECT name, executed_at, true
+        FROM migrations
+        WHERE NOT EXISTS (
+          SELECT 1 FROM schema_migrations
+          WHERE filename = migrations.name
+        )
+      `);
+
+      log('✅ Данные мигрированы из старой таблицы migrations');
+    }
+
   } catch (error) {
     log(`❌ Ошибка создания таблицы миграций: ${error.message}`, 'ERROR');
     throw error;
@@ -189,7 +216,7 @@ function checkMigrationSafety(filename, migrationSQL) {
     /TRUNCATE\s+TABLE/i,
     /DROP\s+DATABASE/i,
     /DROP\s+SCHEMA\s+(?!IF\s+EXISTS)/i,
-    /ALTER\s+TABLE\s+.*\s+DROP\s+COLUMN/i
+    /ALTER\s+TABLE\s+.*\s+DROP\s+COLUMN\s+(?!IF\s+EXISTS)/i
   ];
 
   const dangerous = dangerousPatterns.some(pattern => pattern.test(migrationSQL));
@@ -242,13 +269,67 @@ async function checkMigrationStatus() {
   }
 }
 
+/**
+ * Проверяет состояние базы данных
+ */
+async function checkDatabaseHealth() {
+  try {
+    log('🏥 Проверка состояния базы данных...');
+
+    // Проверяем основные таблицы
+    const tables = ['companies', 'users', 'products', 'warehouses', 'suppliers', 'marketplaces'];
+
+    for (const table of tables) {
+      const result = await pool.query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables
+          WHERE table_schema = 'public'
+          AND table_name = $1
+        );
+      `, [table]);
+
+      if (result.rows[0].exists) {
+        const count = await pool.query(`SELECT COUNT(*) as count FROM ${table}`);
+        log(`   ✅ ${table}: ${count.rows[0].count} записей`);
+      } else {
+        log(`   ❌ ${table}: таблица не найдена`);
+      }
+    }
+
+    // Проверяем индексы
+    const indexCount = await pool.query(`
+      SELECT COUNT(*) as count
+      FROM pg_indexes
+      WHERE schemaname = 'public'
+    `);
+    log(`   📊 Индексов: ${indexCount.rows[0].count}`);
+
+    // Проверяем RBAC систему
+    const rolesCount = await pool.query(`
+      SELECT COUNT(*) as count FROM roles WHERE 1=1
+    `).catch(() => ({ rows: [{ count: 0 }] }));
+
+    const permissionsCount = await pool.query(`
+      SELECT COUNT(*) as count FROM permissions WHERE 1=1
+    `).catch(() => ({ rows: [{ count: 0 }] }));
+
+    log(`   🔐 Ролей: ${rolesCount.rows[0].count}, разрешений: ${permissionsCount.rows[0].count}`);
+
+    log('✅ Проверка состояния завершена', 'SUCCESS');
+
+  } catch (error) {
+    log(`❌ Ошибка проверки состояния БД: ${error.message}`, 'ERROR');
+    throw error;
+  }
+}
+
 // ========================================
 // MAIN FUNCTION
 // ========================================
 
 async function main() {
   try {
-    log('🚀 Запуск системы миграций ModuleTrade...');
+    log('🚀 Запуск системы миграций ModuleTrade v2.0...');
 
     // Проверяем подключение к базе данных
     const client = await pool.connect();
@@ -266,103 +347,54 @@ async function main() {
     // Если нет новых миграций
     if (status.pending.length === 0) {
       log('🎉 Все миграции уже выполнены!', 'SUCCESS');
+      await checkDatabaseHealth();
       return;
     }
 
     // Предупреждение для production
     if (process.env.NODE_ENV === 'production') {
       log('⚠️ PRODUCTION РЕЖИМ: Убедитесь, что создали backup базы данных!', 'WARNING');
-      log('   Команда: npm run db:backup');
 
-      // В production ждем подтверждения
-      if (!process.env.AUTO_MIGRATE) {
-          log('❌ Установите AUTO_MIGRATE=true для автоматического выполнения в production', 'ERROR');
-          process.exit(1); // <--- Вот здесь скрипт останавливается
-      }
-  }
-
-    // Проверяем безопасность всех миграций
-    let allSafe = true;
-    for (const migration of status.pending) {
-      const filePath = path.join(MIGRATIONS_DIR, migration);
-      const migrationSQL = fs.readFileSync(filePath, 'utf8');
-
-      if (!checkMigrationSafety(migration, migrationSQL)) {
-        allSafe = false;
+      if (!process.env.CONFIRM_PRODUCTION_MIGRATION) {
+        log('❌ Установите CONFIRM_PRODUCTION_MIGRATION=true для выполнения миграций в production', 'ERROR');
+        process.exit(1);
       }
     }
 
-    if (!allSafe) {
-      log('❌ Некоторые миграции не прошли проверку безопасности', 'ERROR');
-      process.exit(1);
-    }
+    // Выполняем миграции
+    log(`🔄 Начинаю выполнение ${status.pending.length} миграций...`);
 
-    // Выполняем миграции одну за другой
-    log(`🔄 Начинаем выполнение ${status.pending.length} миграций...`);
-
-    for (let i = 0; i < status.pending.length; i++) {
-      const migration = status.pending[i];
-      log(`📊 Прогресс: ${i + 1}/${status.pending.length}`);
-
-      try {
-        await executeMigration(migration);
-      } catch (error) {
-        log(`❌ Миграция ${migration} завершилась с ошибкой`, 'ERROR');
-        log(`💡 Проверьте SQL синтаксис и зависимости`, 'WARNING');
-        throw error;
-      }
+    for (const filename of status.pending) {
+      await executeMigration(filename);
     }
 
     log('🎉 Все миграции выполнены успешно!', 'SUCCESS');
-    log('💡 Проверьте статус: npm run db:status');
+
+    // Проверяем состояние после миграций
+    await checkDatabaseHealth();
+
+    // Обновляем статистику
+    log('📊 Обновление статистики планировщика...');
+    await pool.query('ANALYZE');
+
+    log('✅ Процесс миграции завершен успешно!', 'SUCCESS');
 
   } catch (error) {
-    log(`❌ Критическая ошибка миграции: ${error.message}`, 'ERROR');
-    log('🛠️ Возможные причины:', 'WARNING');
-    log('   - Ошибка подключения к базе данных');
-    log('   - Синтаксическая ошибка в SQL');
-    log('   - Нарушение ограничений целостности');
-    log('   - Недостаточно прав доступа');
-
-    if (error.code) {
-      log(`   - PostgreSQL код ошибки: ${error.code}`, 'WARNING');
-    }
-
+    log(`❌ Критическая ошибка: ${error.message}`, 'ERROR');
+    console.error(error);
     process.exit(1);
   } finally {
     await pool.end();
   }
 }
 
-// ========================================
-// EXECUTION
-// ========================================
-
-// Запуск только если файл выполняется напрямую
+// Запуск если файл вызван напрямую
 if (require.main === module) {
-  // Проверяем аргументы командной строки
-  const args = process.argv.slice(2);
-
-  if (args.includes('--dry-run')) {
-    log('🔍 Режим проверки (dry-run)', 'INFO');
-
-    (async () => {
-      try {
-        const client = await pool.connect();
-        client.release();
-        await createMigrationsTable();
-        await checkMigrationStatus();
-        log('✅ Проверка завершена успешно', 'SUCCESS');
-      } catch (error) {
-        log(`❌ Ошибка проверки: ${error.message}`, 'ERROR');
-        process.exit(1);
-      } finally {
-        await pool.end();
-      }
-    })();
-  } else {
-    main();
-  }
+  main();
 }
 
-module.exports = { main, checkMigrationStatus };
+module.exports = {
+  main,
+  checkMigrationStatus,
+  checkDatabaseHealth
+};

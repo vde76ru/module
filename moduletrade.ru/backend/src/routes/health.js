@@ -4,8 +4,8 @@ const { Pool } = require('pg');
 const redis = require('redis');
 const amqp = require('amqplib');
 
-// Проверка здоровья системы
-router.get('/health', async (req, res) => {
+// ИСПРАВЛЕНО: изменен путь с '/health' на '/'
+router.get('/', async (req, res) => {
     const health = {
         status: 'ok',
         timestamp: new Date().toISOString(),
@@ -80,7 +80,7 @@ router.get('/health', async (req, res) => {
 });
 
 // Простая проверка живости (для k8s liveness probe)
-router.get('/health/live', (req, res) => {
+router.get('/live', (req, res) => {
     res.status(200).json({
         status: 'alive',
         timestamp: new Date().toISOString()
@@ -88,7 +88,7 @@ router.get('/health/live', (req, res) => {
 });
 
 // Проверка готовности (для k8s readiness probe)
-router.get('/health/ready', async (req, res) => {
+router.get('/ready', async (req, res) => {
     try {
         // Быстрая проверка базы данных
         const pool = new Pool({

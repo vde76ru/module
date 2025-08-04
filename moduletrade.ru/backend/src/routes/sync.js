@@ -12,20 +12,20 @@ const router = express.Router();
 router.post('/stock', authenticate, checkPermission('sync.execute'), async (req, res) => {
   try {
     const { product_ids, sync_all } = req.body;
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
 
     // Записываем в логи синхронизации
-    const logResult = await db.query(tenantId, `
-      INSERT INTO sync_logs (tenant_id, sync_type, status, details, started_at)
+    const logResult = await db.query(`
+      INSERT INTO sync_logs (company_id, sync_type, status, details, started_at)
       VALUES ($1, 'stock', 'processing', $2, NOW())
       RETURNING id
-    `, [tenantId, JSON.stringify({ product_ids, sync_all })]);
+    `, [companyId, JSON.stringify({ product_ids, sync_all })]);
 
     // Имитируем процесс синхронизации (в реальности здесь будет RabbitMQ)
     setTimeout(async () => {
       try {
-        await db.query(tenantId, `
-          UPDATE sync_logs SET 
+        await db.query(`
+          UPDATE sync_logs SET
             status = 'completed',
             completed_at = NOW()
           WHERE id = $1
@@ -42,7 +42,7 @@ router.post('/stock', authenticate, checkPermission('sync.execute'), async (req,
         message: 'Stock synchronization started'
       }
     });
-    
+
   } catch (error) {
     console.error('Stock sync error:', error);
     res.status(500).json({
@@ -59,19 +59,19 @@ router.post('/stock', authenticate, checkPermission('sync.execute'), async (req,
 router.post('/orders', authenticate, checkPermission('sync.execute'), async (req, res) => {
   try {
     const { marketplace_id, date_from, date_to } = req.body;
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
 
-    const logResult = await db.query(tenantId, `
-      INSERT INTO sync_logs (tenant_id, sync_type, status, details, started_at)
+    const logResult = await db.query(`
+      INSERT INTO sync_logs (company_id, sync_type, status, details, started_at)
       VALUES ($1, 'orders', 'processing', $2, NOW())
       RETURNING id
-    `, [tenantId, JSON.stringify({ marketplace_id, date_from, date_to })]);
+    `, [companyId, JSON.stringify({ marketplace_id, date_from, date_to })]);
 
     // Имитируем процесс синхронизации
     setTimeout(async () => {
       try {
-        await db.query(tenantId, `
-          UPDATE sync_logs SET 
+        await db.query(`
+          UPDATE sync_logs SET
             status = 'completed',
             completed_at = NOW()
           WHERE id = $1
@@ -88,7 +88,7 @@ router.post('/orders', authenticate, checkPermission('sync.execute'), async (req
         message: 'Orders synchronization started'
       }
     });
-    
+
   } catch (error) {
     console.error('Orders sync error:', error);
     res.status(500).json({
@@ -105,19 +105,19 @@ router.post('/orders', authenticate, checkPermission('sync.execute'), async (req
 router.post('/products', authenticate, checkPermission('sync.execute'), async (req, res) => {
   try {
     const { supplier_id } = req.body;
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
 
-    const logResult = await db.query(tenantId, `
-      INSERT INTO sync_logs (tenant_id, sync_type, status, details, started_at)
+    const logResult = await db.query(`
+      INSERT INTO sync_logs (company_id, sync_type, status, details, started_at)
       VALUES ($1, 'products', 'processing', $2, NOW())
       RETURNING id
-    `, [tenantId, JSON.stringify({ supplier_id })]);
+    `, [companyId, JSON.stringify({ supplier_id })]);
 
     // Имитируем процесс синхронизации
     setTimeout(async () => {
       try {
-        await db.query(tenantId, `
-          UPDATE sync_logs SET 
+        await db.query(`
+          UPDATE sync_logs SET
             status = 'completed',
             completed_at = NOW()
           WHERE id = $1
@@ -134,7 +134,7 @@ router.post('/products', authenticate, checkPermission('sync.execute'), async (r
         message: 'Products synchronization started'
       }
     });
-    
+
   } catch (error) {
     console.error('Products sync error:', error);
     res.status(500).json({
@@ -150,11 +150,11 @@ router.post('/products', authenticate, checkPermission('sync.execute'), async (r
  */
 router.get('/status', authenticate, async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
+    const companyId = req.user.companyId;
     const { limit = 10 } = req.query;
 
-    const syncLogs = await db.query(tenantId, `
-      SELECT 
+    const syncLogs = await db.query(`
+      SELECT
         id,
         sync_type,
         status,
@@ -162,29 +162,29 @@ router.get('/status', authenticate, async (req, res) => {
         error_message,
         started_at,
         completed_at,
-        CASE 
-          WHEN completed_at IS NOT NULL THEN 
+        CASE
+          WHEN completed_at IS NOT NULL THEN
             EXTRACT(EPOCH FROM (completed_at - started_at))
-          ELSE 
+          ELSE
             EXTRACT(EPOCH FROM (NOW() - started_at))
         END as duration_seconds
       FROM sync_logs
-      WHERE tenant_id = $1
+      WHERE company_id = $1
       ORDER BY started_at DESC
       LIMIT $2
-    `, [tenantId, limit]);
+    `, [companyId, limit]);
 
     // Статистика синхронизации
-    const statsResult = await db.query(tenantId, `
-      SELECT 
+    const statsResult = await db.query(`
+      SELECT
         COUNT(*) as total_syncs,
         COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_syncs,
         COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_syncs,
         COUNT(CASE WHEN status = 'processing' THEN 1 END) as processing_syncs,
         MAX(started_at) as last_sync_at
       FROM sync_logs
-      WHERE tenant_id = $1 AND started_at >= NOW() - INTERVAL '24 hours'
-    `, [tenantId]);
+      WHERE company_id = $1 AND started_at >= NOW() - INTERVAL '24 hours'
+    `, [companyId]);
 
     res.json({
       success: true,
@@ -209,84 +209,80 @@ router.get('/status', authenticate, async (req, res) => {
  */
 router.get('/history', authenticate, async (req, res) => {
   try {
-    const tenantId = req.user.tenantId;
-    const { 
-      limit = 50, 
+    const companyId = req.user.companyId;
+    const {
+      limit = 50,
       offset = 0,
       sync_type,
       status,
       date_from,
-      date_to 
+      date_to
     } = req.query;
 
-    let whereConditions = ['tenant_id = $1'];
-    const queryParams = [tenantId];
-    let paramIndex = 2;
+    let whereConditions = ['company_id = $1'];
+    let queryParams = [companyId];
+    let paramIndex = 1;
 
     if (sync_type) {
+      paramIndex++;
       whereConditions.push(`sync_type = $${paramIndex}`);
       queryParams.push(sync_type);
-      paramIndex++;
     }
 
     if (status) {
+      paramIndex++;
       whereConditions.push(`status = $${paramIndex}`);
       queryParams.push(status);
-      paramIndex++;
     }
 
     if (date_from) {
+      paramIndex++;
       whereConditions.push(`started_at >= $${paramIndex}`);
       queryParams.push(date_from);
-      paramIndex++;
     }
 
     if (date_to) {
+      paramIndex++;
       whereConditions.push(`started_at <= $${paramIndex}`);
       queryParams.push(date_to);
-      paramIndex++;
     }
 
     const whereClause = whereConditions.join(' AND ');
 
-    const [historyResult, totalResult] = await Promise.all([
-      db.query(tenantId, `
-        SELECT 
-          id,
-          sync_type,
-          status,
-          details,
-          error_message,
-          started_at,
-          completed_at,
-          CASE 
-            WHEN completed_at IS NOT NULL THEN 
-              EXTRACT(EPOCH FROM (completed_at - started_at))
-            ELSE NULL
-          END as duration_seconds
-        FROM sync_logs
-        WHERE ${whereClause}
-        ORDER BY started_at DESC
-        LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
-      `, [...queryParams, limit, offset]),
+    const result = await db.query(`
+      SELECT
+        id,
+        sync_type,
+        status,
+        details,
+        error_message,
+        started_at,
+        completed_at,
+        CASE
+          WHEN completed_at IS NOT NULL THEN
+            EXTRACT(EPOCH FROM (completed_at - started_at))
+          ELSE NULL
+        END as duration_seconds
+      FROM sync_logs
+      WHERE ${whereClause}
+      ORDER BY started_at DESC
+      LIMIT $${paramIndex + 1} OFFSET $${paramIndex + 2}
+    `, [...queryParams, limit, offset]);
 
-      db.query(tenantId, `
-        SELECT COUNT(*) as total
-        FROM sync_logs
-        WHERE ${whereClause}
-      `, queryParams)
-    ]);
-
-    const total = parseInt(totalResult.rows[0]?.total || 0);
+    // Подсчет общего количества
+    const countResult = await db.query(`
+      SELECT COUNT(*) as total
+      FROM sync_logs
+      WHERE ${whereClause}
+    `, queryParams);
 
     res.json({
       success: true,
-      data: historyResult.rows,
+      data: result.rows,
       pagination: {
-        total,
+        total: parseInt(countResult.rows[0].total),
         limit: parseInt(limit),
-        offset: parseInt(offset),
-        pages: Math.ceil(total / limit)
+        offset: parseInt(offset)
       }
     });
 

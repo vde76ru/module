@@ -35,6 +35,13 @@ try {
 const app = express();
 
 // ========================================
+// PROXY CONFIGURATION (ВАЖНО!)
+// ========================================
+// Включаем trust proxy для работы за Nginx
+app.set('trust proxy', true);
+logger.info('Trust proxy enabled for reverse proxy support');
+
+// ========================================
 // MIDDLEWARE SETUP
 // ========================================
 
@@ -63,7 +70,7 @@ app.use(cors({
     // Разрешаем запросы без origin (например, мобильные приложения)
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
       callback(null, true);
     } else {
       logger.warn(`CORS blocked origin: ${origin}`);
@@ -108,209 +115,116 @@ app.use('/uploads', express.static('uploads', {
 }));
 
 // ========================================
-// HEALTH CHECK ENDPOINT (БЕЗ ПРОВЕРКИ БД)
+// HEALTH CHECK
 // ========================================
-
-app.get('/health', async (req, res) => {
-  const health = {
+app.get('/health', (req, res) => {
+  res.status(200).json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
+    version: process.env.npm_package_version || '1.0.0',
     environment: process.env.NODE_ENV || 'development',
-    services: {
-      api: 'healthy'
-    }
-  };
+    database: db ? 'connected' : 'disconnected'
+  });
+});
 
-  // Опциональная проверка БД (без падения при ошибке)
-  if (db && db.checkHealth) {
+// ========================================
+// ROUTES
+// ========================================
+const routesDir = './routes';
+const fs = require('fs');
+const path = require('path');
+
+// Автоматическая загрузка маршрутов
+if (fs.existsSync(path.join(__dirname, 'routes'))) {
+  const routeFiles = fs.readdirSync(path.join(__dirname, 'routes'))
+    .filter(file => file.endsWith('.js'));
+  
+  let loadedRoutes = 0;
+  
+  routeFiles.forEach(file => {
     try {
-      const dbHealthy = await db.checkHealth();
-      health.services.database = dbHealthy ? 'healthy' : 'unhealthy';
+      const routeName = path.basename(file, '.js');
+      const routePath = `/api/${routeName}`;
+      const route = require(path.join(__dirname, 'routes', file));
+      
+      app.use(routePath, route);
+      logger.info(`✅ Route loaded: ${routeName} -> ${routePath}`);
+      loadedRoutes++;
     } catch (error) {
-      health.services.database = 'error';
-      health.services.databaseError = error.message;
+      logger.error(`❌ Failed to load route ${file}:`, error.message);
     }
+  });
+  
+  logger.info(`Routes loaded: ${loadedRoutes}/${routeFiles.length}`);
+  
+  if (loadedRoutes === routeFiles.length) {
+    logger.info('Successfully loaded routes:');
   }
-
-  const isHealthy = health.status === 'ok' && (!health.services.database || health.services.database === 'healthy');
-  res.status(isHealthy ? 200 : 503).json(health);
-});
-
-// ========================================
-// API ROUTES
-// ========================================
-
-const routesPath = './routes';
-const routeFiles = [
-  'auth',
-  'products',
-  'orders',
-  'analytics',
-  'warehouses',
-  'billing',
-  'sync',
-  'marketplaces',
-  'suppliers',
-  'dictionaries',
-  'settings'
-];
-
-let loadedRoutes = 0;
-const failedRoutes = [];
-
-routeFiles.forEach(routeName => {
-  try {
-    const route = require(`${routesPath}/${routeName}`);
-    app.use(`/api/${routeName}`, route);
-    loadedRoutes++;
-    logger.info(`✅ Route loaded: ${routeName} -> /api/${routeName}`);
-  } catch (error) {
-    failedRoutes.push(routeName);
-    logger.error(`❌ Failed to load route ${routeName} (${routesPath}/${routeName}):`, error.message);
-  }
-});
-
-logger.info(`Routes loaded: ${loadedRoutes}/${routeFiles.length}`);
-if (loadedRoutes > 0) {
-  logger.info('Successfully loaded routes:', routeFiles.filter(r => !failedRoutes.includes(r)).join(', '));
-}
-if (failedRoutes.length > 0) {
-  logger.error('Failed routes:', failedRoutes.join(', '));
 }
 
 // ========================================
-// ERROR HANDLERS
+// ERROR HANDLING
 // ========================================
 
 // 404 handler
-app.use((req, res) => {
+app.use('*', (req, res) => {
+  logger.warn(`404 - Route not found: ${req.method} ${req.originalUrl}`);
   res.status(404).json({
     success: false,
-    error: 'Not found',
-    path: req.path,
+    error: 'Route not found',
+    path: req.originalUrl,
     method: req.method
   });
 });
 
 // Global error handler
-app.use((error, req, res, next) => {
-  logger.error('Global error handler:', error);
+app.use((err, req, res, next) => {
+  logger.error('Global error handler:', {
+    error: err.message,
+    stack: err.stack,
+    url: req.originalUrl,
+    method: req.method,
+    ip: req.ip,
+    userAgent: req.get('User-Agent')
+  });
 
-  // CORS errors
-  if (error.message === 'Not allowed by CORS') {
-    return res.status(403).json({
-      success: false,
-      error: 'CORS policy violation',
-      origin: req.get('origin')
-    });
-  }
-
-  // JWT errors
-  if (error.name === 'JsonWebTokenError') {
-    return res.status(401).json({
-      success: false,
-      error: 'Invalid token'
-    });
-  }
-
-  if (error.name === 'TokenExpiredError') {
-    return res.status(401).json({
-      success: false,
-      error: 'Token expired'
-    });
-  }
-
-  // Validation errors
-  if (error.name === 'ValidationError') {
-    return res.status(400).json({
-      success: false,
-      error: 'Validation error',
-      details: error.details
-    });
-  }
-
-  // Database errors
-  if (error.code === '23505') { // Unique violation
-    return res.status(409).json({
-      success: false,
-      error: 'Duplicate entry'
-    });
-  }
-
-  if (error.code === '23503') { // Foreign key violation
-    return res.status(400).json({
-      success: false,
-      error: 'Invalid reference'
-    });
-  }
-
-  // Default error
-  res.status(error.status || 500).json({
+  // Не показываем подробности ошибки в production
+  const isDevelopment = process.env.NODE_ENV !== 'production';
+  
+  res.status(err.status || 500).json({
     success: false,
-    error: error.message || 'Internal server error',
-    ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
+    error: isDevelopment ? err.message : 'Internal server error',
+    ...(isDevelopment && { stack: err.stack })
   });
 });
 
 // ========================================
-// SERVER START
+// SERVER STARTUP
 // ========================================
-
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 
 const server = app.listen(PORT, HOST, () => {
   logger.info(`🚀 Server running on ${HOST}:${PORT}`);
   logger.info(`📝 Environment: ${process.env.NODE_ENV || 'development'}`);
-  logger.info(`🔍 Log level: ${process.env.LOG_LEVEL || 'debug'}`);
-
-  if (failedRoutes.length > 0) {
-    logger.warn('⚠️  Some routes failed to load. Check logs for details.');
-  }
+  logger.info(`🔍 Log level: ${process.env.LOG_LEVEL || 'info'}`);
 });
 
-// ========================================
-// GRACEFUL SHUTDOWN
-// ========================================
-
-const gracefulShutdown = async (signal) => {
-  logger.info(`\n${signal} received. Starting graceful shutdown...`);
-
-  // Останавливаем прием новых запросов
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received, shutting down gracefully');
   server.close(() => {
-    logger.info('✅ HTTP server closed');
-  });
-
-  // Закрываем подключения к БД
-  if (db && db.gracefulShutdown) {
-    try {
-      await db.gracefulShutdown();
-      logger.info('✅ Database connections closed');
-    } catch (error) {
-      logger.error('❌ Error closing database connections:', error);
-    }
-  }
-
-  // Даем время на завершение активных запросов
-  setTimeout(() => {
-    logger.info('✅ Graceful shutdown completed');
+    logger.info('Server closed');
     process.exit(0);
-  }, 5000);
-};
-
-// Обработка сигналов
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-// Обработка необработанных ошибок
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  });
 });
 
-process.on('uncaughtException', (error) => {
-  logger.error('Uncaught Exception:', error);
-  process.exit(1);
+process.on('SIGINT', () => {
+  logger.info('SIGINT received, shutting down gracefully');
+  server.close(() => {
+    logger.info('Server closed');
+    process.exit(0);
+  });
 });
 
 module.exports = app;
