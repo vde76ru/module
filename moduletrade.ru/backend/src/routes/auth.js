@@ -25,6 +25,16 @@ const rateLimiter = (maxRequests, windowMs) => {
     },
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: (req) => {
+      // Используем X-Forwarded-For от nginx
+      const forwarded = req.headers['x-forwarded-for'];
+      const ip = forwarded ? forwarded.split(',')[0].trim() : req.ip;
+      return ip;
+    },
+    skip: (req) => {
+      // Пропускаем health checks
+      return req.path === '/health';
+    }
   });
 };
 
@@ -93,10 +103,10 @@ async function createUserWithCompany(client, userData) {
   // 1. Создаем компанию
   const companyResult = await client.query(`
     INSERT INTO companies (
-      name, subscription_status, plan, trial_ends_at
+      name, subscription_status, plan, trial_end_date
     )
     VALUES ($1, 'trial', 'free', $2)
-    RETURNING id, name, plan, subscription_status, trial_ends_at
+    RETURNING id, name, plan, subscription_status, trial_end_date
   `, [
     userData.companyName,
     new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) // 14 дней пробного периода
@@ -142,7 +152,7 @@ async function createUserWithCompany(client, userData) {
     },
     company: {
       ...company,
-      trial_ends_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000)
+      trial_end_date: company.trial_end_date
     }
   };
 }
@@ -236,7 +246,7 @@ router.post('/register',
             name: result.company.name,
             plan: result.company.plan,
             subscription_status: result.company.subscription_status,
-            trial_ends_at: result.company.trial_ends_at
+            trial_ends_at: result.company.trial_end_date
           },
           tokens: {
             accessToken,
