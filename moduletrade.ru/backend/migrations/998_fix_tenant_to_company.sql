@@ -74,16 +74,6 @@ COMMENT ON VIEW users_with_tenant_compat IS 'Представление для �
 -- ОБНОВЛЕНИЕ МЕТАДАННЫХ В JSONB ПОЛЯХ
 -- ========================================
 
--- Обновляем metadata в companies, если есть ссылки на tenant
-UPDATE companies
-SET metadata =
-    CASE
-        WHEN metadata::text LIKE '%tenant%'
-        THEN regexp_replace(metadata::text, '"tenant', '"company', 'g')::jsonb
-        ELSE metadata
-    END
-WHERE metadata::text LIKE '%tenant%';
-
 -- Обновляем settings в companies
 UPDATE companies
 SET settings =

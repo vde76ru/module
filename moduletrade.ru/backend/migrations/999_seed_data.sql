@@ -1,7 +1,7 @@
 -- ========================================
 -- МИГРАЦИЯ 999: НАЧАЛЬНЫЕ ДАННЫЕ
 -- Seed data для ModuleTrade V2.0
--- Версия: 2.1 (Исправлена)
+-- Версия: 2.3 (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ)
 -- ========================================
 
 -- ========================================
@@ -115,23 +115,14 @@ FROM roles r
 CROSS JOIN permissions p
 WHERE r.name = 'manager'
   AND p.name IN (
-    -- Товары
     'products.view', 'products.create', 'products.update', 'products.delete', 'products.import', 'products.export',
-    -- Заказы
     'orders.view', 'orders.create', 'orders.update', 'orders.delete', 'orders.export',
-    -- Склады
     'warehouses.view', 'warehouses.create', 'warehouses.update',
-    -- Поставщики
     'suppliers.view', 'suppliers.update',
-    -- Маркетплейсы
     'marketplaces.view', 'marketplaces.update',
-    -- Пользователи
     'users.view',
-    -- Синхронизация
     'sync.execute', 'sync.view_logs',
-    -- Аналитика
     'analytics.view', 'analytics.export',
-    -- Биллинг
     'billing.view'
   )
 ON CONFLICT DO NOTHING;
@@ -173,7 +164,7 @@ ON CONFLICT DO NOTHING;
 -- ТАРИФНЫЕ ПЛАНЫ
 -- ========================================
 
-INSERT INTO tariffs (name, code, description, price, limits, features, billing_cycle, trial_days) VALUES
+INSERT INTO tariffs (name, code, description, price, limits, features, billing_period, trial_days) VALUES
 ('Бесплатный', 'free', 'Базовый функционал для ознакомления', 0,
  '{"products": 100, "marketplaces": 1, "api_calls": 1000, "users": 1, "storage_gb": 1}',
  '["products_basic", "orders_basic", "warehouses_basic"]',
@@ -204,37 +195,24 @@ ON CONFLICT (code) DO UPDATE SET
   price = EXCLUDED.price,
   limits = EXCLUDED.limits,
   features = EXCLUDED.features,
+  billing_period = EXCLUDED.billing_period,
+  trial_days = EXCLUDED.trial_days,
   updated_at = NOW();
 
 -- ========================================
--- МАРКЕТПЛЕЙСЫ
--- Исправлено: используется таблица marketplace_settings
+-- МАРКЕТПЛЕЙСЫ (Глобальный справочник)
 -- ========================================
 
-INSERT INTO marketplace_settings (company_id, marketplace_name, display_name, description, api_keys, is_active) VALUES
-(NULL, 'ozon', 'Ozon', 'Крупнейший маркетплейс России',
- '{"client_id": null, "api_key": null}',
- true),
-
-(NULL, 'wildberries', 'Wildberries', 'Популярный fashion маркетплейс',
- '{"api_key": null}',
- true),
-
-(NULL, 'yandex_market', 'Яндекс.Маркет', 'Маркетплейс от Яндекса',
- '{"campaign_id": null, "oauth_token": null}',
- true),
-
-(NULL, 'avito', 'Avito', 'Крупнейшая площадка объявлений',
- '{"client_id": null, "client_secret": null}',
- true),
-
-(NULL, 'sbermegamarket', 'СберМегаМаркет', 'Маркетплейс от Сбера',
- '{"merchant_id": null, "api_key": null}',
- false)
-ON CONFLICT (company_id, marketplace_name) DO UPDATE SET
-  display_name = EXCLUDED.display_name,
-  description = EXCLUDED.description,
-  api_keys = EXCLUDED.api_keys,
+INSERT INTO marketplaces (code, name, api_type, commission_rules, is_public) VALUES
+('ozon', 'Ozon', 'fbs', '{"type": "percent", "value": 15}', true),
+('wildberries', 'Wildberries', 'fbs', '{"type": "percent", "value": 18}', true),
+('yandex_market', 'Яндекс.Маркет', 'fbs', '{"type": "percent", "value": 12}', true),
+('avito', 'Avito', 'classified', '{"type": "fixed", "value": 100}', true),
+('sbermegamarket', 'СберМегаМаркет', 'fbs', '{"type": "percent", "value": 10}', true)
+ON CONFLICT (code) DO UPDATE SET
+  name = EXCLUDED.name,
+  api_type = EXCLUDED.api_type,
+  commission_rules = EXCLUDED.commission_rules,
   updated_at = NOW();
 
 
@@ -367,7 +345,7 @@ BEGIN
   SELECT COUNT(*) INTO permissions_count FROM permissions;
   SELECT COUNT(*) INTO role_permissions_count FROM role_permissions;
   SELECT COUNT(*) INTO tariffs_count FROM tariffs;
-  SELECT COUNT(*) INTO marketplaces_count FROM marketplace_settings;
+  SELECT COUNT(*) INTO marketplaces_count FROM marketplaces;
   SELECT COUNT(*) INTO dictionaries_count FROM dictionaries;
 
   RAISE NOTICE '========================================';

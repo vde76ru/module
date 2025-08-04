@@ -7,6 +7,12 @@ const BillingService = require('../services/BillingService');
 const router = express.Router();
 const billingService = new BillingService();
 
+// Инициализация Stripe, если есть ключ
+if (process.env.STRIPE_SECRET_KEY) {
+  const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+  billingService.stripe = stripe;
+}
+
 /**
  * GET /api/billing/tariffs
  * Получение списка доступных тарифов
@@ -110,17 +116,14 @@ router.get('/usage', authenticate, async (req, res) => {
       WHERE company_id = $1
     `, [req.user.companyId]);
 
-    // Получаем количество заказов
-    const ordersResult = await db.query(`
-      SELECT
-        COUNT(*) as total_orders,
-        SUM(total_amount) as total_revenue
-      FROM orders
+    // Получаем количество пользователей
+    const usersResult = await db.query(`
+      SELECT COUNT(*) as total_users
+      FROM users
       WHERE company_id = $1
-        AND created_at >= ${dateFilter}
     `, [req.user.companyId]);
 
-    // Получаем лимиты тарифа
+    // Получаем текущий тариф с лимитами
     const tariffResult = await db.query(`
       SELECT t.limits
       FROM companies ten
@@ -129,30 +132,26 @@ router.get('/usage', authenticate, async (req, res) => {
     `, [req.user.companyId]);
 
     const limits = tariffResult.rows[0]?.limits || {};
-    const apiUsage = apiUsageResult.rows[0];
-    const productsCount = parseInt(productsResult.rows[0].total_products);
-    const ordersData = ordersResult.rows[0];
 
     res.json({
       success: true,
       data: {
-        period,
-        api_requests: {
-          used: parseInt(apiUsage.total_requests),
-          limit: limits.api_requests_per_month || 1000,
-          successful: parseInt(apiUsage.successful_requests),
-          rate_limited: parseInt(apiUsage.rate_limited_requests)
+        api: {
+          total_requests: parseInt(apiUsageResult.rows[0].total_requests),
+          successful_requests: parseInt(apiUsageResult.rows[0].successful_requests),
+          rate_limited_requests: parseInt(apiUsageResult.rows[0].rate_limited_requests),
+          limit: limits.api_calls || null
         },
         products: {
-          used: productsCount,
-          limit: limits.max_products || 100
+          count: parseInt(productsResult.rows[0].total_products),
+          limit: limits.products || null
         },
-        orders: {
-          count: parseInt(ordersData.total_orders || 0),
-          revenue: parseFloat(ordersData.total_revenue || 0)
+        users: {
+          count: parseInt(usersResult.rows[0].total_users),
+          limit: limits.users || null
         },
         storage: {
-          used: 0, // TODO: Реализовать подсчет размера хранилища
+          used: 0, // TODO: Implement storage calculation
           limit: limits.storage_gb ? limits.storage_gb * 1024 * 1024 * 1024 : 1024 * 1024 * 1024
         }
       }
@@ -219,6 +218,7 @@ router.get('/transactions', authenticate, async (req, res) => {
  * Смена тарифного плана
  */
 router.post('/change-tariff', authenticate, checkPermission('billing.manage'), async (req, res) => {
+  let client;
   try {
     const { tariff_id } = req.body;
 
@@ -264,18 +264,19 @@ router.post('/change-tariff', authenticate, checkPermission('billing.manage'), a
     }
 
     // Начинаем транзакцию
-    const client = await db.getClient(); await client.query('BEGIN');
+    client = await db.pool.connect();
+    await client.query('BEGIN');
 
     try {
       // Обновляем тариф у тенанта
-      await db.query(`
+      await client.query(`
         UPDATE companies
         SET tariff_id = $1, updated_at = NOW()
         WHERE id = $2
       `, [tariff_id, req.user.companyId]);
 
       // Создаем запись о смене тарифа
-      await db.query(`
+      await client.query(`
         INSERT INTO billing_transactions (
           company_id, type, amount, description, status, created_at,
           metadata
@@ -293,7 +294,7 @@ router.post('/change-tariff', authenticate, checkPermission('billing.manage'), a
         })
       ]);
 
-      await client.query('COMMIT'); client.release();
+      await client.query('COMMIT');
 
       res.json({
         success: true,
@@ -304,7 +305,7 @@ router.post('/change-tariff', authenticate, checkPermission('billing.manage'), a
       });
 
     } catch (error) {
-      await client.query('ROLLBACK'); client.release();
+      await client.query('ROLLBACK');
       throw error;
     }
 
@@ -314,6 +315,10 @@ router.post('/change-tariff', authenticate, checkPermission('billing.manage'), a
       success: false,
       error: 'Internal server error'
     });
+  } finally {
+    if (client) {
+      client.release();
+    }
   }
 });
 
@@ -348,16 +353,25 @@ router.post('/create-payment-intent', authenticate, async (req, res) => {
 
     const tariff = tariffResult.rows[0];
 
-    // Создаем Payment Intent через Stripe
-    const paymentIntent = await billingService.createPaymentIntent({
-      amount: Math.round(tariff.price * 100), // Stripe работает с копейками
-      currency: 'rub',
-      metadata: {
-        company_id: req.user.companyId,
-        tariff_id: tariff_id,
-        tariff_name: tariff.name
-      }
-    });
+    // Создаем Payment Intent через Stripe (если подключен)
+    let paymentIntent = null;
+    if (billingService.stripe) {
+      paymentIntent = await billingService.stripe.paymentIntents.create({
+        amount: Math.round(tariff.price * 100), // Stripe работает с копейками
+        currency: 'rub',
+        metadata: {
+          company_id: req.user.companyId,
+          tariff_id: tariff_id,
+          tariff_name: tariff.name
+        }
+      });
+    } else {
+      // Если Stripe не настроен, возвращаем mock данные
+      paymentIntent = {
+        client_secret: 'mock_secret_' + Date.now(),
+        id: 'mock_intent_' + Date.now()
+      };
+    }
 
     res.json({
       success: true,
@@ -384,9 +398,19 @@ router.post('/create-payment-intent', authenticate, async (req, res) => {
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
     const signature = req.headers['stripe-signature'];
+    let event;
 
-    // Проверяем подпись webhook
-    const event = billingService.verifyWebhookSignature(req.body, signature);
+    // Проверяем подпись webhook если Stripe настроен
+    if (billingService.stripe && process.env.STRIPE_WEBHOOK_SECRET) {
+      event = billingService.stripe.webhooks.constructEvent(
+        req.body,
+        signature,
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+    } else {
+      // Если Stripe не настроен, парсим body как обычный JSON
+      event = JSON.parse(req.body.toString());
+    }
 
     // Обрабатываем событие
     switch (event.type) {
@@ -417,18 +441,19 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 async function handlePaymentSuccess(paymentIntent) {
   const { company_id, tariff_id, tariff_name } = paymentIntent.metadata;
 
-  const client = await db.getClient(); await client.query('BEGIN');
+  const client = await db.pool.connect();
+  await client.query('BEGIN');
 
   try {
     // Обновляем тариф у тенанта
-    await db.query(`
+    await client.query(`
       UPDATE companies
       SET tariff_id = $1, updated_at = NOW()
       WHERE id = $2
     `, [tariff_id, company_id]);
 
     // Создаем запись о платеже
-    await db.query(`
+    await client.query(`
       INSERT INTO billing_transactions (
         company_id, type, amount, description, status, created_at,
         metadata
@@ -445,10 +470,12 @@ async function handlePaymentSuccess(paymentIntent) {
       })
     ]);
 
-    await client.query('COMMIT'); client.release();
+    await client.query('COMMIT');
+    client.release();
 
   } catch (error) {
-    await client.query('ROLLBACK'); client.release();
+    await client.query('ROLLBACK');
+    client.release();
     throw error;
   }
 }

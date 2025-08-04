@@ -1,14 +1,14 @@
 // backend/src/routes/products.js
 const express = require('express');
 const router = express.Router();
-const db = require('../config/database'); // ✅ ДОБАВЛЕН ИМПОРТ DB
+const db = require('../config/database');
 const PIMService = require('../services/PIMService');
 const BillingService = require('../services/BillingService');
 const { authenticate, checkPermission } = require('../middleware/auth');
 const multer = require('multer');
 const path = require('path');
 
-// ✅ ПРАВИЛЬНО СОЗДАЕМ ЭКЗЕМПЛЯРЫ КЛАССОВ
+// Создаем экземпляры классов
 const pimService = new PIMService();
 const billingService = new BillingService();
 
@@ -54,7 +54,6 @@ router.get('/', authenticate, async (req, res) => {
             page: parseInt(req.query.page) || 1
         };
 
-        // ✅ ИСПРАВЛЕН ВЫЗОВ МЕТОДА СЕРВИСА
         const result = await pimService.getAllProducts(req.user.companyId, filters);
 
         res.json({
@@ -74,7 +73,6 @@ router.get('/', authenticate, async (req, res) => {
 // Получение одного товара
 router.get('/:id', authenticate, async (req, res) => {
     try {
-        // ✅ ИСПРАВЛЕН ВЫЗОВ МЕТОДА для получения товара по ID
         const product = await pimService.getProductById(req.user.companyId, req.params.id);
 
         if (!product) {
@@ -121,7 +119,6 @@ router.post('/', authenticate, checkPermission('products.create'), async (req, r
             });
         }
 
-        // ✅ ИСПРАВЛЕН ВЫЗОВ СОЗДАНИЯ ТОВАРА
         const product = await pimService.createProduct(req.user.companyId, req.body, req.user.id);
 
         res.status(201).json({
@@ -260,8 +257,6 @@ router.post('/import', authenticate, checkPermission('products.import'), upload.
         }
 
         // Здесь должна быть логика импорта
-        // const result = await pimService.importProducts(req.user.companyId, req.file.path, req.user.id);
-
         res.json({
             success: true,
             message: 'Import completed',
@@ -324,8 +319,8 @@ router.post('/:id/marketplace-mapping', authenticate, checkPermission('products.
     try {
         const { marketplace_id, marketplace_product_id, mapping_data } = req.body;
 
-        const pool = await db.getPool(req.user.companyId);
-        const result = await pool.query(`
+        // ИСПРАВЛЕНО: Убран вызов getPool, используем прямой query
+        const result = await db.query(`
             INSERT INTO marketplace_product_links (
                 product_id, marketplace_id, marketplace_sku,
                 marketplace_product_id, company_id, is_active
