@@ -31,6 +31,7 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import axios from 'utils/axios';
+import { api } from 'services';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -51,18 +52,19 @@ const Dashboard = () => {
     try {
       setLoading(true);
 
-      // ИСПРАВЛЕНО: убрали дублирующий /api/ префикс
-      const [statsRes, ordersRes, stockRes, syncRes] = await Promise.all([
-        axios.get('/analytics/dashboard').catch(() => ({ data: { data: {} } })),
-        axios.get('/orders?limit=5&sort=created_at:desc').catch(() => ({ data: { items: [] } })),
-        axios.get('/products?limit=5&low_stock=true').catch(() => ({ data: { items: [] } })),
-        axios.get('/sync/status').catch(() => ({ data: [] })),
+      // Используем правильные API сервисы
+      const [statsRes, ordersRes, stockRes, syncRes] = await Promise.allSettled([
+        api.analytics.getDashboard(),
+        api.orders.getOrders({ limit: 5, sort: 'created_at:desc' }),
+        api.products.getProducts({ limit: 5, low_stock: true }),
+        api.sync.getSyncStatus(),
       ]);
 
-      setStatistics(statsRes.data);
-      setRecentOrders(ordersRes.data.items || []);
-      setLowStockProducts(stockRes.data.items || []);
-      setSyncStatus(syncRes.data || []);
+      // Обрабатываем результаты
+      setStatistics(statsRes.status === 'fulfilled' ? statsRes.value : {});
+      setRecentOrders(ordersRes.status === 'fulfilled' ? ordersRes.value.items || [] : []);
+      setLowStockProducts(stockRes.status === 'fulfilled' ? stockRes.value.items || [] : []);
+      setSyncStatus(syncRes.status === 'fulfilled' ? syncRes.value || [] : []);
     } catch (error) {
       console.error('Dashboard data fetch error:', error);
       // Показываем заглушку с демо-данными если API недоступно

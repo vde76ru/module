@@ -8,81 +8,82 @@
 // =====================================
 export const API_ENDPOINTS = {
   // Авторизация
-  LOGIN: '/auth/login',
-  REGISTER: '/auth/register',
-  REFRESH: '/auth/refresh',
-  LOGOUT: '/auth/logout',
-  ME: '/auth/me',
-  CHANGE_PASSWORD: '/auth/change-password',
-  FORGOT_PASSWORD: '/auth/forgot-password',
-  RESET_PASSWORD: '/auth/reset-password',
+  LOGIN: '/api/auth/login',
+  REGISTER: '/api/auth/register',
+  REFRESH: '/api/auth/refresh',
+  LOGOUT: '/api/auth/logout',
+  ME: '/api/auth/me',
+  CHANGE_PASSWORD: '/api/auth/change-password',
+  FORGOT_PASSWORD: '/api/auth/forgot-password',
+  RESET_PASSWORD: '/api/auth/reset-password',
 
   // Товары
-  PRODUCTS: '/products',
-  PRODUCT_DETAILS: '/products/:id',
-  PRODUCTS_IMPORT: '/products/import',
-  PRODUCTS_EXPORT: '/products/export',
-  PRODUCTS_SEARCH: '/products/search',
-  PRODUCTS_BULK_UPDATE: '/products/bulk-update',
-  PRODUCTS_BULK_DELETE: '/products/bulk-delete',
+  PRODUCTS: '/api/products',
+  PRODUCT_DETAILS: '/api/products/:id',
+  PRODUCTS_IMPORT: '/api/products/import',
+  PRODUCTS_EXPORT: '/api/products/export',
+  PRODUCTS_SEARCH: '/api/products/search',
+  PRODUCTS_BULK_UPDATE: '/api/products/bulk-update',
+  PRODUCTS_BULK_DELETE: '/api/products/bulk-delete',
 
   // Склады
-  WAREHOUSES: '/warehouses',
-  WAREHOUSE_DETAILS: '/warehouses/:id',
-  WAREHOUSE_TRANSFER: '/warehouses/transfer',
-  WAREHOUSE_STOCK: '/warehouses/:id/stock',
-  WAREHOUSE_MOVEMENTS: '/warehouses/:id/movements',
-  WAREHOUSE_UPDATE_STOCK: '/warehouses/stock',
+  WAREHOUSES: '/api/warehouses',
+  WAREHOUSE_DETAILS: '/api/warehouses/:id',
+  WAREHOUSE_TRANSFER: '/api/warehouses/transfer',
+  WAREHOUSE_STOCK: '/api/warehouses/:id/stock',
+  WAREHOUSE_MOVEMENTS: '/api/warehouses/:id/movements',
+  WAREHOUSE_UPDATE_STOCK: '/api/warehouses/stock',
 
   // Синхронизация
-  SYNC_STOCK: '/sync/stock',
-  SYNC_ORDERS: '/sync/orders',
-  SYNC_LOGS: '/sync/logs',
-  SYNC_STATUS: '/sync/status',
+  SYNC_STOCK: '/api/sync/stock',
+  SYNC_ORDERS: '/api/sync/orders',
+  SYNC_LOGS: '/api/sync/logs',
+  SYNC_STATUS: '/api/sync/status',
 
   // Поставщики
-  SUPPLIERS: '/suppliers',
-  SUPPLIER_DETAILS: '/suppliers/:id',
-  SUPPLIER_PRODUCTS: '/suppliers/:id/products',
-  SUPPLIER_SYNC: '/suppliers/:id/sync',
+  SUPPLIERS: '/api/suppliers',
+  SUPPLIER_DETAILS: '/api/suppliers/:id',
+  SUPPLIER_PRODUCTS: '/api/suppliers/:id/products',
+  SUPPLIER_SYNC: '/api/suppliers/:id/sync',
 
   // Маркетплейсы
-  MARKETPLACES: '/marketplaces',
-  MARKETPLACE_DETAILS: '/marketplaces/:id',
-  MARKETPLACE_ORDERS: '/marketplaces/:id/orders',
-  MARKETPLACE_CONNECT: '/marketplaces/connect',
-  MARKETPLACE_TEST: '/marketplaces/:id/test',
+  MARKETPLACES: '/api/marketplaces',
+  MARKETPLACE_DETAILS: '/api/marketplaces/:id',
+  MARKETPLACE_ORDERS: '/api/marketplaces/:id/orders',
+  MARKETPLACE_CONNECT: '/api/marketplaces/connect',
+  MARKETPLACE_TEST: '/api/marketplaces/:id/test',
 
   // Заказы
-  ORDERS: '/orders',
-  ORDER_DETAILS: '/orders/:id',
-  ORDER_STATUS: '/orders/:id/status',
-  ORDERS_BULK_UPDATE: '/orders/bulk-update',
-  ORDERS_EXPORT: '/orders/export',
+  ORDERS: '/api/orders',
+  ORDER_DETAILS: '/api/orders/:id',
+  ORDER_STATUS: '/api/orders/:id/status',
+  ORDERS_BULK_UPDATE: '/api/orders/bulk-update',
+  ORDERS_EXPORT: '/api/orders/export',
 
   // Пользователи
-  USERS: '/users',
-  USER_DETAILS: '/users/:id',
+  USERS: '/api/users',
+  USER_DETAILS: '/api/users/:id',
 
   // Аналитика
-  ANALYTICS_DASHBOARD: '/analytics/dashboard',
-  ANALYTICS_SALES: '/analytics/sales',
-  ANALYTICS_PROFIT: '/analytics/profit',
-  ANALYTICS_INVENTORY: '/analytics/inventory',
-  ANALYTICS_EXPORT: '/analytics/export',
+  ANALYTICS_DASHBOARD: '/api/analytics/dashboard',
+  ANALYTICS_SALES: '/api/analytics/sales',
+  ANALYTICS_PROFIT: '/api/analytics/profit',
+  ANALYTICS_INVENTORY: '/api/analytics/inventory',
+  ANALYTICS_EXPORT: '/api/analytics/export',
 
   // Биллинг
-  BILLING_TARIFFS: '/billing/tariffs',
-  BILLING_USAGE: '/billing/usage',
-  BILLING_TRANSACTIONS: '/billing/transactions',
-  BILLING_CHANGE_TARIFF: '/billing/change-tariff',
-  BILLING_PAYMENT_METHODS: '/billing/payment-methods',
+  BILLING_TARIFFS: '/api/billing/tariffs',
+  BILLING_USAGE: '/api/billing/usage',
+  BILLING_CURRENT_TARIFF: '/api/billing/current-tariff',
+  BILLING_TRANSACTIONS: '/api/billing/transactions',
+  BILLING_CHANGE_TARIFF: '/api/billing/change-tariff',
+  BILLING_PAYMENT_METHODS: '/api/billing/payment-methods',
 
   // Настройки
-  SETTINGS_PROFILE: '/settings/profile',
-  SETTINGS_INTEGRATIONS: '/settings/integrations',
-  SETTINGS_NOTIFICATIONS: '/settings/notifications',
-  SETTINGS_API_KEYS: '/settings/api-keys',
+  SETTINGS_PROFILE: '/api/settings/profile',
+  SETTINGS_INTEGRATIONS: '/api/settings/integrations',
+  SETTINGS_NOTIFICATIONS: '/api/settings/notifications',
+  SETTINGS_API_KEYS: '/api/settings/api-keys',
 };
 
 // =====================================
