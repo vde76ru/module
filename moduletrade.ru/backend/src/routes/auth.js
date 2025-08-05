@@ -103,10 +103,10 @@ async function createUserWithCompany(client, userData) {
   // 1. Создаем компанию
   const companyResult = await client.query(`
     INSERT INTO companies (
-      name, subscription_status, plan, trial_end_date
+      name, subscription_status, plan, trial_end_date, is_active, tariff_id
     )
-    VALUES ($1, 'trial', 'free', $2)
-    RETURNING id, name, plan, subscription_status, trial_end_date
+    VALUES ($1, 'trial', 'free', $2, true, (SELECT id FROM tariffs WHERE code = 'free' LIMIT 1))
+    RETURNING id, name, plan, subscription_status, trial_end_date, is_active
   `, [
     userData.companyName,
     new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) // 14 дней пробного периода
@@ -118,19 +118,19 @@ async function createUserWithCompany(client, userData) {
   const saltRounds = 12;
   const passwordHash = await bcrypt.hash(userData.password, saltRounds);
 
-  // 3. Получаем роль admin
-  const roleResult = await client.query(`SELECT id FROM roles WHERE name = 'admin'`);
+  // 3. Получаем роль user
+  const roleResult = await client.query(`SELECT id FROM roles WHERE name = 'user'`);
   if (roleResult.rows.length === 0) {
-      throw new Error('Admin role not found');
+      throw new Error('User role not found');
   }
-  const adminRoleId = roleResult.rows[0].id;
+  const userRoleId = roleResult.rows[0].id;
 
   // 4. Создаем пользователя
   const userResult = await client.query(`
     INSERT INTO users (
-      company_id, email, password_hash, name, first_name, last_name, phone, role, role_id, is_active
+      company_id, email, password_hash, name, first_name, last_name, phone, role, role_id, is_active, email_verified, login_count
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 'admin', $8, true)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, 'user', $8, true, true, 0)
     RETURNING id, email, name, first_name, last_name, role, created_at
   `, [
     company.id,
@@ -140,7 +140,7 @@ async function createUserWithCompany(client, userData) {
     userData.firstName,
     userData.lastName,
     userData.phone,
-    adminRoleId
+    userRoleId
   ]);
 
   const user = userResult.rows[0];
@@ -294,8 +294,8 @@ router.post('/login',
       // Находим пользователя с информацией о компании
       const userResult = await db.query(`
         SELECT
-          u.id, u.email, u.password_hash, u.name, u.first_name, u.last_name, u.role, u.is_active,
-          c.id as company_id, c.name as company_name, c.plan, c.subscription_status, c.settings
+          u.id, u.email, u.password_hash, u.name, u.first_name, u.last_name, u.role, u.is_active, u.email_verified,
+          c.id as company_id, c.name as company_name, c.plan, c.subscription_status, c.trial_end_date, c.is_active as company_is_active, c.settings
         FROM users u
         LEFT JOIN companies c ON u.company_id = c.id
         WHERE u.email = $1
@@ -311,20 +311,37 @@ router.post('/login',
 
       const user = userResult.rows[0];
 
+      // Проверяем активность пользователя
       if (!user.is_active) {
-          return res.status(403).json({
-            success: false,
-            error: 'User account is inactive'
-          });
-      }
-
-      // Проверяем активность компании
-      if (user.company_id && user.subscription_status === 'suspended') {
         return res.status(403).json({
           success: false,
           error: 'Account suspended',
           code: 'ACCOUNT_SUSPENDED'
         });
+      }
+      // Проверяем активность компании
+      if (user.company_id && !user.company_is_active) {
+        return res.status(403).json({
+          success: false,
+          error: 'Company account is inactive',
+          code: 'COMPANY_INACTIVE'
+        });
+      }
+      // Проверяем истечение триального периода
+      if (user.subscription_status === 'trial' && user.trial_end_date) {
+        const trialEndDate = new Date(user.trial_end_date);
+        const now = new Date();
+        if (now > trialEndDate) {
+          await db.query(
+            'UPDATE companies SET subscription_status = $1 WHERE id = $2',
+            ['suspended', user.company_id]
+          );
+          return res.status(403).json({
+            success: false,
+            error: 'Trial period expired',
+            code: 'TRIAL_EXPIRED'
+          });
+        }
       }
 
       // Проверяем пароль
@@ -349,7 +366,7 @@ router.post('/login',
 
       // Обновляем время последнего входа
       await db.query(
-        'UPDATE users SET last_login = CURRENT_TIMESTAMP, login_count = login_count + 1 WHERE id = $1',
+        'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
         [user.id]
       );
 
@@ -363,7 +380,9 @@ router.post('/login',
             name: user.name,
             first_name: user.first_name,
             last_name: user.last_name,
-            role: user.role
+            role: user.role,
+            is_active: user.is_active,
+            company_id: user.company_id
           },
           company: user.company_id ? {
             id: user.company_id,
@@ -406,14 +425,15 @@ router.post('/refresh', async (req, res) => {
   try {
     const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET || 'your-refresh-secret');
 
-    // Проверяем существование пользователя
+    // Проверяем существование пользователя по userId из токена
     const userResult = await db.query(`
       SELECT
-        u.id, u.email, u.name, u.role, u.is_active,
-        c.id as company_id, c.subscription_status
+        u.id, u.email, u.password_hash, u.name, u.first_name, u.last_name, u.role, u.is_active, u.email_verified,
+        c.id as company_id, c.name as company_name, c.plan, 
+        c.subscription_status, c.trial_end_date, c.is_active as company_is_active, c.settings
       FROM users u
       LEFT JOIN companies c ON u.company_id = c.id
-      WHERE u.id = $1 AND u.is_active = true
+      WHERE u.id = $1
     `, [decoded.userId]);
 
     if (userResult.rows.length === 0) {

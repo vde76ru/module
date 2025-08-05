@@ -65,6 +65,12 @@ const allowedOrigins = (process.env.CORS_ORIGIN || 'https://moduletrade.ru')
 
 logger.info('Allowed CORS origins:', allowedOrigins);
 
+app.use((req, res, next) => {
+  const origin = req.get('origin');
+  logger.debug(`Request from origin: ${origin}, method: ${req.method}, path: ${req.path}`);
+  next();
+});
+
 app.use(cors({
   origin: function (origin, callback) {
     // Разрешаем запросы без origin (например, мобильные приложения)

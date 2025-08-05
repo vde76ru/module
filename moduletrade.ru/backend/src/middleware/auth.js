@@ -44,7 +44,7 @@ const authenticate = async (req, res, next) => {
         u.id, u.email, u.name, u.phone, u.role, u.role_id, u.is_active,
         u.company_id, u.last_login, u.created_at, u.first_name, u.last_name,
         c.name as company_name, c.plan as company_plan, c.is_active as company_is_active,
-        c.subscription_status as company_status, c.settings as company_settings,
+        c.subscription_status as company_status, c.trial_end_date, c.settings as company_settings,
         r.name as role_name, r.display_name as role_display_name
       FROM users u
       JOIN companies c ON u.company_id = c.id
@@ -70,9 +70,23 @@ const authenticate = async (req, res, next) => {
         code: 'ACCOUNT_SUSPENDED'
       });
     }
-
     // Проверяем активность компании
-    if (!user.company_is_active) {
+    if (user.company_status === 'trial' && user.trial_end_date) {
+      const trialEndDate = new Date(user.trial_end_date);
+      const now = new Date();
+      if (now > trialEndDate) {
+        await db.query(
+          'UPDATE companies SET subscription_status = $1 WHERE id = $2',
+          ['suspended', user.company_id]
+        );
+        return res.status(403).json({
+          success: false,
+          error: 'Trial period expired',
+          code: 'TRIAL_EXPIRED'
+        });
+      }
+    }
+    if (user.company_status === 'suspended') {
       return res.status(403).json({
         success: false,
         error: 'Company account suspended',
