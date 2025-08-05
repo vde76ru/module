@@ -48,6 +48,88 @@ router.get('/tariffs', async (req, res) => {
   }
 });
 
+
+/**
+ * GET /api/billing/subscription-info
+ * Получение подробной информации о подписке включая дни до окончания пробного периода
+ */
+router.get('/subscription-info', authenticate, async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT 
+        c.id as company_id,
+        c.name as company_name,
+        c.subscription_status,
+        c.plan,
+        c.trial_end_date,
+        c.subscription_start_date,
+        c.subscription_end_date,
+        t.id as tariff_id,
+        t.name as tariff_name,
+        t.description as tariff_description,
+        t.price as tariff_price,
+        t.limits as tariff_limits,
+        t.features as tariff_features,
+        t.trial_days,
+        CASE 
+          WHEN c.subscription_status = 'trial' AND c.trial_end_date > NOW() 
+          THEN EXTRACT(DAY FROM c.trial_end_date - NOW())::INTEGER
+          ELSE 0
+        END as days_left_in_trial,
+        CASE 
+          WHEN c.subscription_status = 'active' AND c.subscription_end_date > NOW()
+          THEN EXTRACT(DAY FROM c.subscription_end_date - NOW())::INTEGER
+          ELSE 0  
+        END as days_left_in_subscription
+      FROM companies c
+      LEFT JOIN tariffs t ON c.tariff_id = t.id
+      WHERE c.id = $1 AND c.is_active = true
+    `, [req.user.companyId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Company not found'
+      });
+    }
+
+    const company = result.rows[0];
+
+    res.json({
+      success: true,
+      data: {
+        company: {
+          id: company.company_id,
+          name: company.company_name,
+          subscription_status: company.subscription_status,
+          plan: company.plan,
+          trial_end_date: company.trial_end_date,
+          subscription_start_date: company.subscription_start_date,
+          subscription_end_date: company.subscription_end_date,
+          days_left_in_trial: company.days_left_in_trial,
+          days_left_in_subscription: company.days_left_in_subscription
+        },
+        tariff: company.tariff_id ? {
+          id: company.tariff_id,
+          name: company.tariff_name,
+          description: company.tariff_description,
+          price: company.tariff_price,
+          limits: company.tariff_limits,
+          features: company.tariff_features,
+          trial_days: company.trial_days
+        } : null
+      }
+    });
+
+  } catch (error) {
+    console.error('Get subscription info error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
 /**
  * GET /api/billing/current-tariff
  * Получение текущего тарифа пользователя

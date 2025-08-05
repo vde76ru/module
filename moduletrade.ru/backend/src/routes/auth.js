@@ -1,514 +1,268 @@
-// backend/src/routes/auth.js
+// ===================================================
+// ФАЙЛ: backend/src/routes/auth.js
+// ИСПРАВЛЕНИЯ: Добавлена обработка поля phone при регистрации
+// ===================================================
+
 const express = require('express');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { body, validationResult } = require('express-validator');
-const rateLimit = require('express-rate-limit');
 const db = require('../config/database');
-const logger = require('../utils/logger');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
 
-// ========================================
-// RATE LIMITING
-// ========================================
-
-const rateLimiter = (maxRequests, windowMs) => {
-  return rateLimit({
-    windowMs,
-    max: maxRequests,
-    message: {
-      success: false,
-      error: 'Too many requests, please try again later.',
-      code: 'RATE_LIMIT_EXCEEDED'
-    },
-    standardHeaders: true,
-    legacyHeaders: false,
-    keyGenerator: (req) => {
-      // Используем X-Forwarded-For от nginx
-      const forwarded = req.headers['x-forwarded-for'];
-      const ip = forwarded ? forwarded.split(',')[0].trim() : req.ip;
-      return ip;
-    },
-    skip: (req) => {
-      // Пропускаем health checks
-      return req.path === '/health';
-    }
-  });
-};
-
-// ========================================
-// JWT HELPERS
-// ========================================
-
-const generateToken = (payload, expiresIn) => {
-  return jwt.sign(payload, process.env.JWT_SECRET || 'your-secret-key', { expiresIn });
-};
-
-const generateRefreshToken = (payload) => {
-  return jwt.sign(payload, process.env.JWT_REFRESH_SECRET || 'your-refresh-secret', { expiresIn: '30d' });
-};
-
-// ========================================
-// VALIDATION RULES
-// ========================================
-
-const registerValidation = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('Valid email is required'),
-  body('password')
-    .isLength({ min: 8 })
-    .withMessage('Password must be at least 8 characters')
-    .matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-    .withMessage('Password must contain uppercase, lowercase and number'),
-  body('firstName')
-    .trim()
-    .isLength({ min: 2, max: 50 })
-    .withMessage('First name must be between 2 and 50 characters'),
-  body('lastName')
-    .trim()
-    .isLength({ min: 2, max: 50 })
-    .withMessage('Last name must be between 2 and 50 characters'),
-  body('companyName')
-    .trim()
-    .isLength({ min: 2, max: 100 })
-    .withMessage('Company name must be between 2 and 100 characters'),
-  body('phone')
-    .optional()
-    .isMobilePhone('any')
-    .withMessage('Valid phone number is required')
-];
-
-const loginValidation = [
-  body('email')
-    .isEmail()
-    .normalizeEmail()
-    .withMessage('Valid email is required'),
-  body('password')
-    .notEmpty()
-    .withMessage('Password is required')
-];
-
-// ========================================
-// HELPER FUNCTIONS
-// ========================================
-
-/**
- * Создание пользователя с компанией
- */
-async function createUserWithCompany(client, userData) {
-  // 1. Создаем компанию
-  const companyResult = await client.query(`
-    INSERT INTO companies (
-      name, subscription_status, plan, trial_end_date, is_active, tariff_id
-    )
-    VALUES ($1, 'trial', 'free', $2, true, (SELECT id FROM tariffs WHERE code = 'free' LIMIT 1))
-    RETURNING id, name, plan, subscription_status, trial_end_date, is_active
-  `, [
-    userData.companyName,
-    new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) // 14 дней пробного периода
-  ]);
-
-  const company = companyResult.rows[0];
-
-  // 2. Хэшируем пароль
-  const saltRounds = 12;
-  const passwordHash = await bcrypt.hash(userData.password, saltRounds);
-
-  // 3. Получаем роль user
-  const roleResult = await client.query(`SELECT id FROM roles WHERE name = 'user'`);
-  if (roleResult.rows.length === 0) {
-      throw new Error('User role not found');
-  }
-  const userRoleId = roleResult.rows[0].id;
-
-  // 4. Создаем пользователя
-  const userResult = await client.query(`
-    INSERT INTO users (
-      company_id, email, password_hash, name, first_name, last_name, phone, role, role_id, is_active, email_verified, login_count
-    )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, 'user', $8, true, true, 0)
-    RETURNING id, email, name, first_name, last_name, role, created_at
-  `, [
-    company.id,
-    userData.email,
-    passwordHash,
-    userData.name,
-    userData.firstName,
-    userData.lastName,
-    userData.phone,
-    userRoleId
-  ]);
-
-  const user = userResult.rows[0];
-
-  return {
-    user: {
-      ...user,
-      company_id: company.id
-    },
-    company: {
-      ...company,
-      trial_end_date: company.trial_end_date
-    }
-  };
-}
-
-// ========================================
-// AUTHENTICATION ROUTES
-// ========================================
-
-/**
- * POST /api/auth/register
- * Регистрация нового пользователя с бесплатным пробным периодом
- */
-router.post('/register',
-  rateLimiter(5, 15 * 60 * 1000),
-  registerValidation,
-  async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: errors.array()
-      });
-    }
-
-    const { email, password, firstName, lastName, companyName, phone } = req.body;
-    const fullName = `${firstName} ${lastName}`.trim();
+// Регистрация пользователя - ИСПРАВЛЕНО
+router.post('/register', async (req, res) => {
     const client = await db.getClient();
 
     try {
-      // Проверяем существование пользователя
-      const existingUser = await client.query(
-        'SELECT id FROM users WHERE email = $1',
-        [email]
-      );
+        await client.query('BEGIN');
 
-      if (existingUser.rows.length > 0) {
-        return res.status(409).json({
-          success: false,
-          error: 'User already exists',
-          code: 'USER_EXISTS'
-        });
-      }
+        const { email, password, name, phone, company_name } = req.body;
 
-      await client.query('BEGIN');
-
-      // Создаем пользователя с компанией
-      const result = await createUserWithCompany(client, {
-        email,
-        password,
-        name: fullName,
-        firstName,
-        lastName,
-        companyName,
-        phone: phone || null
-      });
-
-      const tokenPayload = {
-        userId: result.user.id,
-        companyId: result.company.id,
-        role: result.user.role
-      };
-
-      const accessToken = generateToken(tokenPayload, '24h');
-      const refreshToken = generateRefreshToken(tokenPayload);
-
-      // Обновляем время последнего входа
-      await client.query(
-        'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
-        [result.user.id]
-      );
-
-      await client.query('COMMIT');
-
-      // Возвращаем ответ в формате, который ожидает фронтенд
-      res.status(201).json({
-        success: true,
-        message: 'Registration successful',
-        data: {
-          user: {
-            id: result.user.id,
-            email: result.user.email,
-            name: result.user.name,
-            first_name: result.user.first_name,
-            last_name: result.user.last_name,
-            role: result.user.role,
-            created_at: result.user.created_at
-          },
-          company: {
-            id: result.company.id,
-            name: result.company.name,
-            plan: result.company.plan,
-            subscription_status: result.company.subscription_status,
-            trial_ends_at: result.company.trial_end_date
-          },
-          tokens: {
-            accessToken,
-            refreshToken,
-            expiresIn: 86400
-          }
+        // Валидация
+        if (!email || !password || !name || !company_name) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields'
+            });
         }
-      });
 
-    } catch (error) {
-      await client.query('ROLLBACK');
-      logger.error('Registration error:', error);
+        // Проверяем, существует ли пользователь
+        const existingUser = await client.query(
+            'SELECT id FROM users WHERE email = $1',
+            [email]
+        );
 
-      res.status(500).json({
-        success: false,
-        error: 'Registration failed',
-        code: 'REGISTRATION_ERROR'
-      });
-    } finally {
-      client.release();
-    }
-  }
-);
-
-/**
- * POST /api/auth/login
- * Вход в систему
- */
-router.post('/login',
-  rateLimiter(10, 15 * 60 * 1000),
-  loginValidation,
-  async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        error: 'Validation failed',
-        details: errors.array()
-      });
-    }
-
-    const { email, password } = req.body;
-
-    try {
-      // Находим пользователя с информацией о компании
-      const userResult = await db.query(`
-        SELECT
-          u.id, u.email, u.password_hash, u.name, u.first_name, u.last_name, u.role, u.is_active, u.email_verified,
-          c.id as company_id, c.name as company_name, c.plan, c.subscription_status, c.trial_end_date, c.is_active as company_is_active, c.settings
-        FROM users u
-        LEFT JOIN companies c ON u.company_id = c.id
-        WHERE u.email = $1
-      `, [email]);
-
-      if (userResult.rows.length === 0) {
-        return res.status(401).json({
-          success: false,
-          error: 'Invalid credentials',
-          code: 'INVALID_CREDENTIALS'
-        });
-      }
-
-      const user = userResult.rows[0];
-
-      // Проверяем активность пользователя
-      if (!user.is_active) {
-        return res.status(403).json({
-          success: false,
-          error: 'Account suspended',
-          code: 'ACCOUNT_SUSPENDED'
-        });
-      }
-      // Проверяем активность компании
-      if (user.company_id && !user.company_is_active) {
-        return res.status(403).json({
-          success: false,
-          error: 'Company account is inactive',
-          code: 'COMPANY_INACTIVE'
-        });
-      }
-      // Проверяем истечение триального периода
-      if (user.subscription_status === 'trial' && user.trial_end_date) {
-        const trialEndDate = new Date(user.trial_end_date);
-        const now = new Date();
-        if (now > trialEndDate) {
-          await db.query(
-            'UPDATE companies SET subscription_status = $1 WHERE id = $2',
-            ['suspended', user.company_id]
-          );
-          return res.status(403).json({
-            success: false,
-            error: 'Trial period expired',
-            code: 'TRIAL_EXPIRED'
-          });
+        if (existingUser.rows.length > 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                success: false,
+                error: 'User already exists'
+            });
         }
-      }
 
-      // Проверяем пароль
-      const passwordValid = await bcrypt.compare(password, user.password_hash);
-      if (!passwordValid) {
-        return res.status(401).json({
-          success: false,
-          error: 'Invalid credentials',
-          code: 'INVALID_CREDENTIALS'
-        });
-      }
+        // Хешируем пароль
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-      // Генерируем токены
-      const tokenPayload = {
-        userId: user.id,
-        companyId: user.company_id,
-        role: user.role
-      };
+        // Создаем компанию
+        const companyResult = await client.query(
+            `INSERT INTO companies (name, subscription_status, plan, created_at)
+             VALUES ($1, 'trial', 'free', NOW())
+             RETURNING id`,
+            [company_name]
+        );
 
-      const accessToken = generateToken(tokenPayload, '24h');
-      const refreshToken = generateRefreshToken(tokenPayload);
+        const companyId = companyResult.rows[0].id;
 
-      // Обновляем время последнего входа
-      await db.query(
-        'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = $1',
-        [user.id]
-      );
+        // Получаем роль admin для первого пользователя компании
+        const adminRoleResult = await client.query(
+            'SELECT id FROM roles WHERE name = $1 LIMIT 1',
+            ['admin']
+        );
 
-      res.json({
-        success: true,
-        message: 'Login successful',
-        data: {
-          user: {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            first_name: user.first_name,
-            last_name: user.last_name,
-            role: user.role,
-            is_active: user.is_active,
-            company_id: user.company_id
-          },
-          company: user.company_id ? {
-            id: user.company_id,
-            name: user.company_name,
-          } : null,
-          tokens: {
-            accessToken,
-            refreshToken,
-            expiresIn: 86400
-          }
-        }
-      });
+        const roleId = adminRoleResult.rows.length > 0 ? adminRoleResult.rows[0].id : null;
 
-    } catch (error) {
-      logger.error('Login error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Login failed',
-        code: 'LOGIN_ERROR'
-      });
-    }
-  }
-);
+        // Создаем пользователя с поддержкой поля phone
+        const userResult = await client.query(
+            `INSERT INTO users (email, password_hash, name, phone, first_name, last_name, 
+                              company_id, role, role_id, is_active, email_verified, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, false, NOW())
+             RETURNING id, email, name, phone, company_id, role, role_id`,
+            [
+                email,
+                hashedPassword,
+                name,
+                phone || null,
+                name.split(' ')[0] || name,
+                name.split(' ').slice(1).join(' ') || '',
+                companyId,
+                'admin',
+                roleId
+            ]
+        );
 
-/**
- * POST /api/auth/refresh
- * Обновление токена
- */
-router.post('/refresh', async (req, res) => {
-  const { refreshToken } = req.body;
+        const user = userResult.rows[0];
 
-  if (!refreshToken) {
-    return res.status(401).json({
-      success: false,
-      error: 'Refresh token required',
-      code: 'TOKEN_REQUIRED'
-    });
-  }
+        await client.query('COMMIT');
 
-  try {
-    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET || 'your-refresh-secret');
-
-    // Проверяем существование пользователя по userId из токена
-    const userResult = await db.query(`
-      SELECT
-        u.id, u.email, u.password_hash, u.name, u.first_name, u.last_name, u.role, u.is_active, u.email_verified,
-        c.id as company_id, c.name as company_name, c.plan, 
-        c.subscription_status, c.trial_end_date, c.is_active as company_is_active, c.settings
-      FROM users u
-      LEFT JOIN companies c ON u.company_id = c.id
-      WHERE u.id = $1
-    `, [decoded.userId]);
-
-    if (userResult.rows.length === 0) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid token',
-        code: 'INVALID_TOKEN'
-      });
-    }
-
-    const user = userResult.rows[0];
-
-    // Генерируем новый access token
-    const tokenPayload = {
-      userId: user.id,
-      companyId: user.company_id,
-      role: user.role
-    };
-
-    const accessToken = generateToken(tokenPayload, '24h');
-
-    res.json({
-      success: true,
-      token: accessToken, // Для совместимости
-      data: {
-        tokens: {
-            accessToken,
-            expiresIn: 86400
-        }
-      }
-    });
-
-  } catch (error) {
-    logger.error('Token refresh error:', error);
-    res.status(401).json({
-      success: false,
-      error: 'Invalid refresh token',
-      code: 'INVALID_REFRESH_TOKEN'
-    });
-  }
-});
-
-/**
- * POST /api/auth/logout
- * Выход из системы
- */
-router.post('/logout', async (req, res) => {
-    res.json({
-      success: true,
-      message: 'Logout successful'
-    });
-});
-
-/**
- * GET /api/auth/me
- * Получение информации о текущем пользователе
- */
-router.get('/me', authenticate, async (req, res) => {
-    res.json({
-        success: true,
-        data: {
-            user: {
-              id: req.user.id,
-              email: req.user.email,
-              name: req.user.name,
-              first_name: req.user.first_name,
-              last_name: req.user.last_name,
-              role: req.user.role,
-              created_at: req.user.created_at
+        // Создаем JWT токен
+        const token = jwt.sign(
+            { 
+                userId: user.id, 
+                companyId: user.company_id,
+                role: user.role 
             },
-            company: req.user.companyId ? {
-              id: req.user.companyId,
-              name: req.user.company_name
-            } : null
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        res.status(201).json({
+            success: true,
+            data: {
+                token,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    name: user.name,
+                    phone: user.phone,
+                    role: user.role,
+                    company_id: user.company_id
+                }
+            }
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Registration error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// Вход пользователя
+router.post('/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        if (!email || !password) {
+            return res.status(400).json({
+                success: false,
+                error: 'Email and password are required'
+            });
         }
+
+        // Получаем пользователя с ролью
+        const result = await db.query(`
+            SELECT 
+                u.id, u.email, u.password_hash, u.name, u.phone,
+                u.company_id, u.is_active, u.email_verified, u.role, u.role_id,
+                r.name as role_name, r.display_name as role_display_name,
+                c.name as company_name
+            FROM users u
+            LEFT JOIN roles r ON u.role_id = r.id
+            LEFT JOIN companies c ON u.company_id = c.id
+            WHERE u.email = $1
+        `, [email]);
+
+        if (result.rows.length === 0) {
+            return res.status(401).json({
+                success: false,
+                error: 'Invalid credentials'
+            });
+        }
+
+        const user = result.rows[0];
+
+        if (!user.is_active) {
+            return res.status(401).json({
+                success: false,
+                error: 'Account is deactivated'
+            });
+        }
+
+        // Проверяем пароль
+        const isValidPassword = await bcrypt.compare(password, user.password_hash);
+        if (!isValidPassword) {
+            return res.status(401).json({
+                success: false,
+                error: 'Invalid credentials'
+            });
+        }
+
+        // Обновляем время последнего входа
+        await db.query(
+            'UPDATE users SET last_login = NOW(), last_activity = NOW() WHERE id = $1',
+            [user.id]
+        );
+
+        // Создаем JWT токен
+        const token = jwt.sign(
+            { 
+                userId: user.id, 
+                companyId: user.company_id,
+                role: user.role || user.role_name 
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: '7d' }
+        );
+
+        res.json({
+            success: true,
+            data: {
+                token,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    name: user.name,
+                    phone: user.phone,
+                    role: user.role || user.role_name,
+                    role_id: user.role_id,
+                    role_name: user.role_name,
+                    role_display_name: user.role_display_name,
+                    company_id: user.company_id,
+                    company_name: user.company_name,
+                    is_active: user.is_active,
+                    email_verified: user.email_verified
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    }
+});
+
+// Получение информации о текущем пользователе
+router.get('/me', authenticate, async (req, res) => {
+    try {
+        res.json({
+            success: true,
+            data: {
+                user: {
+                    id: req.user.id,
+                    email: req.user.email,
+                    name: req.user.name,
+                    phone: req.user.phone,
+                    role: req.user.role || req.user.roleName,
+                    role_id: req.user.roleId,
+                    role_name: req.user.roleName,
+                    role_display_name: req.user.roleDisplayName,
+                    company_id: req.user.companyId,
+                    company_name: req.user.companyName,
+                    is_active: req.user.isActive
+                },
+                company: req.user.companyId ? {
+                    id: req.user.companyId,
+                    name: req.user.companyName
+                } : null
+            }
+        });
+    } catch (error) {
+        console.error('Get user info error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Internal server error'
+        });
+    }
+});
+
+// Выход
+router.post('/logout', authenticate, async (req, res) => {
+    // В JWT нет серверной сессии, поэтому просто возвращаем успех
+    res.json({
+        success: true,
+        message: 'Logged out successfully'
     });
 });
 

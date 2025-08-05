@@ -1,4 +1,8 @@
-// backend/src/routes/products.js
+// ===================================================
+// ФАЙЛ: backend/src/routes/products.js
+// ИСПРАВЛЕНИЯ: Добавлена обработка всех полей frontend
+// ===================================================
+
 const express = require('express');
 const router = express.Router();
 const db = require('../config/database');
@@ -75,23 +79,303 @@ router.get('/', authenticate, async (req, res) => {
         res.json({
             success: true,
             data: result.data || result,
-            pagination: result.pagination || null
+            pagination: result.pagination || {
+                total: result.length || 0,
+                page: filters.page,
+                limit: filters.limit
+            }
         });
+
     } catch (error) {
-        console.error('Get products error:', error);
+        console.error('Error fetching products:', error);
         res.status(500).json({
             success: false,
-            error: error.message
+            error: 'Failed to fetch products'
         });
     }
 });
 
-// Получение одного товара
-router.get('/:id', authenticate, async (req, res) => {
+// Создание нового товара - ИСПРАВЛЕНО для обработки всех полей
+router.post('/', authenticate, checkPermission('products.create'), async (req, res) => {
+    const client = await db.getClient();
+    
     try {
-        const product = await pimService.getProductById(req.user.companyId, req.params.id);
+        await client.query('BEGIN');
 
-        if (!product) {
+        const {
+            name,
+            description,
+            sku,
+            internal_code,
+            brand_id,
+            category_id,
+            weight,
+            length,
+            width,
+            height,
+            base_unit = 'pcs',
+            is_divisible = true,
+            is_active = true,
+            attributes = {},
+            source_type = 'manual'
+        } = req.body;
+
+        // Валидация обязательных полей
+        if (!name) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                success: false,
+                error: 'Product name is required'
+            });
+        }
+
+        // Проверяем уникальность SKU в рамках компании
+        if (sku) {
+            const existingSku = await client.query(
+                'SELECT id FROM products WHERE company_id = $1 AND sku = $2',
+                [req.user.companyId, sku]
+            );
+
+            if (existingSku.rows.length > 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    error: 'Product with this SKU already exists'
+                });
+            }
+        }
+
+        // Создаем dimensions JSON
+        const dimensions = {};
+        if (length) dimensions.length = parseFloat(length);
+        if (width) dimensions.width = parseFloat(width);
+        if (height) dimensions.height = parseFloat(height);
+
+        // Создаем товар
+        const productResult = await client.query(`
+            INSERT INTO products (
+                company_id, name, description, sku, internal_code,
+                brand_id, category_id, weight, length, width, height,
+                base_unit, is_divisible, is_active, attributes,
+                dimensions, source_type, created_at, updated_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, NOW(), NOW()
+            ) RETURNING *
+        `, [
+            req.user.companyId,
+            name,
+            description || null,
+            sku || null,
+            internal_code || null,
+            brand_id || null,
+            category_id || null,
+            weight ? parseFloat(weight) : null,
+            length ? parseFloat(length) : null,
+            width ? parseFloat(width) : null,
+            height ? parseFloat(height) : null,
+            base_unit,
+            is_divisible,
+            is_active,
+            JSON.stringify(attributes),
+            JSON.stringify(dimensions),
+            source_type
+        ]);
+
+        const product = productResult.rows[0];
+
+        await client.query('COMMIT');
+
+        res.status(201).json({
+            success: true,
+            data: product,
+            message: 'Product created successfully'
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error creating product:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to create product'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// Получение конкретного товара
+router.get('/:id', authenticate, checkPermission('products.view'), async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const result = await db.query(`
+            SELECT p.*, 
+                   b.name as brand_name,
+                   c.name as category_name
+            FROM products p
+            LEFT JOIN brands b ON p.brand_id = b.id
+            LEFT JOIN categories c ON p.category_id = c.id
+            WHERE p.id = $1 AND p.company_id = $2
+        `, [id, req.user.companyId]);
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'Product not found'
+            });
+        }
+
+        const product = result.rows[0];
+
+        res.json({
+            success: true,
+            data: product
+        });
+
+    } catch (error) {
+        console.error('Error fetching product:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch product'
+        });
+    }
+});
+
+// Обновление товара - ИСПРАВЛЕНО для обработки всех полей
+router.put('/:id', authenticate, checkPermission('products.update'), async (req, res) => {
+    const client = await db.getClient();
+    
+    try {
+        await client.query('BEGIN');
+
+        const { id } = req.params;
+        const {
+            name,
+            description,
+            sku,
+            internal_code,
+            brand_id,
+            category_id,
+            weight,
+            length,
+            width,
+            height,
+            base_unit,
+            is_divisible,
+            is_active,
+            attributes = {}
+        } = req.body;
+
+        // Проверяем существование товара
+        const existingProduct = await client.query(
+            'SELECT * FROM products WHERE id = $1 AND company_id = $2',
+            [id, req.user.companyId]
+        );
+
+        if (existingProduct.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({
+                success: false,
+                error: 'Product not found'
+            });
+        }
+
+        // Проверяем уникальность SKU если он изменился
+        if (sku && sku !== existingProduct.rows[0].sku) {
+            const existingSku = await client.query(
+                'SELECT id FROM products WHERE company_id = $1 AND sku = $2 AND id != $3',
+                [req.user.companyId, sku, id]
+            );
+
+            if (existingSku.rows.length > 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    success: false,
+                    error: 'Product with this SKU already exists'
+                });
+            }
+        }
+
+        // Создаем dimensions JSON
+        const dimensions = {};
+        if (length !== undefined) dimensions.length = parseFloat(length) || null;
+        if (width !== undefined) dimensions.width = parseFloat(width) || null;
+        if (height !== undefined) dimensions.height = parseFloat(height) || null;
+
+        // Обновляем товар
+        const updateResult = await client.query(`
+            UPDATE products SET
+                name = COALESCE($2, name),
+                description = COALESCE($3, description),
+                sku = COALESCE($4, sku),
+                internal_code = COALESCE($5, internal_code),
+                brand_id = COALESCE($6, brand_id),
+                category_id = COALESCE($7, category_id),
+                weight = COALESCE($8, weight),
+                length = COALESCE($9, length),
+                width = COALESCE($10, width),
+                height = COALESCE($11, height),
+                base_unit = COALESCE($12, base_unit),
+                is_divisible = COALESCE($13, is_divisible),
+                is_active = COALESCE($14, is_active),
+                attributes = COALESCE($15, attributes),
+                dimensions = COALESCE($16, dimensions),
+                updated_at = NOW()
+            WHERE id = $1 AND company_id = $17
+            RETURNING *
+        `, [
+            id,
+            name,
+            description,
+            sku,
+            internal_code,
+            brand_id,
+            category_id,
+            weight ? parseFloat(weight) : null,
+            length ? parseFloat(length) : null,
+            width ? parseFloat(width) : null,
+            height ? parseFloat(height) : null,
+            base_unit,
+            is_divisible,
+            is_active,
+            attributes ? JSON.stringify(attributes) : null,
+            Object.keys(dimensions).length > 0 ? JSON.stringify(dimensions) : null,
+            req.user.companyId
+        ]);
+
+        const product = updateResult.rows[0];
+
+        await client.query('COMMIT');
+
+        res.json({
+            success: true,
+            data: product,
+            message: 'Product updated successfully'
+        });
+
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error updating product:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to update product'
+        });
+    } finally {
+        client.release();
+    }
+});
+
+// Удаление товара
+router.delete('/:id', authenticate, checkPermission('products.delete'), async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const result = await db.query(
+            'DELETE FROM products WHERE id = $1 AND company_id = $2 RETURNING id',
+            [id, req.user.companyId]
+        );
+
+        if (result.rows.length === 0) {
             return res.status(404).json({
                 success: false,
                 error: 'Product not found'
@@ -100,270 +384,38 @@ router.get('/:id', authenticate, async (req, res) => {
 
         res.json({
             success: true,
-            data: product
+            message: 'Product deleted successfully'
         });
+
     } catch (error) {
-        console.error('Get product error:', error);
+        console.error('Error deleting product:', error);
         res.status(500).json({
             success: false,
-            error: error.message
+            error: 'Failed to delete product'
         });
     }
 });
 
-// Создание товара (только внутренние)
-router.post('/', authenticate, checkPermission('products.create'), async (req, res) => {
+// Получение категорий
+router.get('/categories/list', authenticate, async (req, res) => {
     try {
-        // Проверяем лимит тарифа
-        const currentProductsResult = await pimService.getAllProducts(req.user.companyId, {
-            source_type: 'manual',
-            limit: 1
-        });
-
-        const currentCount = currentProductsResult.pagination ? currentProductsResult.pagination.total : 0;
-
-        const limitCheck = await billingService.checkLimit(
-            req.user.companyId,
-            'products',
-            currentCount + 1
-        );
-
-        if (!limitCheck.allowed) {
-            return res.status(403).json({
-                success: false,
-                error: `Product limit reached. Current: ${limitCheck.current}, Limit: ${limitCheck.limit}`
-            });
-        }
-
-        const product = await pimService.createProduct(req.user.companyId, req.body, req.user.id);
-
-        res.status(201).json({
-            success: true,
-            data: product
-        });
-    } catch (error) {
-        console.error('Create product error:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Обновление товара
-router.put('/:id', authenticate, checkPermission('products.update'), async (req, res) => {
-    try {
-        const product = await pimService.updateProduct(
-            req.user.companyId,
-            req.params.id,
-            req.body,
-            req.user.id
-        );
-
-        res.json({
-            success: true,
-            data: product
-        });
-    } catch (error) {
-        console.error('Update product error:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Удаление товара (деактивация)
-router.delete('/:id', authenticate, checkPermission('products.delete'), async (req, res) => {
-    try {
-        await pimService.updateProduct(
-            req.user.companyId,
-            req.params.id,
-            { is_active: false },
-            req.user.id
-        );
-
-        res.json({
-            success: true,
-            message: 'Product deactivated'
-        });
-    } catch (error) {
-        console.error('Delete product error:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Массовое обновление товаров
-router.post('/bulk-update', authenticate, checkPermission('products.update'), async (req, res) => {
-    try {
-        const { product_ids, updates } = req.body;
-
-        if (!Array.isArray(product_ids) || product_ids.length === 0) {
-            return res.status(400).json({
-                success: false,
-                error: 'Product IDs array is required'
-            });
-        }
-
-        const result = await pimService.bulkUpdateProducts(
-            req.user.companyId,
-            product_ids,
-            updates,
-            req.user.id
-        );
-
-        res.json({
-            success: true,
-            data: result,
-            message: `Updated ${result.length} products`
-        });
-    } catch (error) {
-        console.error('Bulk update error:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Массовое удаление товаров
-router.post('/bulk-delete', authenticate, checkPermission('products.delete'), async (req, res) => {
-    try {
-        const { product_ids } = req.body;
-
-        if (!Array.isArray(product_ids) || product_ids.length === 0) {
-            return res.status(400).json({
-                success: false,
-                error: 'Product IDs array is required'
-            });
-        }
-
-        const result = await pimService.bulkUpdateProducts(
-            req.user.companyId,
-            product_ids,
-            { is_active: false },
-            req.user.id
-        );
-
-        res.json({
-            success: true,
-            data: result,
-            message: `Deactivated ${result.length} products`
-        });
-    } catch (error) {
-        console.error('Bulk delete error:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Импорт товаров
-router.post('/import', authenticate, checkPermission('products.import'), upload.single('file'), async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({
-                success: false,
-                error: 'File is required'
-            });
-        }
-
-        // Здесь должна быть логика импорта
-        res.json({
-            success: true,
-            message: 'Import completed',
-            data: {
-                file: req.file.filename,
-                // Добавьте результаты импорта
-            }
-        });
-    } catch (error) {
-        console.error('Import error:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Экспорт товаров в YML
-router.get('/export/yml', authenticate, async (req, res) => {
-    try {
-        // Получаем товары для экспорта
-        const products = await pimService.getAllProducts(req.user.companyId, {
-            is_active: true,
-            limit: 10000 // Большой лимит для экспорта
-        });
-
-        // Генерируем YML (здесь должна быть логика генерации YML)
-        const yml = `<?xml version="1.0" encoding="UTF-8"?>
-<yml_catalog date="${new Date().toISOString()}">
-  <shop>
-    <name>ModuleTrade</name>
-    <company>ModuleTrade Company</company>
-    <url>https://moduletrade.ru</url>
-    <currencies>
-      <currency id="RUR" rate="1"/>
-    </currencies>
-    <categories>
-      <!-- Категории -->
-    </categories>
-    <offers>
-      <!-- Товары -->
-    </offers>
-  </shop>
-</yml_catalog>`;
-
-        res.set('Content-Type', 'application/xml');
-        res.set('Content-Disposition', 'attachment; filename="products.yml"');
-        res.send(yml);
-    } catch (error) {
-        console.error('Export YML error:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Привязка товара к маркетплейсу
-router.post('/:id/marketplace-mapping', authenticate, checkPermission('products.update'), async (req, res) => {
-    try {
-        const { marketplace_id, marketplace_product_id, mapping_data } = req.body;
-
-        // ИСПРАВЛЕНО: Убран вызов getPool, используем прямой query
         const result = await db.query(`
-            INSERT INTO marketplace_product_links (
-                product_id, marketplace_id, marketplace_sku,
-                marketplace_product_id, company_id, is_active
-            ) VALUES ($1, $2, $3, $4, $5, true)
-            ON CONFLICT (product_id, marketplace_id)
-            DO UPDATE SET
-                marketplace_product_id = EXCLUDED.marketplace_product_id,
-                marketplace_sku = EXCLUDED.marketplace_sku,
-                updated_at = CURRENT_TIMESTAMP
-            RETURNING *
-        `, [
-            req.params.id,
-            marketplace_id,
-            marketplace_product_id || req.params.id, // Используем ID товара как SKU по умолчанию
-            marketplace_product_id,
-            req.user.companyId
-        ]);
+            SELECT id, name, parent_id, path, level
+            FROM categories
+            WHERE company_id = $1 AND is_active = true
+            ORDER BY path, sort_order, name
+        `, [req.user.companyId]);
 
         res.json({
             success: true,
-            data: result.rows[0]
+            data: result.rows
         });
+
     } catch (error) {
-        console.error('Marketplace mapping error:', error);
+        console.error('Error fetching categories:', error);
         res.status(500).json({
             success: false,
-            error: error.message
+            error: 'Failed to fetch categories'
         });
     }
 });

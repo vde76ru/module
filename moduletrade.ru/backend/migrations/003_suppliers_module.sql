@@ -1,657 +1,591 @@
 -- ========================================
--- МИГРАЦИЯ 003: МОДУЛЬ ПОСТАВЩИКОВ
--- Таблицы для управления поставщиками и их предложениями
--- Версия: 2.0
+-- МИГРАЦИЯ 003: ПОСТАВЩИКИ И ЗАКУПКИ
+-- Модуль управления поставщиками и закупочными процессами
 -- ========================================
 
 -- ========================================
--- ОСНОВНАЯ ТАБЛИЦА ПОСТАВЩИКОВ
+-- ПОСТАВЩИКИ
 -- ========================================
 
 CREATE TABLE suppliers (
     id SERIAL PRIMARY KEY,
     company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
-
+    
     -- Основная информация
     name VARCHAR(255) NOT NULL,
-    code VARCHAR(100) NOT NULL, -- уникальный код поставщика в рамках компании
-    legal_name VARCHAR(500), -- полное юридическое название
-
-    -- Контактная информация (JSON для гибкости)
-    contact_info JSONB DEFAULT '{}',
-    -- Пример: {"email": "sales@supplier.com", "phone": "+7123456789", "contact_person": "Иван Иванов"}
-
+    legal_name VARCHAR(255),
+    
+    -- Юридические данные
+    inn VARCHAR(20),
+    kpp VARCHAR(20),
+    ogrn VARCHAR(20),
+    
+    -- Контактная информация
+    email VARCHAR(255),
+    phone VARCHAR(50),
+    website VARCHAR(255),
+    
+    -- Контактные лица
+    contact_person VARCHAR(255),
+    contact_email VARCHAR(255),
+    contact_phone VARCHAR(50),
+    
     -- Адрес
     address JSONB DEFAULT '{}',
-    -- Пример: {"country": "RU", "city": "Москва", "street": "ул. Примерная, 123", "postal_code": "123456"}
-
+    
     -- Банковские реквизиты
-    banking_info JSONB DEFAULT '{}',
-    -- Пример: {"bank_name": "Сбербанк", "bik": "044525225", "account": "40702810123456789012"}
-
-    -- API и интеграция
-    api_type VARCHAR(100), -- rest_api, soap, ftp, email, xml_feed, csv_feed, manual
-    api_config JSONB DEFAULT '{}',
-    -- Пример: {"base_url": "https://api.supplier.com", "auth_type": "bearer", "endpoints": {...}}
-
-    -- Настройки синхронизации
-    sync_settings JSONB DEFAULT '{}',
-    -- Пример: {"auto_sync": true, "sync_frequency": "hourly", "sync_products": true, "sync_prices": true, "sync_stock": true}
-
-    -- Статус и приоритет
-    is_main BOOLEAN DEFAULT FALSE, -- основной поставщик компании
-    priority INTEGER DEFAULT 0, -- приоритет при выборе между поставщиками
-    trust_level INTEGER DEFAULT 1, -- уровень доверия (1-5)
-
+    bank_details JSONB DEFAULT '{}',
+    
+    -- Рейтинг и приоритет
+    priority INTEGER DEFAULT 0, -- чем выше, тем приоритетнее
+    reliability_score DECIMAL(3,2) DEFAULT 5.00, -- от 0 до 10
+    
     -- Условия работы
-    payment_terms JSONB DEFAULT '{}',
-    -- Пример: {"payment_method": "bank_transfer", "payment_days": 30, "prepayment_percent": 0}
-
-    delivery_terms JSONB DEFAULT '{}',
-    -- Пример: {"delivery_days_min": 3, "delivery_days_max": 7, "free_delivery_threshold": 10000}
-
+    payment_terms VARCHAR(255), -- условия оплаты
+    delivery_terms VARCHAR(255), -- условия доставки
+    min_order_amount DECIMAL(12,2) DEFAULT 0,
+    
+    -- Настройки синхронизации
+    has_api BOOLEAN DEFAULT FALSE,
+    api_settings JSONB DEFAULT '{}',
+    sync_enabled BOOLEAN DEFAULT FALSE,
+    last_sync_at TIMESTAMP WITH TIME ZONE,
+    
     -- Статус
     is_active BOOLEAN DEFAULT TRUE,
-    is_verified BOOLEAN DEFAULT FALSE, -- прошел ли поставщик верификацию
-
-    -- Синхронизация
-    last_sync TIMESTAMP WITH TIME ZONE,
-    sync_status VARCHAR(50) DEFAULT 'never',
-    -- Возможные значения: never, in_progress, success, error, partial
-    sync_error_message TEXT,
-    sync_attempts INTEGER DEFAULT 0,
-
-    -- Статистика
-    total_products INTEGER DEFAULT 0,
-    active_products INTEGER DEFAULT 0,
-    avg_delivery_time DECIMAL(5,2), -- среднее время доставки в днях
-    reliability_score DECIMAL(3,2) DEFAULT 5.0, -- оценка надежности (1.0-5.0)
-
-    -- Метаданные
-    metadata JSONB DEFAULT '{}',
-    notes TEXT,
-
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    UNIQUE(company_id, code)
-);
-
-COMMENT ON TABLE suppliers IS 'Поставщики товаров';
-
--- ========================================
--- ПРЕДЛОЖЕНИЯ ТОВАРОВ ОТ ПОСТАВЩИКОВ
--- ========================================
-
-CREATE TABLE supplier_product_offers (
-    id SERIAL PRIMARY KEY,
-    supplier_id INTEGER REFERENCES suppliers(id) ON DELETE CASCADE,
-    product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
-
-    -- Коды и идентификаторы поставщика
-    supplier_code VARCHAR(100) NOT NULL, -- артикул у поставщика
-    supplier_sku VARCHAR(100), -- дополнительный SKU
-    supplier_name VARCHAR(500) NOT NULL, -- название у поставщика
-    supplier_description TEXT,
-
-    -- Классификация у поставщика
-    supplier_brand VARCHAR(255),
-    supplier_category VARCHAR(255),
-    supplier_category_path TEXT,
-
-    -- Цены и условия
-    purchase_price DECIMAL(12,2) NOT NULL,
-    currency CHAR(3) DEFAULT 'RUB',
-
-    -- Количественные ограничения
-    min_order_quantity DECIMAL(10,3) DEFAULT 1,
-    max_order_quantity DECIMAL(10,3),
-    order_step DECIMAL(10,3) DEFAULT 1, -- кратность заказа
-
-    -- Единицы измерения поставщика
-    supplier_unit VARCHAR(50) DEFAULT 'шт',
-    unit_conversion_factor DECIMAL(15,6) DEFAULT 1, -- коэффициент пересчета к базовой единице
-
-    -- Логистика
-    delivery_time_days INTEGER, -- время доставки в днях
-    delivery_cost DECIMAL(10,2), -- стоимость доставки
-
-    -- Дополнительные расходы
-    additional_costs JSONB DEFAULT '{}',
-    -- Пример: {"packaging": 50, "handling": 25, "insurance": 100}
-
-    -- Статус и доступность
-    is_available BOOLEAN DEFAULT TRUE,
-    availability_status VARCHAR(50) DEFAULT 'in_stock',
-    -- Возможные значения: in_stock, low_stock, out_of_stock, discontinued, pre_order
-
-    -- Обновления
-    last_price_update TIMESTAMP WITH TIME ZONE,
-    last_availability_update TIMESTAMP WITH TIME ZONE,
-
-    -- Атрибуты от поставщика (сырые данные)
-    supplier_attributes JSONB DEFAULT '{}',
-
-    -- Качественные характеристики
-    quality_score DECIMAL(3,2) DEFAULT 5.0, -- оценка качества товара (1.0-5.0)
-
-    -- Метаданные
-    metadata JSONB DEFAULT '{}',
-
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    UNIQUE(supplier_id, supplier_code)
-);
-
-COMMENT ON TABLE supplier_product_offers IS 'Предложения товаров от поставщиков';
-
--- ========================================
--- ОСТАТКИ ПОСТАВЩИКОВ
--- ========================================
-
-CREATE TABLE supplier_stocks (
-    id SERIAL PRIMARY KEY,
-    supplier_offer_id INTEGER REFERENCES supplier_product_offers(id) ON DELETE CASCADE,
-
-    -- Информация о складе поставщика
-    warehouse_name VARCHAR(255) NOT NULL,
-    warehouse_code VARCHAR(100),
-
-    -- Остатки
-    quantity DECIMAL(10,3) NOT NULL DEFAULT 0,
-    reserved_quantity DECIMAL(10,3) DEFAULT 0,
-    available_quantity DECIMAL(10,3) GENERATED ALWAYS AS (quantity - reserved_quantity) STORED,
-
-    -- Пороговые значения
-    min_stock_level DECIMAL(10,3) DEFAULT 0,
-    max_stock_level DECIMAL(10,3),
-
-    -- Обновления
-    last_sync TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    sync_source VARCHAR(100), -- api, manual, import, estimation
-
-    -- Статус
-    is_active BOOLEAN DEFAULT TRUE,
-
-    -- Метаданные
-    metadata JSONB DEFAULT '{}',
-
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    UNIQUE(supplier_offer_id, warehouse_name)
-);
-
-COMMENT ON TABLE supplier_stocks IS 'Остатки товаров поставщиков по складам';
-
--- ========================================
--- ПРИОРИТЕТЫ БРЕНДОВ У ПОСТАВЩИКОВ
--- ========================================
-
-CREATE TABLE supplier_brand_priority (
-    id SERIAL PRIMARY KEY,
-    company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
-    brand_id INTEGER REFERENCES internal_brands(id) ON DELETE CASCADE,
-    supplier_id INTEGER REFERENCES suppliers(id) ON DELETE CASCADE,
-
-    -- Приоритет (чем больше число, тем выше приоритет)
-    priority INTEGER NOT NULL DEFAULT 0,
-
-    -- Дополнительные условия
-    conditions JSONB DEFAULT '{}',
-    -- Пример: {"min_order_amount": 5000, "delivery_region": ["moscow", "spb"]}
-
-    -- Статус
-    is_active BOOLEAN DEFAULT TRUE,
-
-    -- Метаданные
-    metadata JSONB DEFAULT '{}',
-    notes TEXT,
-
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    UNIQUE(company_id, brand_id, supplier_id)
-);
-
-COMMENT ON TABLE supplier_brand_priority IS 'Приоритеты поставщиков по брендам для каждой компании';
-
--- ========================================
--- СИСТЕМА СКИДОК ПОСТАВЩИКОВ
--- ========================================
-
-CREATE TABLE supplier_discounts (
-    id SERIAL PRIMARY KEY,
-    supplier_id INTEGER REFERENCES suppliers(id) ON DELETE CASCADE,
-
-    -- Название и описание скидки
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-
-    -- Тип скидки
-    discount_type VARCHAR(50) NOT NULL, -- percent, fixed_amount, bulk, loyalty, seasonal
-
-    -- Условия применения
-    brand_id INTEGER REFERENCES internal_brands(id) ON DELETE CASCADE,
-    category_id INTEGER REFERENCES internal_categories(id) ON DELETE CASCADE,
-    product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
-
-    -- Параметры скидки
-    discount_value DECIMAL(12,2) NOT NULL, -- процент или сумма
-    min_quantity DECIMAL(10,3) DEFAULT 1,
-    min_amount DECIMAL(12,2) DEFAULT 0,
-
-    -- Период действия
-    valid_from TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    valid_until TIMESTAMP WITH TIME ZONE,
-
-    -- Дополнительные условия
-    conditions JSONB DEFAULT '{}',
-    -- Пример: {"customer_type": "wholesale", "payment_method": "prepay", "region": ["moscow"]}
-
-    -- Лимиты использования
-    usage_limit INTEGER, -- максимальное количество использований
-    current_usage INTEGER DEFAULT 0,
-
-    -- Приоритет (при пересечении скидок)
-    priority INTEGER DEFAULT 0,
-
-    -- Статус
-    is_active BOOLEAN DEFAULT TRUE,
-    is_combinable BOOLEAN DEFAULT FALSE, -- можно ли комбинировать с другими скидками
-
-    -- Метаданные
-    metadata JSONB DEFAULT '{}',
-
+    
+    -- Время
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-COMMENT ON TABLE supplier_discounts IS 'Система скидок и акций от поставщиков';
+CREATE INDEX idx_suppliers_company_id ON suppliers(company_id);
+CREATE INDEX idx_suppliers_inn ON suppliers(inn);
+CREATE INDEX idx_suppliers_priority ON suppliers(priority);
+CREATE INDEX idx_suppliers_reliability_score ON suppliers(reliability_score);
+CREATE INDEX idx_suppliers_is_active ON suppliers(is_active);
+CREATE INDEX idx_suppliers_name_search ON suppliers USING GIN(to_tsvector('russian', name));
 
 -- ========================================
--- ИСТОРИЯ ЦЕН ПОСТАВЩИКОВ
+-- ТОВАРЫ ПОСТАВЩИКОВ (КАТАЛОГ)
 -- ========================================
 
-CREATE TABLE supplier_price_history (
-    id SERIAL PRIMARY KEY,
-    supplier_offer_id INTEGER REFERENCES supplier_product_offers(id) ON DELETE CASCADE,
-
-    -- Историческая цена
-    price DECIMAL(12,2) NOT NULL,
-    currency CHAR(3) DEFAULT 'RUB',
-
-    -- Дата изменения
-    price_date DATE NOT NULL,
-
-    -- Причина изменения
-    change_reason VARCHAR(100), -- sync, manual, import, market_adjustment
-
-    -- Метаданные
-    metadata JSONB DEFAULT '{}',
-
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    UNIQUE(supplier_offer_id, price_date)
-);
-
-COMMENT ON TABLE supplier_price_history IS 'История изменения цен поставщиков';
-
--- ========================================
--- ЛОГИ СИНХРОНИЗАЦИИ
--- ========================================
-
-CREATE TABLE supplier_sync_logs (
+CREATE TABLE supplier_products (
     id SERIAL PRIMARY KEY,
     supplier_id INTEGER REFERENCES suppliers(id) ON DELETE CASCADE,
-
-    -- Информация о синхронизации
-    sync_type VARCHAR(50) NOT NULL, -- full, incremental, products, prices, stock
-    sync_status VARCHAR(50) NOT NULL, -- started, success, error, partial
-
-    -- Статистика
-    records_processed INTEGER DEFAULT 0,
-    records_created INTEGER DEFAULT 0,
-    records_updated INTEGER DEFAULT 0,
-    records_failed INTEGER DEFAULT 0,
-
-    -- Время выполнения
-    started_at TIMESTAMP WITH TIME ZONE NOT NULL,
-    completed_at TIMESTAMP WITH TIME ZONE,
-    duration_seconds INTEGER,
-
-    -- Ошибки и сообщения
-    error_message TEXT,
-    error_details JSONB DEFAULT '{}',
-
+    product_id INTEGER REFERENCES products(id) ON DELETE CASCADE,
+    
+    -- Код товара у поставщика
+    supplier_code VARCHAR(255) NOT NULL,
+    supplier_name VARCHAR(500), -- название товара у поставщика
+    
+    -- Цены
+    price DECIMAL(12,2) NOT NULL DEFAULT 0,
+    currency VARCHAR(3) DEFAULT 'RUB',
+    
+    -- МРЦ (минимальная розничная цена)
+    mrc_price DECIMAL(12,2),
+    enforce_mrc BOOLEAN DEFAULT FALSE, -- обязательное соблюдение МРЦ
+    
+    -- Остатки у поставщика
+    quantity DECIMAL(10,3) DEFAULT 0,
+    reserved_quantity DECIMAL(10,3) DEFAULT 0,
+    available_quantity DECIMAL(10,3) GENERATED ALWAYS AS (quantity - reserved_quantity) STORED,
+    
+    -- Условия заказа
+    min_order_quantity DECIMAL(10,3) DEFAULT 1,
+    order_step DECIMAL(10,3) DEFAULT 1, -- кратность заказа
+    
+    -- Сроки поставки
+    delivery_time_days INTEGER DEFAULT 0,
+    
+    -- Статус доступности
+    is_available BOOLEAN DEFAULT TRUE,
+    availability_status VARCHAR(50) DEFAULT 'in_stock', -- in_stock, out_of_stock, limited, discontinued
+    
     -- Дополнительная информация
-    sync_details JSONB DEFAULT '{}',
-    -- Пример: {"api_calls": 45, "data_size_mb": 2.3, "new_products": 12}
+    description TEXT,
+    attributes JSONB DEFAULT '{}',
+    
+    -- Время последнего обновления
+    last_sync_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    price_updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    stock_updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    UNIQUE(supplier_id, supplier_code)
+);
 
+CREATE INDEX idx_supplier_products_supplier_id ON supplier_products(supplier_id);
+CREATE INDEX idx_supplier_products_product_id ON supplier_products(product_id);
+CREATE INDEX idx_supplier_products_supplier_code ON supplier_products(supplier_code);
+CREATE INDEX idx_supplier_products_price ON supplier_products(price);
+CREATE INDEX idx_supplier_products_is_available ON supplier_products(is_available);
+CREATE INDEX idx_supplier_products_availability_status ON supplier_products(availability_status);
+
+-- ========================================
+-- ЗАКАЗЫ ПОСТАВЩИКАМ (ЗАКУПКИ)
+-- ========================================
+
+CREATE TABLE purchase_orders (
+    id SERIAL PRIMARY KEY,
+    company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+    supplier_id INTEGER REFERENCES suppliers(id) ON DELETE RESTRICT,
+    
+    -- Номер заказа
+    order_number VARCHAR(100) NOT NULL,
+    
+    -- Статус заказа
+    status VARCHAR(50) DEFAULT 'draft',
+    -- Возможные значения: draft, sent, confirmed, partially_delivered, delivered, cancelled, dispute  
+    
+    -- Финансовая информация
+    total_amount DECIMAL(12,2) DEFAULT 0,
+    paid_amount DECIMAL(12,2) DEFAULT 0,
+    currency VARCHAR(3) DEFAULT 'RUB',
+    
+    -- Даты
+    order_date DATE DEFAULT CURRENT_DATE,
+    expected_delivery_date DATE,
+    actual_delivery_date DATE,
+    
+    -- Условия оплаты и доставки
+    payment_terms VARCHAR(255),
+    delivery_terms VARCHAR(255),
+    delivery_address JSONB DEFAULT '{}',
+    
+    -- Дополнительная информация
+    notes TEXT,
+    
+    -- Создатель заказа
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    UNIQUE(company_id, order_number)
+);
+
+CREATE INDEX idx_purchase_orders_company_id ON purchase_orders(company_id);
+CREATE INDEX idx_purchase_orders_supplier_id ON purchase_orders(supplier_id);
+CREATE INDEX idx_purchase_orders_order_number ON purchase_orders(order_number);
+CREATE INDEX idx_purchase_orders_status ON purchase_orders(status);
+CREATE INDEX idx_purchase_orders_order_date ON purchase_orders(order_date);
+
+-- ========================================
+-- ПОЗИЦИИ ЗАКАЗОВ ПОСТАВЩИКАМ
+-- ========================================
+
+CREATE TABLE purchase_order_items (
+    id SERIAL PRIMARY KEY,
+    purchase_order_id INTEGER REFERENCES purchase_orders(id) ON DELETE CASCADE,
+    product_id INTEGER REFERENCES products(id) ON DELETE RESTRICT,
+    supplier_product_id INTEGER REFERENCES supplier_products(id) ON DELETE SET NULL,
+    
+    -- Информация о товаре на момент заказа
+    product_name VARCHAR(500) NOT NULL,
+    supplier_code VARCHAR(255),
+    
+    -- Количество и цены
+    quantity DECIMAL(10,3) NOT NULL,
+    unit_price DECIMAL(12,2) NOT NULL,
+    total_price DECIMAL(12,2) GENERATED ALWAYS AS (quantity * unit_price) STORED,
+    
+    -- Единица измерения
+    unit VARCHAR(20) DEFAULT 'pcs',
+    
+    -- Статус позиции
+    status VARCHAR(50) DEFAULT 'ordered',
+    -- Возможные значения: ordered, confirmed, partially_delivered, delivered, cancelled
+    
+    -- Фактические поставки
+    delivered_quantity DECIMAL(10,3) DEFAULT 0,
+    remaining_quantity DECIMAL(10,3) GENERATED ALWAYS AS (quantity - delivered_quantity) STORED,
+    
+    -- Даты
+    expected_delivery_date DATE,
+    actual_delivery_date DATE,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_purchase_order_items_purchase_order_id ON purchase_order_items(purchase_order_id);
+CREATE INDEX idx_purchase_order_items_product_id ON purchase_order_items(product_id);
+CREATE INDEX idx_purchase_order_items_supplier_product_id ON purchase_order_items(supplier_product_id);
+CREATE INDEX idx_purchase_order_items_status ON purchase_order_items(status);
+
+-- ========================================
+-- ПОСТУПЛЕНИЯ ТОВАРОВ (ПРИЕМКА)
+-- ========================================
+
+CREATE TABLE goods_receipts (
+    id SERIAL PRIMARY KEY,
+    company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+    supplier_id INTEGER REFERENCES suppliers(id) ON DELETE RESTRICT,
+    purchase_order_id INTEGER REFERENCES purchase_orders(id) ON DELETE RESTRICT,
+    
+    -- Номер поступления
+    receipt_number VARCHAR(100) NOT NULL,
+    
+    -- Дата поступления
+    receipt_date DATE DEFAULT CURRENT_DATE,
+    
+    -- Документы поставщика
+    supplier_invoice_number VARCHAR(100),
+    supplier_delivery_note VARCHAR(100),
+    
+    -- Статус приемки
+    status VARCHAR(50) DEFAULT 'pending',
+    -- Возможные значения: pending, in_progress, completed, discrepancy
+    
+    -- Принял товар
+    received_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    
+    -- Общая информация
+    total_items_count INTEGER DEFAULT 0,
+    total_amount DECIMAL(12,2) DEFAULT 0,
+    
+    -- Примечания
+    notes TEXT,
+    discrepancy_notes TEXT, -- замечания по расхождениям
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    UNIQUE(company_id, receipt_number)
+);
+
+CREATE INDEX idx_goods_receipts_company_id ON goods_receipts(company_id);
+CREATE INDEX idx_goods_receipts_supplier_id ON goods_receipts(supplier_id);
+CREATE INDEX idx_goods_receipts_purchase_order_id ON goods_receipts(purchase_order_id);
+CREATE INDEX idx_goods_receipts_receipt_date ON goods_receipts(receipt_date);
+CREATE INDEX idx_goods_receipts_status ON goods_receipts(status);
+
+-- ========================================
+-- ПОЗИЦИИ ПОСТУПЛЕНИЙ
+-- ========================================
+
+CREATE TABLE goods_receipt_items (
+    id SERIAL PRIMARY KEY,
+    goods_receipt_id INTEGER REFERENCES goods_receipts(id) ON DELETE CASCADE,
+    purchase_order_item_id INTEGER REFERENCES purchase_order_items(id) ON DELETE RESTRICT,
+    product_id INTEGER REFERENCES products(id) ON DELETE RESTRICT,
+    
+    -- Информация о товаре
+    product_name VARCHAR(500) NOT NULL,
+    supplier_code VARCHAR(255),
+    
+    -- Заказанное и полученное количество
+    ordered_quantity DECIMAL(10,3) NOT NULL,
+    received_quantity DECIMAL(10,3) NOT NULL,
+    accepted_quantity DECIMAL(10,3) NOT NULL, -- принято к учету
+    rejected_quantity DECIMAL(10,3) DEFAULT 0, -- отклонено (брак, несоответствие)
+    
+    -- Единица измерения
+    unit VARCHAR(20) DEFAULT 'pcs',
+    
+    -- Цены
+    unit_price DECIMAL(12,2) NOT NULL,
+    total_amount DECIMAL(12,2) GENERATED ALWAYS AS (accepted_quantity * unit_price) STORED,
+    
+    -- Качество товара
+    quality_status VARCHAR(50) DEFAULT 'ok', -- ok, damaged, expired, wrong_item
+    quality_notes TEXT,
+    
+    -- Куда поступил товар
+    warehouse_id INTEGER, -- будет добавлен FK после создания warehouses
+    
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
-COMMENT ON TABLE supplier_sync_logs IS 'Логи синхронизации с поставщиками';
+CREATE INDEX idx_goods_receipt_items_goods_receipt_id ON goods_receipt_items(goods_receipt_id);
+CREATE INDEX idx_goods_receipt_items_purchase_order_item_id ON goods_receipt_items(purchase_order_item_id);
+CREATE INDEX idx_goods_receipt_items_product_id ON goods_receipt_items(product_id);
+CREATE INDEX idx_goods_receipt_items_quality_status ON goods_receipt_items(quality_status);
 
 -- ========================================
--- ИНДЕКСЫ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ
+-- ИСТОРИЯ ЦЕНЫ ПОСТАВЩИКОВ
 -- ========================================
 
--- Индексы для поставщиков
-CREATE INDEX idx_suppliers_company_id ON suppliers(company_id);
-CREATE INDEX idx_suppliers_code ON suppliers(code);
-CREATE INDEX idx_suppliers_is_active ON suppliers(is_active);
-CREATE INDEX idx_suppliers_is_main ON suppliers(is_main);
-CREATE INDEX idx_suppliers_priority ON suppliers(priority DESC);
-CREATE INDEX idx_suppliers_api_type ON suppliers(api_type);
-CREATE INDEX idx_suppliers_sync_status ON suppliers(sync_status);
-CREATE INDEX idx_suppliers_last_sync ON suppliers(last_sync);
-CREATE INDEX idx_suppliers_reliability_score ON suppliers(reliability_score DESC);
+CREATE TABLE supplier_price_history (
+    id BIGSERIAL PRIMARY KEY,
+    supplier_product_id INTEGER REFERENCES supplier_products(id) ON DELETE CASCADE,
+    
+    -- Старая и новая цена
+    old_price DECIMAL(12,2),
+    new_price DECIMAL(12,2) NOT NULL,
+    currency VARCHAR(3) DEFAULT 'RUB',
+    
+    -- Процент изменения
+    price_change_percent DECIMAL(8,4) GENERATED ALWAYS AS (
+        CASE WHEN old_price > 0 THEN ((new_price - old_price) / old_price) * 100 ELSE NULL END
+    ) STORED,
+    
+    -- Источник изменения цены
+    change_source VARCHAR(50) DEFAULT 'manual', -- manual, sync, api, import
+    
+    -- Время изменения
+    changed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
--- Составные индексы для поставщиков
-CREATE INDEX idx_suppliers_company_active ON suppliers(company_id, is_active);
-CREATE INDEX idx_suppliers_company_main ON suppliers(company_id, is_main);
-
--- Индексы для предложений поставщиков
-CREATE INDEX idx_supplier_offers_supplier_id ON supplier_product_offers(supplier_id);
-CREATE INDEX idx_supplier_offers_product_id ON supplier_product_offers(product_id);
-CREATE INDEX idx_supplier_offers_supplier_code ON supplier_product_offers(supplier_code);
-CREATE INDEX idx_supplier_offers_is_available ON supplier_product_offers(is_available);
-CREATE INDEX idx_supplier_offers_availability_status ON supplier_product_offers(availability_status);
-CREATE INDEX idx_supplier_offers_purchase_price ON supplier_product_offers(purchase_price);
-CREATE INDEX idx_supplier_offers_last_price_update ON supplier_product_offers(last_price_update);
-
--- Составные индексы для предложений
-CREATE INDEX idx_supplier_offers_supplier_available ON supplier_product_offers(supplier_id, is_available);
-CREATE INDEX idx_supplier_offers_product_available ON supplier_product_offers(product_id, is_available);
-
--- GIN индексы для JSON полей
-CREATE INDEX idx_supplier_offers_supplier_attributes ON supplier_product_offers USING GIN(supplier_attributes);
-CREATE INDEX idx_suppliers_contact_info ON suppliers USING GIN(contact_info);
-CREATE INDEX idx_suppliers_api_config ON suppliers USING GIN(api_config);
-
--- Индексы для остатков
-CREATE INDEX idx_supplier_stocks_offer_id ON supplier_stocks(supplier_offer_id);
-CREATE INDEX idx_supplier_stocks_warehouse_name ON supplier_stocks(warehouse_name);
-CREATE INDEX idx_supplier_stocks_quantity ON supplier_stocks(quantity);
-CREATE INDEX idx_supplier_stocks_available_quantity ON supplier_stocks(available_quantity);
-CREATE INDEX idx_supplier_stocks_last_sync ON supplier_stocks(last_sync);
-CREATE INDEX idx_supplier_stocks_is_active ON supplier_stocks(is_active);
-
--- Индексы для приоритетов брендов
-CREATE INDEX idx_supplier_brand_priority_company ON supplier_brand_priority(company_id);
-CREATE INDEX idx_supplier_brand_priority_brand ON supplier_brand_priority(brand_id);
-CREATE INDEX idx_supplier_brand_priority_supplier ON supplier_brand_priority(supplier_id);
-CREATE INDEX idx_supplier_brand_priority_priority ON supplier_brand_priority(priority DESC);
-CREATE INDEX idx_supplier_brand_priority_is_active ON supplier_brand_priority(is_active);
-
--- Составные индексы для приоритетов
-CREATE INDEX idx_supplier_brand_priority_company_brand ON supplier_brand_priority(company_id, brand_id, priority DESC);
-
--- Индексы для скидок
-CREATE INDEX idx_supplier_discounts_supplier_id ON supplier_discounts(supplier_id);
-CREATE INDEX idx_supplier_discounts_type ON supplier_discounts(discount_type);
-CREATE INDEX idx_supplier_discounts_brand_id ON supplier_discounts(brand_id);
-CREATE INDEX idx_supplier_discounts_category_id ON supplier_discounts(category_id);
-CREATE INDEX idx_supplier_discounts_product_id ON supplier_discounts(product_id);
-CREATE INDEX idx_supplier_discounts_is_active ON supplier_discounts(is_active);
-CREATE INDEX idx_supplier_discounts_valid_dates ON supplier_discounts(valid_from, valid_until);
-CREATE INDEX idx_supplier_discounts_priority ON supplier_discounts(priority DESC);
-
--- Индексы для истории цен
-CREATE INDEX idx_supplier_price_history_offer_id ON supplier_price_history(supplier_offer_id);
-CREATE INDEX idx_supplier_price_history_date ON supplier_price_history(price_date);
-CREATE INDEX idx_supplier_price_history_price ON supplier_price_history(price);
-
--- Индексы для логов синхронизации
-CREATE INDEX idx_supplier_sync_logs_supplier_id ON supplier_sync_logs(supplier_id);
-CREATE INDEX idx_supplier_sync_logs_sync_type ON supplier_sync_logs(sync_type);
-CREATE INDEX idx_supplier_sync_logs_sync_status ON supplier_sync_logs(sync_status);
-CREATE INDEX idx_supplier_sync_logs_started_at ON supplier_sync_logs(started_at);
+CREATE INDEX idx_supplier_price_history_supplier_product_id ON supplier_price_history(supplier_product_id);
+CREATE INDEX idx_supplier_price_history_changed_at ON supplier_price_history(changed_at);
 
 -- ========================================
--- ТРИГГЕРЫ ДЛЯ АВТОМАТИЗАЦИИ
+-- РЕЙТИНГИ И ОТЗЫВЫ О ПОСТАВЩИКАХ
 -- ========================================
 
--- Триггеры для обновления updated_at
+CREATE TABLE supplier_ratings (
+    id SERIAL PRIMARY KEY,
+    company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+    supplier_id INTEGER REFERENCES suppliers(id) ON DELETE CASCADE,
+    purchase_order_id INTEGER REFERENCES purchase_orders(id) ON DELETE SET NULL,
+    
+    -- Рейтинги по критериям (1-10)
+    quality_rating INTEGER CHECK (quality_rating >= 1 AND quality_rating <= 10),
+    delivery_rating INTEGER CHECK (delivery_rating >= 1 AND delivery_rating <= 10),
+    price_rating INTEGER CHECK (price_rating >= 1 AND price_rating <= 10),
+    communication_rating INTEGER CHECK (communication_rating >= 1 AND communication_rating <= 10),
+    
+    -- Общий рейтинг
+    overall_rating DECIMAL(3,2) GENERATED ALWAYS AS (
+        (COALESCE(quality_rating, 0) + COALESCE(delivery_rating, 0) + 
+         COALESCE(price_rating, 0) + COALESCE(communication_rating, 0)) / 4.0
+    ) STORED,
+    
+    -- Комментарий
+    comment TEXT,
+    
+    -- Кто поставил рейтинг
+    rated_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+CREATE INDEX idx_supplier_ratings_supplier_id ON supplier_ratings(supplier_id);
+CREATE INDEX idx_supplier_ratings_overall_rating ON supplier_ratings(overall_rating);
+
+-- ========================================
+-- ТРИГГЕРЫ
+-- ========================================
+
+-- Триггеры для updated_at
 CREATE TRIGGER trigger_update_suppliers_updated_at
     BEFORE UPDATE ON suppliers
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER trigger_update_supplier_offers_updated_at
-    BEFORE UPDATE ON supplier_product_offers
+CREATE TRIGGER trigger_update_supplier_products_updated_at
+    BEFORE UPDATE ON supplier_products
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER trigger_update_supplier_stocks_updated_at
-    BEFORE UPDATE ON supplier_stocks
+CREATE TRIGGER trigger_update_purchase_orders_updated_at
+    BEFORE UPDATE ON purchase_orders
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER trigger_update_supplier_brand_priority_updated_at
-    BEFORE UPDATE ON supplier_brand_priority
+CREATE TRIGGER trigger_update_purchase_order_items_updated_at
+    BEFORE UPDATE ON purchase_order_items
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER trigger_update_supplier_discounts_updated_at
-    BEFORE UPDATE ON supplier_discounts
+CREATE TRIGGER trigger_update_goods_receipts_updated_at
+    BEFORE UPDATE ON goods_receipts
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- ========================================
--- ФУНКЦИИ ДЛЯ РАБОТЫ С ПОСТАВЩИКАМИ
+-- ФУНКЦИИ ДЛЯ АВТОМАТИЗАЦИИ
 -- ========================================
 
--- Функция для обновления статистики поставщика
-CREATE OR REPLACE FUNCTION update_supplier_stats()
+-- Функция для генерации номера заказа поставщику
+CREATE OR REPLACE FUNCTION generate_purchase_order_number()
 RETURNS TRIGGER AS $$
 DECLARE
-    supplier_id_val INTEGER;
-    stats RECORD;
+    company_prefix VARCHAR(10);
+    next_number INTEGER;
+    order_number_val VARCHAR(100);
 BEGIN
-    -- Определяем ID поставщика
-    IF TG_OP = 'DELETE' THEN
-        supplier_id_val := OLD.supplier_id;
-    ELSE
-        supplier_id_val := NEW.supplier_id;
+    -- Если номер заказа уже задан, не генерируем
+    IF NEW.order_number IS NOT NULL THEN
+        RETURN NEW;
     END IF;
+    
+    -- Получаем префикс компании
+    SELECT UPPER(LEFT(name, 3)) INTO company_prefix
+    FROM companies WHERE id = NEW.company_id;
+    
+    -- Получаем следующий номер заказа для текущего года
+    SELECT COALESCE(MAX(CAST(SUBSTRING(order_number FROM '\d+$') AS INTEGER)), 0) + 1
+    INTO next_number
+    FROM purchase_orders 
+    WHERE company_id = NEW.company_id 
+      AND EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM NOW())
+      AND order_number ~ (company_prefix || '-PO-' || EXTRACT(YEAR FROM NOW()) || '-\d+$');
+    
+    -- Формируем номер заказа
+    order_number_val := company_prefix || '-PO-' || EXTRACT(YEAR FROM NOW()) || '-' || LPAD(next_number::TEXT, 4, '0');
+    
+    NEW.order_number := order_number_val;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
-    -- Считаем статистику
-    SELECT
-        COUNT(*) as total,
-        COUNT(*) FILTER (WHERE is_available = TRUE) as active,
-        AVG(delivery_time_days) as avg_delivery
-    INTO stats
-    FROM supplier_product_offers
-    WHERE supplier_id = supplier_id_val;
+-- Триггер для автоматической генерации номера заказа
+CREATE TRIGGER trigger_generate_purchase_order_number
+    BEFORE INSERT ON purchase_orders
+    FOR EACH ROW EXECUTE FUNCTION generate_purchase_order_number();
 
-    -- Обновляем статистику поставщика
-    UPDATE suppliers
-    SET
-        total_products = COALESCE(stats.total, 0),
-        active_products = COALESCE(stats.active, 0),
-        avg_delivery_time = stats.avg_delivery,
+-- Функция для генерации номера поступления
+CREATE OR REPLACE FUNCTION generate_receipt_number()
+RETURNS TRIGGER AS $$
+DECLARE
+    company_prefix VARCHAR(10);
+    next_number INTEGER;
+    receipt_number_val VARCHAR(100);
+BEGIN
+    -- Если номер поступления уже задан, не генерируем
+    IF NEW.receipt_number IS NOT NULL THEN
+        RETURN NEW;
+    END IF;
+    
+    -- Получаем префикс компании
+    SELECT UPPER(LEFT(name, 3)) INTO company_prefix
+    FROM companies WHERE id = NEW.company_id;
+    
+    -- Получаем следующий номер поступления для текущего года
+    SELECT COALESCE(MAX(CAST(SUBSTRING(receipt_number FROM '\d+$') AS INTEGER)), 0) + 1
+    INTO next_number
+    FROM goods_receipts 
+    WHERE company_id = NEW.company_id 
+      AND EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM NOW())
+      AND receipt_number ~ (company_prefix || '-GR-' || EXTRACT(YEAR FROM NOW()) || '-\d+$');
+    
+    -- Формируем номер поступления
+    receipt_number_val := company_prefix || '-GR-' || EXTRACT(YEAR FROM NOW()) || '-' || LPAD(next_number::TEXT, 4, '0');
+    
+    NEW.receipt_number := receipt_number_val;
+    
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Триггер для автоматической генерации номера поступления
+CREATE TRIGGER trigger_generate_receipt_number
+    BEFORE INSERT ON goods_receipts
+    FOR EACH ROW EXECUTE FUNCTION generate_receipt_number();
+
+-- Функция для обновления рейтинга поставщика
+CREATE OR REPLACE FUNCTION update_supplier_reliability_score()
+RETURNS TRIGGER AS $$
+DECLARE
+    avg_rating DECIMAL(3,2);
+BEGIN
+    -- Вычисляем средний рейтинг поставщика за последние 12 месяцев
+    SELECT AVG(overall_rating)
+    INTO avg_rating
+    FROM supplier_ratings sr
+    WHERE sr.supplier_id = NEW.supplier_id
+      AND sr.created_at >= NOW() - INTERVAL '12 months';
+    
+    -- Обновляем рейтинг поставщика
+    UPDATE suppliers 
+    SET reliability_score = COALESCE(avg_rating, 5.00),
         updated_at = NOW()
-    WHERE id = supplier_id_val;
-
-    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+    WHERE id = NEW.supplier_id;
+    
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- Функция для логирования изменений цен
-CREATE OR REPLACE FUNCTION log_supplier_price_changes()
+-- Триггер для обновления рейтинга поставщика
+CREATE TRIGGER trigger_update_supplier_reliability_score
+    AFTER INSERT OR UPDATE ON supplier_ratings
+    FOR EACH ROW EXECUTE FUNCTION update_supplier_reliability_score();
+
+-- Функция для отслеживания изменений цен поставщиков
+CREATE OR REPLACE FUNCTION track_supplier_price_changes()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Логируем изменение цены
-    IF TG_OP = 'UPDATE' AND OLD.purchase_price != NEW.purchase_price THEN
-        INSERT INTO supplier_price_history (
-            supplier_offer_id, price, currency, price_date, change_reason
-        ) VALUES (
-            NEW.id, NEW.purchase_price, NEW.currency, CURRENT_DATE, 'update'
-        ) ON CONFLICT (supplier_offer_id, price_date) DO UPDATE
-        SET price = EXCLUDED.price, currency = EXCLUDED.currency;
-
-        -- Обновляем время последнего изменения цены
-        NEW.last_price_update := NOW();
+    -- Отслеживаем изменение цены
+    IF OLD.price != NEW.price THEN
+        INSERT INTO supplier_price_history (supplier_product_id, old_price, new_price, currency, change_source)
+        VALUES (NEW.id, OLD.price, NEW.price, NEW.currency, 'manual');
+        
+        -- Обновляем время изменения цены
+        NEW.price_updated_at := NOW();
     END IF;
-
+    
+    -- Отслеживаем изменение остатков
+    IF OLD.quantity != NEW.quantity THEN
+        NEW.stock_updated_at := NOW();
+    END IF;
+    
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
--- Функция для автоматического обновления доступности
-CREATE OR REPLACE FUNCTION update_availability_status()
-RETURNS TRIGGER AS $$
-DECLARE
-    total_available DECIMAL(10,3);
-BEGIN
-    -- Считаем общий доступный остаток
-    SELECT COALESCE(SUM(available_quantity), 0)
-    INTO total_available
-    FROM supplier_stocks
-    WHERE supplier_offer_id = NEW.supplier_offer_id AND is_active = TRUE;
-
-    -- Обновляем статус доступности предложения
-    UPDATE supplier_product_offers
-    SET
-        availability_status = CASE
-            WHEN total_available <= 0 THEN 'out_of_stock'
-            WHEN total_available <= 5 THEN 'low_stock'
-            ELSE 'in_stock'
-        END,
-        last_availability_update = NOW()
-    WHERE id = NEW.supplier_offer_id;
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Применяем триггеры
-CREATE TRIGGER trigger_update_supplier_stats
-    AFTER INSERT OR UPDATE OR DELETE ON supplier_product_offers
-    FOR EACH ROW EXECUTE FUNCTION update_supplier_stats();
-
-CREATE TRIGGER trigger_log_supplier_price_changes
-    BEFORE UPDATE ON supplier_product_offers
-    FOR EACH ROW EXECUTE FUNCTION log_supplier_price_changes();
-
-CREATE TRIGGER trigger_update_availability_status
-    AFTER INSERT OR UPDATE ON supplier_stocks
-    FOR EACH ROW EXECUTE FUNCTION update_availability_status();
+-- Триггер для отслеживания изменений
+CREATE TRIGGER trigger_track_supplier_price_changes
+    BEFORE UPDATE ON supplier_products
+    FOR EACH ROW EXECUTE FUNCTION track_supplier_price_changes();
 
 -- ========================================
--- ПРОВЕРКИ И ОГРАНИЧЕНИЯ
+-- ОГРАНИЧЕНИЯ И ПРОВЕРКИ
 -- ========================================
 
 -- Проверки для поставщиков
-ALTER TABLE suppliers ADD CONSTRAINT check_api_type
-    CHECK (api_type IN ('rest_api', 'soap', 'ftp', 'email', 'xml_feed', 'csv_feed', 'manual', 'webhook'));
+ALTER TABLE suppliers ADD CONSTRAINT check_reliability_score_valid
+    CHECK (reliability_score >= 0 AND reliability_score <= 10);
 
-ALTER TABLE suppliers ADD CONSTRAINT check_sync_status
-    CHECK (sync_status IN ('never', 'in_progress', 'success', 'error', 'partial'));
+ALTER TABLE suppliers ADD CONSTRAINT check_min_order_amount_non_negative
+    CHECK (min_order_amount >= 0);
 
-ALTER TABLE suppliers ADD CONSTRAINT check_trust_level
-    CHECK (trust_level BETWEEN 1 AND 5);
+-- Проверки для товаров поставщиков
+ALTER TABLE supplier_products ADD CONSTRAINT check_price_positive
+    CHECK (price >= 0 AND COALESCE(mrc_price, 0) >= 0);
 
-ALTER TABLE suppliers ADD CONSTRAINT check_reliability_score
-    CHECK (reliability_score BETWEEN 1.0 AND 5.0);
+ALTER TABLE supplier_products ADD CONSTRAINT check_quantities_non_negative
+    CHECK (quantity >= 0 AND reserved_quantity >= 0);
 
--- Проверки для предложений
-ALTER TABLE supplier_product_offers ADD CONSTRAINT check_availability_status
-    CHECK (availability_status IN ('in_stock', 'low_stock', 'out_of_stock', 'discontinued', 'pre_order'));
+ALTER TABLE supplier_products ADD CONSTRAINT check_order_quantities_positive
+    CHECK (min_order_quantity > 0 AND order_step > 0);
 
-ALTER TABLE supplier_product_offers ADD CONSTRAINT check_purchase_price_positive
-    CHECK (purchase_price >= 0);
+-- Проверки для заказов
+ALTER TABLE purchase_orders ADD CONSTRAINT check_amounts_non_negative
+    CHECK (total_amount >= 0 AND paid_amount >= 0 AND paid_amount <= total_amount);
 
-ALTER TABLE supplier_product_offers ADD CONSTRAINT check_min_order_quantity_positive
-    CHECK (min_order_quantity > 0);
+ALTER TABLE purchase_order_items ADD CONSTRAINT check_quantities_positive
+    CHECK (quantity > 0 AND unit_price >= 0 AND delivered_quantity >= 0);
 
-ALTER TABLE supplier_product_offers ADD CONSTRAINT check_quality_score
-    CHECK (quality_score BETWEEN 1.0 AND 5.0);
-
--- Проверки для остатков
-ALTER TABLE supplier_stocks ADD CONSTRAINT check_quantity_non_negative
-    CHECK (quantity >= 0);
-
-ALTER TABLE supplier_stocks ADD CONSTRAINT check_reserved_quantity_non_negative
-    CHECK (reserved_quantity >= 0);
-
--- Проверки для скидок
-ALTER TABLE supplier_discounts ADD CONSTRAINT check_discount_type
-    CHECK (discount_type IN ('percent', 'fixed_amount', 'bulk', 'loyalty', 'seasonal', 'volume'));
-
-ALTER TABLE supplier_discounts ADD CONSTRAINT check_discount_value_positive
-    CHECK (discount_value >= 0);
+-- Проверки для поступлений
+ALTER TABLE goods_receipt_items ADD CONSTRAINT check_receipt_quantities_valid
+    CHECK (received_quantity >= 0 AND accepted_quantity >= 0 AND rejected_quantity >= 0 
+           AND (accepted_quantity + rejected_quantity) <= received_quantity);
 
 -- ========================================
 -- ПРЕДСТАВЛЕНИЯ (VIEWS)
 -- ========================================
 
--- Представление доступных предложений поставщиков
-CREATE VIEW available_supplier_offers AS
-SELECT
-    spo.id,
-    spo.supplier_id,
-    spo.product_id,
-    s.name as supplier_name,
-    s.priority as supplier_priority,
-    s.reliability_score,
-    p.name as product_name,
-    p.internal_code,
-    spo.supplier_code,
-    spo.supplier_name as supplier_product_name,
-    spo.purchase_price,
-    spo.currency,
-    spo.min_order_quantity,
-    spo.delivery_time_days,
-    spo.availability_status,
-    COALESCE(SUM(ss.available_quantity), 0) as total_available_stock,
-    spo.last_price_update,
-    spo.created_at,
-    spo.updated_at
-FROM supplier_product_offers spo
-JOIN suppliers s ON spo.supplier_id = s.id
-JOIN products p ON spo.product_id = p.id
-LEFT JOIN supplier_stocks ss ON spo.id = ss.supplier_offer_id AND ss.is_active = TRUE
-WHERE spo.is_available = TRUE
-  AND s.is_active = TRUE
-  AND p.is_active = TRUE
-GROUP BY spo.id, s.id, p.id;
-
-COMMENT ON VIEW available_supplier_offers IS 'Представление доступных предложений поставщиков с остатками';
-
--- Представление лучших цен по товарам
+-- Представление лучших цен поставщиков
 CREATE VIEW best_supplier_prices AS
-SELECT DISTINCT ON (product_id)
-    product_id,
-    supplier_id,
-    supplier_code,
-    purchase_price,
-    currency,
-    min_order_quantity,
-    delivery_time_days,
-    availability_status
-FROM available_supplier_offers
-ORDER BY product_id, purchase_price ASC, supplier_priority DESC;
+SELECT DISTINCT ON (sp.product_id)
+    sp.product_id,
+    sp.supplier_id,
+    s.name as supplier_name,
+    sp.supplier_code,
+    sp.price,
+    sp.currency,
+    sp.min_order_quantity,
+    sp.delivery_time_days,
+    sp.availability_status,
+    sp.available_quantity,
+    s.reliability_score
+FROM supplier_products sp
+JOIN suppliers s ON sp.supplier_id = s.id
+WHERE sp.is_available = TRUE 
+  AND s.is_active = TRUE
+  AND sp.available_quantity > 0
+ORDER BY sp.product_id, sp.price ASC, s.priority DESC, s.reliability_score DESC;
 
 COMMENT ON VIEW best_supplier_prices IS 'Лучшие цены поставщиков по товарам';
-
--- ========================================
--- ВНЕШНИЕ КЛЮЧИ (ДОБАВЛЯЮТСЯ ПОСЛЕ СОЗДАНИЯ ТАБЛИЦЫ PRODUCTS)
--- ========================================
-
--- Добавим внешнюю связь на поставщиков в таблицу товаров
--- Это делается отдельно, так как таблица products создается в миграции 002
-DO $$
-BEGIN
-    -- Добавляем внешний ключ main_supplier_id в таблицу products
-    IF NOT EXISTS (
-        SELECT 1 FROM information_schema.table_constraints
-        WHERE constraint_name = 'fk_products_main_supplier'
-        AND table_name = 'products'
-    ) THEN
-        ALTER TABLE products
-        ADD CONSTRAINT fk_products_main_supplier
-        FOREIGN KEY (main_supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL;
-    END IF;
-END $$;
-
--- Индекс для нового внешнего ключа
-CREATE INDEX IF NOT EXISTS idx_products_main_supplier_id ON products(main_supplier_id);

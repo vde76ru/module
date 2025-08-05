@@ -1,329 +1,383 @@
-const cron = require('node-cron');
+// ===================================================
+// ФАЙЛ: backend/src/services/OrderOrchestrationService.js
+// ПОЛНАЯ РЕАЛИЗАЦИЯ: Управление заказами и закупками
+// ===================================================
+
 const { Pool } = require('pg');
 const logger = require('../utils/logger');
-const { sendSlackNotification } = require('../utils/slack');
 
 class OrderOrchestrationService {
   constructor() {
     this.pool = new Pool({
       connectionString: process.env.DATABASE_URL
     });
-    this.scheduledTasks = new Map();
   }
 
-  async initialize() {
-    logger.info('Initializing Order Orchestration Service');
-    await this.setupSchedules();
-
-    // Обновляем расписание каждые 5 минут
-    cron.schedule('*/5 * * * *', async () => {
-      await this.setupSchedules();
-    });
-  }
-
-  async setupSchedules() {
-    try {
-      const result = await this.pool.query(`
-        SELECT id, company_id, name, settings
-        FROM sales_channels
-        WHERE is_active = true
-      `);
-
-      const channels = result.rows;
-
-      // Удаляем старые задачи
-      for (const [channelId, task] of this.scheduledTasks) {
-        if (!channels.find(ch => ch.id === channelId)) {
-          task.stop();
-          this.scheduledTasks.delete(channelId);
-        }
-      }
-
-      // Создаем или обновляем задачи
-      for (const channel of channels) {
-        const schedule = channel.settings?.procurement_schedule || [];
-
-        if (schedule.length > 0) {
-          this.scheduleChannelProcurement(channel);
-        }
-      }
-    } catch (error) {
-      logger.error('Error setting up schedules:', error);
-    }
-  }
-
-  scheduleChannelProcurement(channel) {
-    const schedules = channel.settings?.procurement_schedule || [];
-
-    // Удаляем старую задачу если есть
-    if (this.scheduledTasks.has(channel.id)) {
-      this.scheduledTasks.get(channel.id).stop();
-    }
-
-    // Создаем cron выражения для каждого времени
-    schedules.forEach(time => {
-      const [hours, minutes] = time.split(':');
-      const cronExpression = `${minutes} ${hours} * * *`;
-
-      const task = cron.schedule(cronExpression, async () => {
-        logger.info(`Running procurement for channel ${channel.name} at ${time}`);
-        await this.runProcurement(channel);
-      });
-
-      this.scheduledTasks.set(channel.id, task);
-    });
-  }
-
-  async runProcurement(channel) {
+  /**
+   * Обработка входящего заказа с маркетплейса
+   */
+  async processIncomingOrder(orderData) {
     const client = await this.pool.connect();
 
     try {
       await client.query('BEGIN');
 
-      // Собираем все потребности
-      const needs = await this.collectNeeds(client, channel);
+      // Создаем входящий заказ
+      const orderResult = await client.query(`
+        INSERT INTO incoming_orders (
+          company_id, marketplace_id, order_number, marketplace_order_id,
+          customer_name, customer_email, customer_phone,
+          status, payment_status, payment_method,
+          delivery_type, delivery_service, delivery_cost,
+          delivery_address, total_amount, commission_amount,
+          net_amount, currency, order_date, metadata
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+        ) RETURNING id
+      `, [
+        orderData.company_id,
+        orderData.marketplace_id,
+        orderData.order_number,
+        orderData.marketplace_order_id,
+        orderData.customer_name,
+        orderData.customer_email,
+        orderData.customer_phone,
+        orderData.status || 'new',
+        orderData.payment_status || 'pending',
+        orderData.payment_method,
+        orderData.delivery_type,
+        orderData.delivery_service,
+        orderData.delivery_cost || 0,
+        JSON.stringify(orderData.delivery_address || {}),
+        orderData.total_amount,
+        orderData.commission_amount || 0,
+        orderData.net_amount,
+        orderData.currency || 'RUB',
+        orderData.order_date || new Date(),
+        JSON.stringify(orderData.metadata || {})
+      ]);
 
-      if (needs.length === 0) {
-        logger.info(`No procurement needs for channel ${channel.name}`);
-        return;
+      const orderId = orderResult.rows[0].id;
+
+      // Добавляем товары в заказ
+      const orderItems = [];
+      for (const item of orderData.items) {
+        const itemResult = await client.query(`
+          INSERT INTO incoming_order_items (
+            order_id, product_id, external_product_id,
+            product_name, product_sku, product_variant,
+            quantity, unit_price, total_price,
+            discount_amount, commission_amount, status,
+            raw_data
+          ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+          ) RETURNING id
+        `, [
+          orderId,
+          item.product_id,
+          item.external_product_id,
+          item.product_name,
+          item.product_sku,
+          item.product_variant,
+          item.quantity,
+          item.unit_price,
+          item.total_price,
+          item.discount_amount || 0,
+          item.commission_amount || 0,
+          'new',
+          JSON.stringify(item.raw_data || {})
+        ]);
+
+        orderItems.push({ ...item, id: itemResult.rows[0].id });
       }
 
-      // Группируем по поставщикам
-      const groupedNeeds = this.groupNeedsBySupplier(needs);
+      // Запускаем процесс резервирования товаров
+      await this.reserveOrderItems(client, orderId, orderItems);
 
-      // Создаем заказы для каждого поставщика
-      for (const [supplierId, items] of Object.entries(groupedNeeds)) {
-        const orderId = await this.createSupplierOrder(
-          client,
-          channel,
-          supplierId,
-          items
-        );
-
-        // Если включена автоматическая отправка, отправляем заказ
-        if (channel.settings?.auto_confirm_orders) {
-          await this.sendOrderToSupplier(client, orderId);
-        }
-      }
+      // Проверяем необходимость закупки
+      await this.checkProcurementNeeds(client, orderData.company_id, orderItems);
 
       await client.query('COMMIT');
 
-      // Отправляем уведомление
-      await sendSlackNotification(
-        `✅ Автоматическая закупка для канала "${channel.name}" выполнена. Создано ${Object.keys(groupedNeeds).length} заказов.`
-      );
+      logger.info(`Processed incoming order ${orderData.order_number}`, { orderId });
+
+      return {
+        success: true,
+        orderId,
+        message: 'Order processed successfully'
+      };
 
     } catch (error) {
       await client.query('ROLLBACK');
-      logger.error('Error in procurement:', error);
-
-      await sendSlackNotification(
-        `❌ Ошибка автоматической закупки для канала "${channel.name}": ${error.message}`
-      );
+      logger.error('Error processing incoming order:', error);
+      throw error;
     } finally {
       client.release();
     }
   }
 
-  async collectNeeds(client, channel) {
-    const result = await client.query(`
-      WITH pending_items AS (
-        SELECT
-          oi.id,
-          oi.product_id,
-          oi.quantity,
-          o.company_id,
-          p.name as product_name,
-          ps.supplier_id,
-          ps.supplier_sku,
-          ps.original_price,
-          ps.currency
-        FROM order_items oi
-        JOIN orders o ON o.id = oi.order_id
-        JOIN products p ON p.id = oi.product_id
-        JOIN product_suppliers ps ON ps.product_id = oi.product_id
-        WHERE o.sales_channel_id = $1
-          AND oi.procurement_status = 'pending'
-          AND NOT EXISTS (
-            SELECT 1 FROM procurement_overrides po
-            WHERE po.order_item_id = oi.id
-          )
-      )
-      SELECT * FROM pending_items
-      ORDER BY supplier_id, product_id
-    `, [channel.id]);
+  /**
+   * Резервирование товаров для заказа
+   */
+  async reserveOrderItems(client, orderId, orderItems) {
+    for (const item of orderItems) {
+      if (!item.product_id) continue;
 
-    return result.rows;
+      // Находим склады с доступными остатками
+      const stockResult = await client.query(`
+        SELECT wpl.warehouse_id, wpl.available_quantity, w.priority
+        FROM warehouse_product_links wpl
+        JOIN warehouses w ON wpl.warehouse_id = w.id
+        WHERE wpl.product_id = $1 AND wpl.available_quantity >= $2
+        ORDER BY w.priority DESC, wpl.available_quantity DESC
+        LIMIT 1
+      `, [item.product_id, item.quantity]);
+
+      if (stockResult.rows.length > 0) {
+        const warehouse = stockResult.rows[0];
+
+        // Резервируем товар
+        await client.query(`
+          UPDATE warehouse_product_links
+          SET reserved_quantity = reserved_quantity + $3,
+              available_quantity = quantity - reserved_quantity - $3
+          WHERE warehouse_id = $1 AND product_id = $2
+        `, [warehouse.warehouse_id, item.product_id, item.quantity]);
+
+        // Обновляем статус позиции заказа
+        await client.query(`
+          UPDATE incoming_order_items
+          SET status = 'reserved',
+              warehouse_id = $2,
+              reserved_quantity = $3
+          WHERE id = $1
+        `, [item.id, warehouse.warehouse_id, item.quantity]);
+
+        logger.info(`Reserved ${item.quantity} units of product ${item.product_id} from warehouse ${warehouse.warehouse_id}`);
+      } else {
+        // Товара нет в наличии - нужна закупка
+        await client.query(`
+          UPDATE incoming_order_items
+          SET status = 'awaiting_procurement'
+          WHERE id = $1
+        `, [item.id]);
+
+        logger.warn(`Product ${item.product_id} not available in stock, procurement needed`);
+      }
+    }
   }
 
-  groupNeedsBySupplier(needs) {
-    const grouped = {};
+  /**
+   * Проверка потребности в закупке
+   */
+  async checkProcurementNeeds(client, companyId, orderItems) {
+    const procurementNeeds = [];
 
-    for (const need of needs) {
-      if (!grouped[need.supplier_id]) {
-        grouped[need.supplier_id] = [];
-      }
+    for (const item of orderItems) {
+      if (!item.product_id) continue;
 
-      // Проверяем, есть ли уже такой товар в группе
-      const existing = grouped[need.supplier_id].find(
-        item => item.product_id === need.product_id
-      );
+      // Проверяем текущие остатки и заказы в пути
+      const stockAnalysis = await client.query(`
+        SELECT 
+          COALESCE(SUM(wpl.available_quantity), 0) as available_stock,
+          COALESCE(SUM(poi.quantity - poi.received_quantity), 0) as ordered_stock,
+          p.min_order_quantity,
+          spo.supplier_id,
+          spo.min_order_quantity as supplier_min_qty,
+          spo.purchase_price
+        FROM products p
+        LEFT JOIN warehouse_product_links wpl ON p.id = wpl.product_id AND wpl.is_active = true
+        LEFT JOIN supplier_product_offers spo ON p.id = spo.product_id AND spo.is_available = true
+        LEFT JOIN procurement_order_items poi ON p.id = poi.product_id AND poi.status IN ('ordered', 'confirmed', 'shipped')
+        WHERE p.id = $1 AND p.company_id = $2
+        GROUP BY p.id, p.min_order_quantity, spo.supplier_id, spo.min_order_quantity, spo.purchase_price
+        ORDER BY spo.purchase_price ASC
+        LIMIT 1
+      `, [item.product_id, companyId]);
 
-      if (existing) {
-        // Суммируем количество
-        existing.quantity += need.quantity;
-        existing.order_item_ids.push(need.id);
-      } else {
-        grouped[need.supplier_id].push({
-          product_id: need.product_id,
-          supplier_sku: need.supplier_sku,
-          quantity: need.quantity,
-          original_price: need.original_price,
-          currency: need.currency,
-          product_name: need.product_name,
-          order_item_ids: [need.id]
-        });
+      if (stockAnalysis.rows.length > 0) {
+        const analysis = stockAnalysis.rows[0];
+        const totalAvailable = parseFloat(analysis.available_stock) + parseFloat(analysis.ordered_stock);
+
+        // Если нужно больше товара чем есть в наличии + в заказе
+        if (item.quantity > totalAvailable) {
+          const needToOrder = item.quantity - totalAvailable;
+
+          procurementNeeds.push({
+            product_id: item.product_id,
+            supplier_id: analysis.supplier_id,
+            quantity: Math.max(needToOrder, analysis.supplier_min_qty || 1),
+            unit_price: analysis.purchase_price,
+            order_item_id: item.id,
+            priority: 'high'
+          });
+        }
       }
     }
 
-    return grouped;
+    // Создаем заказы поставщикам если есть потребности
+    if (procurementNeeds.length > 0) {
+      await this.createProcurementOrders(client, companyId, procurementNeeds);
+    }
   }
 
-  async createSupplierOrder(client, channel, supplierId, items) {
-    // Получаем информацию о поставщике
-    const supplierResult = await client.query(
-      'SELECT name FROM suppliers WHERE id = $1',
-      [supplierId]
-    );
-    const supplier = supplierResult.rows[0];
+  /**
+   * Создание заказов поставщикам
+   */
+  async createProcurementOrders(client, companyId, procurementNeeds) {
+    // Группируем по поставщикам
+    const supplierGroups = procurementNeeds.reduce((groups, need) => {
+      if (!groups[need.supplier_id]) {
+        groups[need.supplier_id] = [];
+      }
+      groups[need.supplier_id].push(need);
+      return groups;
+    }, {});
 
-    // Создаем batch ID для группировки
-    const batchId = require('crypto').randomUUID();
+    for (const [supplierId, items] of Object.entries(supplierGroups)) {
+      if (!supplierId || supplierId === 'null') continue;
 
-    // Создаем заказ поставщику
-    const orderResult = await client.query(`
-      INSERT INTO supplier_orders (
-        company_id,
-        supplier_id,
-        status,
-        total_amount,
-        aggregation_batch_id,
-        created_by_user_id
-      )
-      VALUES ($1, $2, $3, $4, $5, NULL)
-      RETURNING id
-    `, [
-      channel.company_id,
-      supplierId,
-      'draft',
-      this.calculateTotalAmount(items),
-      batchId
-    ]);
+      const totalAmount = items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0);
 
-    const orderId = orderResult.rows[0].id;
-
-    // Добавляем позиции в заказ
-    for (const item of items) {
-      await client.query(`
-        INSERT INTO supplier_order_items (
-          order_id,
-          product_id,
-          supplier_sku,
-          quantity,
-          price,
-          currency
-        )
-        VALUES ($1, $2, $3, $4, $5, $6)
+      // Создаем заказ поставщику
+      const orderResult = await client.query(`
+        INSERT INTO procurement_orders (
+          company_id, supplier_id, order_number,
+          status, total_amount, currency, priority, is_urgent
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8
+        ) RETURNING id
       `, [
-        orderId,
-        item.product_id,
-        item.supplier_sku,
-        item.quantity,
-        item.original_price,
-        item.currency
+        companyId,
+        supplierId,
+        `PO-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`,
+        'draft',
+        totalAmount,
+        'RUB',
+        1,
+        true
       ]);
 
-      // Обновляем статус позиций клиентских заказов
-      for (const orderItemId of item.order_item_ids) {
+      const procurementOrderId = orderResult.rows[0].id;
+
+      // Добавляем позиции
+      for (const item of items) {
         await client.query(`
-          UPDATE order_items
-          SET procurement_status = 'ordered'
-          WHERE id = $1
-        `, [orderItemId]);
+          INSERT INTO procurement_order_items (
+            procurement_order_id, product_id, incoming_order_item_id,
+            product_name, quantity, unit_price, total_price, status
+          ) VALUES (
+            $1, $2, $3, (SELECT name FROM products WHERE id = $2), $4, $5, $6, $7
+          )
+        `, [
+          procurementOrderId,
+          item.product_id,
+          item.order_item_id,
+          item.quantity,
+          item.unit_price,
+          item.quantity * item.unit_price,
+          'ordered'
+        ]);
       }
+
+      logger.info(`Created procurement order ${procurementOrderId} for supplier ${supplierId} with ${items.length} items`);
     }
-
-    logger.info(`Created supplier order ${orderId} for ${supplier.name} with ${items.length} items`);
-
-    return orderId;
   }
 
-  calculateTotalAmount(items) {
-    return items.reduce((sum, item) => {
-      return sum + (item.original_price * item.quantity);
-    }, 0);
-  }
+  /**
+   * Обновление статуса заказа
+   */
+  async updateOrderStatus(orderId, status, comment = null) {
+    const client = await this.pool.connect();
 
-  async sendOrderToSupplier(client, orderId) {
     try {
-      // Получаем информацию о заказе
-      const orderResult = await client.query(`
-        SELECT so.*, s.name as supplier_name, s.api_config
-        FROM supplier_orders so
-        JOIN suppliers s ON s.id = so.supplier_id
-        WHERE so.id = $1
-      `, [orderId]);
+      await client.query('BEGIN');
 
-      const order = orderResult.rows[0];
-
-      // Получаем позиции заказа
-      const itemsResult = await client.query(`
-        SELECT * FROM supplier_order_items
-        WHERE order_id = $1
-      `, [orderId]);
-
-      const items = itemsResult.rows;
-
-      // Здесь должна быть интеграция с API поставщика
-      // Пока просто меняем статус на confirmed
-      await client.query(`
-        UPDATE supplier_orders
-        SET status = 'confirmed',
-            sent_at = CURRENT_TIMESTAMP
+      const result = await client.query(`
+        UPDATE incoming_orders
+        SET status = $2,
+            processing_started = CASE WHEN $2 = 'processing' THEN NOW() ELSE processing_started END,
+            processing_completed = CASE WHEN $2 IN ('shipped', 'delivered') THEN NOW() ELSE processing_completed END,
+            updated_at = NOW()
         WHERE id = $1
-      `, [orderId]);
+        RETURNING *
+      `, [orderId, status]);
 
-      logger.info(`Order ${orderId} sent to supplier ${order.supplier_name}`);
+      if (result.rows.length === 0) {
+        throw new Error('Order not found');
+      }
+
+      // Логируем изменение статуса
+      if (comment) {
+        await client.query(`
+          INSERT INTO order_status_history (
+            order_id, status, comment, created_at
+          ) VALUES ($1, $2, $3, NOW())
+        `, [orderId, status, comment]);
+      }
+
+      await client.query('COMMIT');
+
+      logger.info(`Order ${orderId} status updated to ${status}`);
+
+      return result.rows[0];
 
     } catch (error) {
-      logger.error(`Error sending order ${orderId}:`, error);
+      await client.query('ROLLBACK');
+      logger.error('Error updating order status:', error);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 
-      // Откатываем статусы позиций
-      await client.query(`
-        UPDATE order_items oi
-        SET procurement_status = 'failed'
-        FROM supplier_order_items soi
-        WHERE soi.order_id = $1
-          AND soi.product_id = oi.product_id
-          AND oi.procurement_status = 'ordered'
-      `, [orderId]);
+  /**
+   * Получение статистики заказов
+   */
+  async getOrdersStats(companyId, period = '7d') {
+    try {
+      const dateFilter = this.getDateFilter(period);
 
+      const result = await this.pool.query(`
+        SELECT
+          COUNT(*) as total_orders,
+          COUNT(*) FILTER (WHERE status = 'new') as new_orders,
+          COUNT(*) FILTER (WHERE status = 'processing') as processing_orders,
+          COUNT(*) FILTER (WHERE status = 'shipped') as shipped_orders,
+          COUNT(*) FILTER (WHERE status = 'delivered') as delivered_orders,
+          COUNT(*) FILTER (WHERE status = 'cancelled') as cancelled_orders,
+          COALESCE(SUM(total_amount), 0) as total_revenue,
+          COALESCE(SUM(net_amount), 0) as net_revenue,
+          COALESCE(AVG(total_amount), 0) as avg_order_value
+        FROM incoming_orders
+        WHERE company_id = $1 AND created_at >= $2
+      `, [companyId, dateFilter]);
+
+      return result.rows[0];
+
+    } catch (error) {
+      logger.error('Error getting orders stats:', error);
       throw error;
     }
   }
 
-  async manualTriggerProcurement(channelId) {
-    const result = await this.pool.query(
-      'SELECT * FROM sales_channels WHERE id = $1',
-      [channelId]
-    );
-
-    if (result.rows.length === 0) {
-      throw new Error('Channel not found');
+  /**
+   * Получение фильтра даты для статистики
+   */
+  getDateFilter(period) {
+    const now = new Date();
+    switch (period) {
+      case '1d':
+        return new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      case '7d':
+        return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      case '30d':
+        return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      case '90d':
+        return new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+      default:
+        return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     }
-
-    const channel = result.rows[0];
-    await this.runProcurement(channel);
   }
 }
 

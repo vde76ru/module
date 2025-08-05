@@ -1,7 +1,7 @@
 -- ========================================
 -- МИГРАЦИЯ 999: НАЧАЛЬНЫЕ ДАННЫЕ
 -- Seed data для ModuleTrade V2.0
--- Версия: 2.3 (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ)
+-- Версия: 2.5 (ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ)
 -- ========================================
 
 -- ========================================
@@ -108,7 +108,7 @@ SELECT r.id, p.id
 FROM roles r
 CROSS JOIN permissions p
 WHERE r.name = 'admin'
-ON CONFLICT DO NOTHING;
+ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- Менеджер
 INSERT INTO role_permissions (role_id, permission_id)
@@ -127,7 +127,7 @@ WHERE r.name = 'manager'
     'analytics.view', 'analytics.export',
     'billing.view'
   )
-ON CONFLICT DO NOTHING;
+ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- Оператор
 INSERT INTO role_permissions (role_id, permission_id)
@@ -144,7 +144,7 @@ WHERE r.name = 'operator'
     'sync.execute',
     'analytics.view'
   )
-ON CONFLICT DO NOTHING;
+ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- Наблюдатель
 INSERT INTO role_permissions (role_id, permission_id)
@@ -160,7 +160,7 @@ WHERE r.name = 'viewer'
     'marketplaces.view',
     'analytics.view'
   )
-ON CONFLICT DO NOTHING;
+ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- ========================================
 -- ТАРИФНЫЕ ПЛАНЫ
@@ -190,7 +190,6 @@ ON CONFLICT (code) DO UPDATE SET
   api_type = EXCLUDED.api_type,
   commission_rules = EXCLUDED.commission_rules,
   updated_at = NOW();
-
 
 -- ========================================
 -- ЕДИНИЦЫ ИЗМЕРЕНИЯ
@@ -304,29 +303,46 @@ WHERE users.role = r.name AND users.role_id IS NULL;
 UPDATE users SET role_id = (SELECT id FROM roles WHERE name = 'user')
 WHERE role_id IS NULL AND role = 'user';
 
--- Тестовая компания
-INSERT INTO companies (name, tariff_id, subscription_status, plan, trial_end_date, is_active)
-VALUES (
-    'Demo Company',
-    (SELECT id FROM tariffs WHERE code = 'free' LIMIT 1),
-    'trial',
-    'free',
-    NOW() + INTERVAL '14 days',
-    true
-)
-ON CONFLICT (name) DO NOTHING;
+-- ========================================
+-- ТЕСТОВЫЕ ДАННЫЕ (ОПЦИОНАЛЬНО)
+-- ========================================
 
--- Тестовый пользователь (роль user)
-INSERT INTO users (company_id, email, password_hash, first_name, last_name, name, role, role_id, is_active, email_verified, login_count)
-VALUES (
-    (SELECT id FROM companies WHERE name = 'Demo Company' LIMIT 1),
-    'user@demo.local',
-    '$2b$12$XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', -- захешируйте пароль заранее!
-    'User', 'Demo', 'User Demo', 'user',
-    (SELECT id FROM roles WHERE name = 'user' LIMIT 1),
-    true, true, 0
-)
-ON CONFLICT (email) DO NOTHING;
+-- Тестовая компания (не используем ON CONFLICT т.к. нет UNIQUE на name)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM companies WHERE name = 'Demo Company') THEN
+        INSERT INTO companies (name, tariff_id, subscription_status, plan, trial_end_date, is_active)
+        VALUES (
+            'Demo Company',
+            (SELECT id FROM tariffs WHERE code = 'free' LIMIT 1),
+            'trial',
+            'free',
+            NOW() + INTERVAL '14 days',
+            true
+        );
+    END IF;
+END $$;
+
+-- Тестовый пользователь (используем правильный ON CONFLICT)
+DO $$
+DECLARE
+    demo_company_id INTEGER;
+BEGIN
+    SELECT id INTO demo_company_id FROM companies WHERE name = 'Demo Company' LIMIT 1;
+    
+    IF demo_company_id IS NOT NULL THEN
+        INSERT INTO users (company_id, email, password_hash, first_name, last_name, name, role, role_id, is_active, email_verified, login_count)
+        VALUES (
+            demo_company_id,
+            'user@demo.local',
+            '$2b$12$LXyJj3p/iQgzD.fE9ZTqGOxEPbjI7vQJqQvzwqKVxb7HqKz1FwWtm', -- пароль: demo123
+            'User', 'Demo', 'User Demo', 'user',
+            (SELECT id FROM roles WHERE name = 'user' LIMIT 1),
+            true, true, 0
+        )
+        ON CONFLICT (company_id, email) DO NOTHING;
+    END IF;
+END $$;
 
 -- ========================================
 -- ВЫВОД СТАТИСТИКИ

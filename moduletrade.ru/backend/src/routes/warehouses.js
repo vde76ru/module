@@ -1,305 +1,64 @@
-// backend/src/routes/warehouses.js
+// ===================================================
+// ФАЙЛ: backend/src/routes/warehouses.js
+// ДОПОЛНЕНИЕ: API для управления остатками на складах
+// ===================================================
+
 const express = require('express');
-const { authenticate, checkPermission } = require('../middleware/auth');
-const db = require('../config/database');
-
 const router = express.Router();
+const db = require('../config/database');
+const { authenticate, checkPermission } = require('../middleware/auth');
 
-/**
- * GET /warehouses
- * Получение списка складов
- */
-router.get('/', authenticate, async (req, res) => {
+// Безопасная инициализация сервисов
+let WarehouseService, warehouseService;
+try {
+  WarehouseService = require('../services/WarehouseService');
+  warehouseService = new WarehouseService();
+} catch (error) {
+  console.warn('WarehouseService not available:', error.message);
+}
+
+// Получение списка складов
+router.get('/', authenticate, checkPermission('warehouses.view'), async (req, res) => {
   try {
-    const companyId = req.user.companyId;
-    const { active_only = false } = req.query;
+    const filters = {
+      type: req.query.type,
+      is_active: req.query.is_active
+    };
 
-    let whereConditions = ['w.company_id = $1'];
-    const queryParams = [companyId];
-
-    if (active_only === 'true') {
-      whereConditions.push('w.is_active = true');
-    }
-
-    const whereClause = whereConditions.join(' AND ');
-
-    const result = await db.query(`
-      SELECT
-        w.id,
-        w.name,
-        w.type,
-        w.description,
-        w.address,
-        w.is_active,
-        w.priority,
-        w.settings,
-        w.created_at,
-        w.updated_at,
-        COUNT(wpl.product_id) as products_count,
-        COALESCE(SUM(wpl.quantity), 0) as total_stock
-      FROM warehouses w
-      LEFT JOIN warehouse_product_links wpl ON w.id = wpl.warehouse_id
-      WHERE ${whereClause}
-      GROUP BY w.id
-      ORDER BY w.priority DESC, w.name ASC
-    `, queryParams);
+    const warehouses = await warehouseService.getWarehouses(req.user.companyId, filters);
 
     res.json({
       success: true,
-      data: result.rows
+      data: warehouses
     });
 
   } catch (error) {
-    console.error('Get warehouses error:', error);
+    console.error('Error fetching warehouses:', error);
     res.status(500).json({
       success: false,
-      error: 'Internal server error'
+      error: 'Failed to fetch warehouses'
     });
   }
 });
 
-/**
- * GET /warehouses/:id
- * Получение детальной информации о складе
- */
-router.get('/:id', authenticate, async (req, res) => {
+// Получение остатков по складу
+router.get('/:id/stock', authenticate, checkPermission('warehouses.view'), async (req, res) => {
   try {
-    const companyId = req.user.companyId;
-    const warehouseId = req.params.id;
+    const { id } = req.params;
+    const filters = {
+      search: req.query.search,
+      category_id: req.query.category_id,
+      low_stock: req.query.low_stock === 'true',
+      out_of_stock: req.query.out_of_stock === 'true',
+      limit: parseInt(req.query.limit) || 50,
+      offset: parseInt(req.query.offset) || 0
+    };
 
-    const result = await db.query(`
-      SELECT
-        w.*,
-        COUNT(wpl.product_id) as products_count,
-        COALESCE(SUM(wpl.quantity), 0) as total_stock,
-        COALESCE(SUM(wpl.reserved_quantity), 0) as reserved_stock
-      FROM warehouses w
-      LEFT JOIN warehouse_product_links wpl ON w.id = wpl.warehouse_id
-      WHERE w.id = $1 AND w.company_id = $2
-      GROUP BY w.id
-    `, [warehouseId, companyId]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Warehouse not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: result.rows[0]
-    });
-
-  } catch (error) {
-    console.error('Get warehouse error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
-  }
-});
-
-/**
- * POST /warehouses
- * Создание нового склада
- */
-router.post('/', authenticate, checkPermission('warehouses.create'), async (req, res) => {
-  try {
-    const companyId = req.user.companyId;
-    const {
-      name,
-      type = 'physical',
-      description,
-      address,
-      is_active = true,
-      priority = 0,
-      settings = {}
-    } = req.body;
-
-    if (!name) {
-      return res.status(400).json({
-        success: false,
-        error: 'Warehouse name is required'
-      });
-    }
-
-    const validTypes = ['physical', 'virtual', 'multi'];
-    if (!validTypes.includes(type)) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid warehouse type'
-      });
-    }
-
-    const result = await db.query(`
-      INSERT INTO warehouses (
-        company_id, name, type, description, address,
-        is_active, priority, settings, created_at
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-      RETURNING *
-    `, [
-      companyId, name, type, description, address,
-      is_active, parseInt(priority), JSON.stringify(settings)
-    ]);
-
-    res.status(201).json({
-      success: true,
-      data: result.rows[0]
-    });
-
-  } catch (error) {
-    console.error('Create warehouse error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
-  }
-});
-
-/**
- * PUT /warehouses/:id
- * Обновление склада
- */
-router.put('/:id', authenticate, checkPermission('warehouses.update'), async (req, res) => {
-  try {
-    const companyId = req.user.companyId;
-    const warehouseId = req.params.id;
-    const updateFields = req.body;
-
-    delete updateFields.id;
-    delete updateFields.company_id;
-    delete updateFields.created_at;
-
-    if (Object.keys(updateFields).length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'No fields to update'
-      });
-    }
-
-    // Валидация типа склада
-    if (updateFields.type) {
-      const validTypes = ['physical', 'virtual', 'multi'];
-      if (!validTypes.includes(updateFields.type)) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid warehouse type'
-        });
-      }
-    }
-
-    // Преобразуем settings в JSON если передан
-    if (updateFields.settings && typeof updateFields.settings === 'object') {
-      updateFields.settings = JSON.stringify(updateFields.settings);
-    }
-
-    const setClause = Object.keys(updateFields)
-      .map((key, index) => `${key} = $${index + 3}`)
-      .join(', ');
-
-    const queryParams = [warehouseId, companyId, ...Object.values(updateFields)];
-
-    const result = await db.query(`
-      UPDATE warehouses
-      SET ${setClause}, updated_at = NOW()
-      WHERE id = $1 AND company_id = $2
-      RETURNING *
-    `, queryParams);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Warehouse not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: result.rows[0]
-    });
-
-  } catch (error) {
-    console.error('Update warehouse error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
-  }
-});
-
-/**
- * DELETE /warehouses/:id
- * Удаление склада
- */
-router.delete('/:id', authenticate, checkPermission('warehouses.delete'), async (req, res) => {
-  try {
-    const companyId = req.user.companyId;
-    const warehouseId = req.params.id;
-
-    // Проверяем что на складе нет товаров
-    const stockCheck = await db.query(`
-      SELECT COUNT(*) as count
-      FROM warehouse_product_links
-      WHERE warehouse_id = $1 AND quantity > 0
-    `, [warehouseId]);
-
-    if (parseInt(stockCheck.rows[0].count) > 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Cannot delete warehouse with stock. Move products first.'
-      });
-    }
-
-    const result = await db.query(`
-      DELETE FROM warehouses
-      WHERE id = $1 AND company_id = $2
-      RETURNING id, name
-    `, [warehouseId, companyId]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        error: 'Warehouse not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: {
-        message: 'Warehouse deleted successfully',
-        deleted_warehouse: result.rows[0]
-      }
-    });
-
-  } catch (error) {
-    console.error('Delete warehouse error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
-  }
-});
-
-/**
- * GET /warehouses/:id/stock
- * Получение остатков по складу
- */
-router.get('/:id/stock', authenticate, async (req, res) => {
-  try {
-    const companyId = req.user.companyId;
-    const warehouseId = req.params.id;
-    const { limit = 50, offset = 0, search = '' } = req.query;
-
-    let whereConditions = ['wpl.warehouse_id = $1'];
-    let queryParams = [warehouseId];
-    let paramIndex = 2;
-
-    // Проверяем что склад принадлежит компании
-    const warehouseCheck = await db.query(`
-      SELECT id FROM warehouses WHERE id = $1 AND company_id = $2
-    `, [warehouseId, companyId]);
+    // Проверяем принадлежность склада компании
+    const warehouseCheck = await db.query(
+      'SELECT id FROM warehouses WHERE id = $1 AND company_id = $2',
+      [id, req.user.companyId]
+    );
 
     if (warehouseCheck.rows.length === 0) {
       return res.status(404).json({
@@ -308,173 +67,498 @@ router.get('/:id/stock', authenticate, async (req, res) => {
       });
     }
 
-    if (search) {
-      // ✅ ИСПРАВЛЕНО: добавлена поддержка поиска по sku и internal_code
-      whereConditions.push(`(
-        p.name ILIKE $${paramIndex}
-        OR p.sku ILIKE $${paramIndex}
-        OR p.internal_code ILIKE $${paramIndex}
-      )`);
-      queryParams.push(`%${search}%`);
-      paramIndex++;
-    }
-
-    const whereClause = whereConditions.join(' AND ');
-
-    const result = await db.query(`
-      SELECT
-        wpl.id,
+    // Получаем остатки
+    let query = `
+      SELECT 
         wpl.product_id,
+        p.name as product_name,
+        p.sku,
+        p.internal_code,
         wpl.quantity,
         wpl.reserved_quantity,
         wpl.available_quantity,
         wpl.price,
-        wpl.min_stock,
-        wpl.max_stock,
-        wpl.last_updated,
-        p.name as product_name,
-        p.sku,
-        p.internal_code,
-        p.barcode,
-        b.name as brand_name,
+        wpl.location_full,
+        wpl.min_stock_level,
+        wpl.reorder_point,
+        wpl.last_movement,
+        wpl.updated_at,
+        CASE
+          WHEN wpl.available_quantity <= 0 THEN 'out_of_stock'
+          WHEN wpl.available_quantity <= COALESCE(wpl.min_stock_level, 0) THEN 'low_stock'
+          ELSE 'in_stock'
+        END as stock_status,
         c.name as category_name
       FROM warehouse_product_links wpl
       JOIN products p ON wpl.product_id = p.id
-      LEFT JOIN internal_brands b ON p.brand_id = b.id
-      LEFT JOIN internal_categories c ON p.category_id = c.id
-      WHERE ${whereClause}
-      ORDER BY p.name ASC
-      LIMIT $${paramIndex} OFFSET $${paramIndex + 1}
-    `, [...queryParams, limit, offset]);
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE wpl.warehouse_id = $1 AND wpl.is_active = true
+    `;
 
-    // Получаем общее количество
-    const countResult = await db.query(`
+    const params = [id];
+    let paramIndex = 2;
+
+    if (filters.search) {
+      query += ` AND (p.name ILIKE $${paramIndex} OR p.sku ILIKE $${paramIndex} OR p.internal_code ILIKE $${paramIndex})`;
+      params.push(`%${filters.search}%`);
+      paramIndex++;
+    }
+
+    if (filters.category_id) {
+      query += ` AND p.category_id = $${paramIndex}`;
+      params.push(filters.category_id);
+      paramIndex++;
+    }
+
+    if (filters.low_stock) {
+      query += ` AND wpl.available_quantity <= COALESCE(wpl.min_stock_level, 0)`;
+    }
+
+    if (filters.out_of_stock) {
+      query += ` AND wpl.available_quantity <= 0`;
+    }
+
+    query += ` ORDER BY p.name LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    params.push(filters.limit, filters.offset);
+
+    const result = await db.query(query, params);
+
+    // Получаем общее количество для пагинации
+    let countQuery = `
       SELECT COUNT(*) as total
       FROM warehouse_product_links wpl
       JOIN products p ON wpl.product_id = p.id
-      WHERE ${whereClause}
-    `, queryParams);
+      WHERE wpl.warehouse_id = $1 AND wpl.is_active = true
+    `;
+
+    const countParams = [id];
+    let countParamIndex = 2;
+
+    if (filters.search) {
+      countQuery += ` AND (p.name ILIKE $${countParamIndex} OR p.sku ILIKE $${countParamIndex} OR p.internal_code ILIKE $${countParamIndex})`;
+      countParams.push(`%${filters.search}%`);
+      countParamIndex++;
+    }
+
+    if (filters.category_id) {
+      countQuery += ` AND p.category_id = $${countParamIndex}`;
+      countParams.push(filters.category_id);
+      countParamIndex++;
+    }
+
+    if (filters.low_stock) {
+      countQuery += ` AND wpl.available_quantity <= COALESCE(wpl.min_stock_level, 0)`;
+    }
+
+    if (filters.out_of_stock) {
+      countQuery += ` AND wpl.available_quantity <= 0`;
+    }
+
+    const countResult = await db.query(countQuery, countParams);
 
     res.json({
       success: true,
-      data: {
-        items: result.rows,
-        pagination: {
-          limit: parseInt(limit),
-          offset: parseInt(offset),
-          total: parseInt(countResult.rows[0].total)
-        }
+      data: result.rows,
+      pagination: {
+        total: parseInt(countResult.rows[0].total),
+        limit: filters.limit,
+        offset: filters.offset,
+        page: Math.floor(filters.offset / filters.limit) + 1
       }
     });
 
   } catch (error) {
-    console.error('Get warehouse stock error:', error);
+    console.error('Error fetching warehouse stock:', error);
     res.status(500).json({
       success: false,
-      error: 'Internal server error'
+      error: 'Failed to fetch warehouse stock'
     });
   }
 });
 
-/**
- * POST /warehouses/transfer
- * Перемещение товаров между складами
- */
-router.post('/transfer', authenticate, checkPermission('warehouses.transfer'), async (req, res) => {
+// Обновление остатков товара на складе
+router.post('/stock', authenticate, checkPermission('warehouses.update'), async (req, res) => {
+  const client = await db.getClient();
+
   try {
-    const companyId = req.user.companyId;
+    await client.query('BEGIN');
+
     const {
+      warehouse_id,
       product_id,
+      quantity,
+      price,
+      operation = 'set', // set, add, subtract
+      reason = 'Manual adjustment'
+    } = req.body;
+
+    // Валидация
+    if (!warehouse_id || !product_id || quantity === undefined) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        success: false,
+        error: 'Missing required fields: warehouse_id, product_id, quantity'
+      });
+    }
+
+    // Проверяем принадлежность склада и товара компании
+    const validationResult = await client.query(`
+      SELECT w.id as warehouse_id, p.id as product_id, p.name as product_name
+      FROM warehouses w
+      CROSS JOIN products p
+      WHERE w.id = $1 AND p.id = $2 
+        AND w.company_id = $3 AND p.company_id = $3
+    `, [warehouse_id, product_id, req.user.companyId]);
+
+    if (validationResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        error: 'Warehouse or product not found'
+      });
+    }
+
+    const validation = validationResult.rows[0];
+
+    // Получаем текущие остатки
+    const currentStockResult = await client.query(`
+      SELECT quantity, reserved_quantity, price
+      FROM warehouse_product_links
+      WHERE warehouse_id = $1 AND product_id = $2
+    `, [warehouse_id, product_id]);
+
+    let currentQuantity = 0;
+    let currentPrice = price || 0;
+
+    if (currentStockResult.rows.length > 0) {
+      currentQuantity = parseFloat(currentStockResult.rows[0].quantity) || 0;
+      currentPrice = price || parseFloat(currentStockResult.rows[0].price) || 0;
+    }
+
+    // Вычисляем новое количество
+    let newQuantity;
+    switch (operation) {
+      case 'add':
+        newQuantity = currentQuantity + parseFloat(quantity);
+        break;
+      case 'subtract':
+        newQuantity = Math.max(0, currentQuantity - parseFloat(quantity));
+        break;
+      case 'set':
+      default:
+        newQuantity = parseFloat(quantity);
+        break;
+    }
+
+    // Обновляем или создаем запись остатков
+    if (currentStockResult.rows.length > 0) {
+      await client.query(`
+        UPDATE warehouse_product_links
+        SET quantity = $3,
+            available_quantity = $3 - reserved_quantity,
+            price = $4,
+            last_movement = NOW(),
+            updated_at = NOW()
+        WHERE warehouse_id = $1 AND product_id = $2
+      `, [warehouse_id, product_id, newQuantity, currentPrice]);
+    } else {
+      await client.query(`
+        INSERT INTO warehouse_product_links (
+          warehouse_id, product_id, quantity, available_quantity,
+          reserved_quantity, price, created_at, updated_at
+        ) VALUES ($1, $2, $3, $3, 0, $4, NOW(), NOW())
+      `, [warehouse_id, product_id, newQuantity, currentPrice]);
+    }
+
+    // Записываем движение товара
+    const movementType = newQuantity > currentQuantity ? 'adjustment_plus' : 
+                        newQuantity < currentQuantity ? 'adjustment_minus' : 'adjustment';
+    
+    const movementQuantity = Math.abs(newQuantity - currentQuantity);
+
+    if (movementQuantity > 0) {
+      await client.query(`
+        INSERT INTO warehouse_movements (
+          company_id, warehouse_id, product_id, type, quantity,
+          from_location, to_location, reason, user_id, created_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+      `, [
+        req.user.companyId,
+        warehouse_id,
+        product_id,
+        movementType,
+        movementQuantity,
+        movementType === 'adjustment_minus' ? 'STOCK' : null,
+        movementType === 'adjustment_plus' ? 'STOCK' : null,
+        reason,
+        req.user.id
+      ]);
+    }
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      data: {
+        warehouse_id,
+        product_id,
+        product_name: validation.product_name,
+        previous_quantity: currentQuantity,
+        new_quantity: newQuantity,
+        operation,
+        reason
+      },
+      message: 'Stock updated successfully'
+    });
+
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error updating stock:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update stock'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// Перемещение товара между складами
+router.post('/transfer', authenticate, checkPermission('warehouses.transfer'), async (req, res) => {
+  const client = await db.getClient();
+
+  try {
+    await client.query('BEGIN');
+
+    const {
       from_warehouse_id,
       to_warehouse_id,
+      product_id,
       quantity,
       reason = 'Manual transfer'
     } = req.body;
 
-    if (!product_id || !from_warehouse_id || !to_warehouse_id || !quantity) {
+    // Валидация
+    if (!from_warehouse_id || !to_warehouse_id || !product_id || !quantity) {
+      await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
-        error: 'Product ID, source warehouse, target warehouse and quantity are required'
+        error: 'Missing required fields'
       });
     }
 
-    if (parseInt(quantity) <= 0) {
+    if (from_warehouse_id === to_warehouse_id) {
+      await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
-        error: 'Quantity must be positive'
+        error: 'Source and destination warehouses cannot be the same'
       });
     }
+
+    // Проверяем принадлежность складов и товара компании
+    const validationResult = await client.query(`
+      SELECT 
+        w1.name as from_warehouse_name,
+        w2.name as to_warehouse_name,
+        p.name as product_name
+      FROM warehouses w1
+      CROSS JOIN warehouses w2
+      CROSS JOIN products p
+      WHERE w1.id = $1 AND w2.id = $2 AND p.id = $3
+        AND w1.company_id = $4 AND w2.company_id = $4 AND p.company_id = $4
+    `, [from_warehouse_id, to_warehouse_id, product_id, req.user.companyId]);
+
+    if (validationResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({
+        success: false,
+        error: 'Warehouses or product not found'
+      });
+    }
+
+    const validation = validationResult.rows[0];
 
     // Проверяем наличие товара на исходном складе
-    const stockCheck = await db.query(`
-      SELECT quantity
+    const sourceStockResult = await client.query(`
+      SELECT available_quantity, price
       FROM warehouse_product_links
       WHERE warehouse_id = $1 AND product_id = $2
     `, [from_warehouse_id, product_id]);
 
-    if (stockCheck.rows.length === 0 || stockCheck.rows[0].quantity < parseInt(quantity)) {
+    if (sourceStockResult.rows.length === 0 || 
+        parseFloat(sourceStockResult.rows[0].available_quantity) < parseFloat(quantity)) {
+      await client.query('ROLLBACK');
       return res.status(400).json({
         success: false,
-        error: 'Insufficient stock on source warehouse'
+        error: 'Insufficient stock in source warehouse'
       });
     }
 
-    // Выполняем трансфер в транзакции
-    const client = await db.getClient(); await client.query('BEGIN');
+    const sourceStock = sourceStockResult.rows[0];
 
-    try {
-      // Уменьшаем остаток на исходном складе
-      await db.query(`
+    // Уменьшаем остатки на исходном складе
+    await client.query(`
+      UPDATE warehouse_product_links
+      SET quantity = quantity - $3,
+          available_quantity = available_quantity - $3,
+          updated_at = NOW()
+      WHERE warehouse_id = $1 AND product_id = $2
+    `, [from_warehouse_id, product_id, quantity]);
+
+    // Увеличиваем остатки на целевом складе
+    const targetStockResult = await client.query(`
+      SELECT id FROM warehouse_product_links
+      WHERE warehouse_id = $1 AND product_id = $2
+    `, [to_warehouse_id, product_id]);
+
+    if (targetStockResult.rows.length > 0) {
+      // Обновляем существующую запись
+      await client.query(`
         UPDATE warehouse_product_links
-        SET quantity = quantity - $1, last_updated = NOW()
-        WHERE warehouse_id = $2 AND product_id = $3
-      `, [parseInt(quantity), from_warehouse_id, product_id]);
-
-      // Увеличиваем остаток на целевом складе
-      await db.query(`
-        INSERT INTO warehouse_product_links (warehouse_id, product_id, quantity, last_updated)
-        VALUES ($1, $2, $3, NOW())
-        ON CONFLICT (warehouse_id, product_id)
-        DO UPDATE SET
-          quantity = warehouse_product_links.quantity + $3,
-          last_updated = NOW()
-      `, [to_warehouse_id, product_id, parseInt(quantity)]);
-
-      // Записываем движение
-      await db.query(`
-        INSERT INTO warehouse_movements (
-          company_id, product_id, from_warehouse_id, to_warehouse_id,
-          quantity, movement_type, reason, user_id, created_at
-        )
-        VALUES ($1, $2, $3, $4, $5, 'transfer', $6, $7, NOW())
-      `, [companyId, product_id, from_warehouse_id, to_warehouse_id, parseInt(quantity), reason, req.user.userId]);
-
-      await client.query('COMMIT'); client.release();
-
-      res.json({
-        success: true,
-        data: {
-          message: 'Transfer completed successfully',
-          transfer: {
-            product_id,
-            from_warehouse_id,
-            to_warehouse_id,
-            quantity: parseInt(quantity),
-            reason
-          }
-        }
-      });
-
-    } catch (error) {
-      await client.query('ROLLBACK'); client.release();
-      throw error;
+        SET quantity = quantity + $3,
+            available_quantity = available_quantity + $3,
+            price = COALESCE($4, price),
+            updated_at = NOW()
+        WHERE warehouse_id = $1 AND product_id = $2
+      `, [to_warehouse_id, product_id, quantity, sourceStock.price]);
+    } else {
+      // Создаем новую запись
+      await client.query(`
+        INSERT INTO warehouse_product_links (
+          warehouse_id, product_id, quantity, available_quantity,
+          reserved_quantity, price, created_at, updated_at
+        ) VALUES ($1, $2, $3, $3, 0, $4, NOW(), NOW())
+      `, [to_warehouse_id, product_id, quantity, sourceStock.price]);
     }
+
+    // Записываем движение товара
+    await client.query(`
+      INSERT INTO warehouse_movements (
+        company_id, from_warehouse_id, to_warehouse_id, product_id,
+        type, quantity, reason, user_id, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+    `, [
+      req.user.companyId,
+      from_warehouse_id,
+      to_warehouse_id,
+      product_id,
+      'transfer',
+      quantity,
+      reason,
+      req.user.id
+    ]);
+
+    await client.query('COMMIT');
+
+    res.json({
+      success: true,
+      data: {
+        from_warehouse: validation.from_warehouse_name,
+        to_warehouse: validation.to_warehouse_name,
+        product_name: validation.product_name,
+        quantity: parseFloat(quantity),
+        reason
+      },
+      message: 'Stock transferred successfully'
+    });
 
   } catch (error) {
-    console.error('Warehouse transfer error:', error);
+    await client.query('ROLLBACK');
+    console.error('Error transferring stock:', error);
     res.status(500).json({
       success: false,
-      error: 'Internal server error'
+      error: 'Failed to transfer stock'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+// Получение движений товаров по складу
+router.get('/:id/movements', authenticate, checkPermission('warehouses.view'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const filters = {
+      product_id: req.query.product_id,
+      type: req.query.type,
+      date_from: req.query.date_from,
+      date_to: req.query.date_to,
+      limit: parseInt(req.query.limit) || 50,
+      offset: parseInt(req.query.offset) || 0
+    };
+
+    // Проверяем принадлежность склада компании
+    const warehouseCheck = await db.query(
+      'SELECT id FROM warehouses WHERE id = $1 AND company_id = $2',
+      [id, req.user.companyId]
+    );
+
+    if (warehouseCheck.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: 'Warehouse not found'
+      });
+    }
+
+    let query = `
+      SELECT 
+        wm.*,
+        p.name as product_name,
+        p.sku,
+        wf.name as from_warehouse_name,
+        wt.name as to_warehouse_name,
+        u.name as user_name
+      FROM warehouse_movements wm
+      LEFT JOIN products p ON wm.product_id = p.id
+      LEFT JOIN warehouses wf ON wm.from_warehouse_id = wf.id
+      LEFT JOIN warehouses wt ON wm.to_warehouse_id = wt.id
+      LEFT JOIN users u ON wm.user_id = u.id
+      WHERE (wm.warehouse_id = $1 OR wm.from_warehouse_id = $1 OR wm.to_warehouse_id = $1)
+        AND wm.company_id = $2
+    `;
+
+    const params = [id, req.user.companyId];
+    let paramIndex = 3;
+
+    if (filters.product_id) {
+      query += ` AND wm.product_id = $${paramIndex}`;
+      params.push(filters.product_id);
+      paramIndex++;
+    }
+
+    if (filters.type) {
+      query += ` AND wm.type = $${paramIndex}`;
+      params.push(filters.type);
+      paramIndex++;
+    }
+
+    if (filters.date_from) {
+      query += ` AND wm.created_at >= $${paramIndex}`;
+      params.push(filters.date_from);
+      paramIndex++;
+    }
+
+    if (filters.date_to) {
+      query += ` AND wm.created_at <= $${paramIndex}`;
+      params.push(filters.date_to);
+      paramIndex++;
+    }
+
+    query += ` ORDER BY wm.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+    params.push(filters.limit, filters.offset);
+
+    const result = await db.query(query, params);
+
+    res.json({
+      success: true,
+      data: result.rows
+    });
+
+  } catch (error) {
+    console.error('Error fetching warehouse movements:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch warehouse movements'
     });
   }
 });

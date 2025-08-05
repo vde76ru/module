@@ -1,7 +1,7 @@
 -- ========================================
 -- МИГРАЦИЯ 005: МОДУЛИ МАРКЕТПЛЕЙСОВ И ЗАКАЗОВ (ПОЛНАЯ)
 -- Таблицы для настроек маркетплейсов и OMS (Order Management System)
--- Версия: 2.0
+-- Версия: 2.1 (с исправлениями совместимости)
 -- ========================================
 
 -- ========================================
@@ -216,35 +216,18 @@ COMMENT ON TABLE marketplace_product_status IS 'Статус товаров на
 CREATE TABLE incoming_orders (
     id SERIAL PRIMARY KEY,
     company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+    marketplace_id INTEGER REFERENCES marketplace_settings(id) ON DELETE SET NULL,
+    sales_channel_id INTEGER, -- для будущего расширения
 
     -- Внешние идентификаторы
-    external_order_id VARCHAR(255) NOT NULL,
-    source VARCHAR(100) NOT NULL,
-    -- Возможные значения: ozon, wildberries, yandex_market, avito, website, manual
-
-    source_system_id INTEGER, -- ID настроек маркетплейса
-
-    -- Основная информация о заказе
     order_number VARCHAR(255),
-    order_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    marketplace_order_id VARCHAR(255),
 
     -- Информация о покупателе
-    customer_info JSONB DEFAULT '{}',
-    -- Пример: {"name": "Иван Иванов", "phone": "+7123456789", "email": "ivan@example.com"}
-
-    -- Адрес доставки
-    delivery_address JSONB DEFAULT '{}',
-    -- Пример: {"country": "RU", "city": "Москва", "street": "ул. Пушкина, 1", "postal_code": "123456"}
-
-    delivery_type VARCHAR(100),
-    delivery_service VARCHAR(100),
-    tracking_number VARCHAR(255),
-
-    -- Финансовая информация
-    total_amount DECIMAL(12,2) NOT NULL,
-    currency CHAR(3) DEFAULT 'RUB',
-    commission_amount DECIMAL(12,2) DEFAULT 0,
-    delivery_cost DECIMAL(12,2) DEFAULT 0,
+    customer_id INTEGER, -- для будущего CRM модуля
+    customer_name VARCHAR(255),
+    customer_email VARCHAR(255),
+    customer_phone VARCHAR(50),
 
     -- Статусы
     status VARCHAR(50) DEFAULT 'new',
@@ -253,30 +236,36 @@ CREATE TABLE incoming_orders (
     payment_status VARCHAR(50) DEFAULT 'pending',
     -- Возможные значения: pending, paid, cancelled, refunded, partial_refund
 
-    fulfillment_status VARCHAR(50) DEFAULT 'pending',
-    -- Возможные значения: pending, allocated, picked, packed, shipped, delivered
+    payment_method VARCHAR(100),
+
+    -- Доставка
+    delivery_type VARCHAR(100),
+    delivery_service VARCHAR(100),
+    delivery_cost DECIMAL(12,2) DEFAULT 0,
+    delivery_address JSONB DEFAULT '{}',
+    delivery_date DATE,
+
+    -- Финансовая информация
+    total_amount DECIMAL(12,2) NOT NULL,
+    commission_amount DECIMAL(12,2) DEFAULT 0,
+    net_amount DECIMAL(12,2),
+    currency CHAR(3) DEFAULT 'RUB',
+
+    -- Заметки
+    notes TEXT,
 
     -- Важные даты
-    confirmed_at TIMESTAMP WITH TIME ZONE,
-    shipped_at TIMESTAMP WITH TIME ZONE,
-    delivered_at TIMESTAMP WITH TIME ZONE,
-    cancelled_at TIMESTAMP WITH TIME ZONE,
-
-    -- Дополнительная информация
-    notes TEXT,
-    internal_notes TEXT, -- внутренние заметки, не видны клиенту
-
-    -- Приоритет обработки
-    priority INTEGER DEFAULT 0,
-    is_urgent BOOLEAN DEFAULT FALSE,
+    order_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    processing_started TIMESTAMP WITH TIME ZONE,
+    processing_completed TIMESTAMP WITH TIME ZONE,
 
     -- Метаданные
-    raw_data JSONB DEFAULT '{}', -- исходные данные заказа от маркетплейса
+    metadata JSONB DEFAULT '{}',
 
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
-    UNIQUE(company_id, source, external_order_id)
+    UNIQUE(company_id, marketplace_id, marketplace_order_id)
 );
 
 COMMENT ON TABLE incoming_orders IS 'Входящие заказы из всех источников продаж';
@@ -494,6 +483,120 @@ CREATE TABLE marketplace_sync_logs (
 COMMENT ON TABLE marketplace_sync_logs IS 'Логи синхронизации с маркетплейсами';
 
 -- ========================================
+-- ТАБЛИЦА SYNC_LOGS ДЛЯ СОВМЕСТИМОСТИ
+-- ========================================
+
+CREATE TABLE sync_logs (
+    id SERIAL PRIMARY KEY,
+    company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+    
+    -- Тип синхронизации
+    sync_type VARCHAR(50) NOT NULL,
+    -- Возможные значения: orders, products, stock, prices, full
+    
+    -- Статус синхронизации
+    status VARCHAR(50) NOT NULL,
+    -- Возможные значения: started, success, error, partial, completed, failed
+
+    -- Детали синхронизации
+    details JSONB DEFAULT '{}',
+    error_message TEXT,
+    
+    -- Статистика
+    items_processed INTEGER DEFAULT 0,
+    items_succeeded INTEGER DEFAULT 0,  
+    items_failed INTEGER DEFAULT 0,
+    
+    -- Время выполнения
+    started_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    completed_at TIMESTAMP WITH TIME ZONE,
+    
+    -- Метаданные
+    metadata JSONB DEFAULT '{}',
+    
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+COMMENT ON TABLE sync_logs IS 'Логи синхронизации для совместимости';
+
+-- ========================================
+-- ТАБЛИЦА API_LOGS ДЛЯ АНАЛИТИКИ  
+-- ========================================
+
+CREATE TABLE api_logs (
+    id BIGSERIAL PRIMARY KEY,
+    company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    
+    -- HTTP запрос
+    method VARCHAR(10) NOT NULL,
+    endpoint VARCHAR(500) NOT NULL,
+    url TEXT,
+    
+    -- Статус ответа
+    status_code INTEGER,
+    response_time_ms INTEGER,
+    
+    -- Размеры
+    request_size_bytes INTEGER,
+    response_size_bytes INTEGER,
+    
+    -- IP и User Agent
+    ip_address INET,
+    user_agent TEXT,
+    
+    -- Дополнительные данные
+    request_id VARCHAR(255),
+    error_message TEXT,
+    metadata JSONB DEFAULT '{}',
+    
+    -- Время
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+COMMENT ON TABLE api_logs IS 'Логи API запросов для аналитики';
+
+-- ========================================
+-- ПРЕДСТАВЛЕНИЯ ДЛЯ СОВМЕСТИМОСТИ С КОДОМ
+-- ========================================
+
+-- Алиас orders для incoming_orders
+CREATE OR REPLACE VIEW orders AS
+SELECT 
+    id,
+    company_id,
+    marketplace_id,
+    sales_channel_id,
+    order_number,
+    marketplace_order_id,
+    customer_id,
+    customer_name,
+    customer_email,  
+    customer_phone,
+    status,
+    payment_status,
+    payment_method,
+    delivery_type,
+    delivery_service,
+    delivery_cost,
+    delivery_address,
+    delivery_date,
+    total_amount,
+    commission_amount,
+    net_amount,
+    currency,
+    notes,
+    order_date,
+    processing_started,
+    processing_completed,
+    metadata,
+    created_at,
+    updated_at
+FROM incoming_orders;
+
+COMMENT ON VIEW orders IS 'Представление для совместимости с incoming_orders';
+
+-- ========================================
 -- ИНДЕКСЫ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ
 -- ========================================
 
@@ -533,27 +636,20 @@ CREATE INDEX idx_marketplace_product_status_profile_status ON marketplace_produc
 
 -- Индексы для входящих заказов
 CREATE INDEX idx_incoming_orders_company ON incoming_orders(company_id);
-CREATE INDEX idx_incoming_orders_external_id ON incoming_orders(external_order_id);
-CREATE INDEX idx_incoming_orders_source ON incoming_orders(source);
-CREATE INDEX idx_incoming_orders_source_system ON incoming_orders(source_system_id);
+CREATE INDEX idx_incoming_orders_marketplace_order_id ON incoming_orders(marketplace_order_id);
+CREATE INDEX idx_incoming_orders_marketplace_id ON incoming_orders(marketplace_id);
 CREATE INDEX idx_incoming_orders_status ON incoming_orders(status);
 CREATE INDEX idx_incoming_orders_payment_status ON incoming_orders(payment_status);
-CREATE INDEX idx_incoming_orders_fulfillment_status ON incoming_orders(fulfillment_status);
-CREATE INDEX idx_incoming_orders_date ON incoming_orders(order_date);
-CREATE INDEX idx_incoming_orders_priority ON incoming_orders(priority DESC);
-CREATE INDEX idx_incoming_orders_is_urgent ON incoming_orders(is_urgent);
+CREATE INDEX idx_incoming_orders_order_date ON incoming_orders(order_date);
 
 -- Составные индексы для заказов
 CREATE INDEX idx_incoming_orders_company_status ON incoming_orders(company_id, status);
 CREATE INDEX idx_incoming_orders_company_date ON incoming_orders(company_id, order_date);
-CREATE INDEX idx_incoming_orders_source_date ON incoming_orders(source, order_date);
 
 -- Полнотекстовый поиск для заказов
 CREATE INDEX idx_incoming_orders_order_number ON incoming_orders(order_number);
-CREATE INDEX idx_incoming_orders_tracking_number ON incoming_orders(tracking_number);
 
 -- GIN индексы для JSON полей заказов
-CREATE INDEX idx_incoming_orders_customer_info ON incoming_orders USING GIN(customer_info);
 CREATE INDEX idx_incoming_orders_delivery_address ON incoming_orders USING GIN(delivery_address);
 
 -- Индексы для товаров в заказах
@@ -575,7 +671,6 @@ CREATE INDEX idx_procurement_orders_priority ON procurement_orders(priority DESC
 CREATE INDEX idx_procurement_orders_is_urgent ON procurement_orders(is_urgent);
 CREATE INDEX idx_procurement_orders_created_by ON procurement_orders(created_by);
 CREATE INDEX idx_procurement_orders_date ON procurement_orders(order_date);
-CREATE INDEX idx_procurement_orders_expected_delivery ON procurement_orders(expected_delivery_date);
 
 -- Составные индексы для заказов на закупку
 CREATE INDEX idx_procurement_orders_company_status ON procurement_orders(company_id, status);
@@ -590,7 +685,6 @@ CREATE INDEX idx_procurement_order_items_product ON procurement_order_items(prod
 CREATE INDEX idx_procurement_order_items_incoming_item ON procurement_order_items(incoming_order_item_id);
 CREATE INDEX idx_procurement_order_items_status ON procurement_order_items(status);
 CREATE INDEX idx_procurement_order_items_warehouse ON procurement_order_items(warehouse_id);
-CREATE INDEX idx_procurement_order_items_quality_status ON procurement_order_items(quality_check_status);
 
 -- Составные индексы для товаров в заказах на закупку
 CREATE INDEX idx_procurement_order_items_order_status ON procurement_order_items(procurement_order_id, status);
@@ -607,6 +701,19 @@ CREATE INDEX idx_marketplace_sync_logs_marketplace ON marketplace_sync_logs(mark
 CREATE INDEX idx_marketplace_sync_logs_type ON marketplace_sync_logs(sync_type);
 CREATE INDEX idx_marketplace_sync_logs_status ON marketplace_sync_logs(sync_status);
 CREATE INDEX idx_marketplace_sync_logs_started_at ON marketplace_sync_logs(started_at);
+
+-- Индексы для sync_logs
+CREATE INDEX idx_sync_logs_company_id ON sync_logs(company_id);
+CREATE INDEX idx_sync_logs_sync_type ON sync_logs(sync_type);
+CREATE INDEX idx_sync_logs_status ON sync_logs(status);
+CREATE INDEX idx_sync_logs_started_at ON sync_logs(started_at);
+
+-- Индексы для api_logs
+CREATE INDEX idx_api_logs_company_id ON api_logs(company_id);
+CREATE INDEX idx_api_logs_endpoint ON api_logs(endpoint);
+CREATE INDEX idx_api_logs_status_code ON api_logs(status_code);
+CREATE INDEX idx_api_logs_created_at ON api_logs(created_at);
+CREATE INDEX idx_api_logs_response_time ON api_logs(response_time_ms);
 
 -- ========================================
 -- ТРИГГЕРЫ ДЛЯ АВТОМАТИЗАЦИИ
@@ -765,9 +872,6 @@ ALTER TABLE incoming_orders ADD CONSTRAINT check_order_status
 ALTER TABLE incoming_orders ADD CONSTRAINT check_payment_status
     CHECK (payment_status IN ('pending', 'paid', 'cancelled', 'refunded', 'partial_refund'));
 
-ALTER TABLE incoming_orders ADD CONSTRAINT check_fulfillment_status
-    CHECK (fulfillment_status IN ('pending', 'allocated', 'picked', 'packed', 'shipped', 'delivered'));
-
 ALTER TABLE incoming_orders ADD CONSTRAINT check_total_amount_positive
     CHECK (total_amount >= 0);
 
@@ -801,22 +905,16 @@ CREATE VIEW active_orders AS
 SELECT
     o.id,
     o.company_id,
-    o.external_order_id,
-    o.source,
+    o.marketplace_order_id,
+    o.marketplace_id,
     o.order_number,
     o.order_date,
     o.total_amount,
     o.currency,
     o.status,
     o.payment_status,
-    o.fulfillment_status,
-    o.priority,
-    o.is_urgent,
-    COALESCE(
-        (o.customer_info->>'name'),
-        CONCAT(o.customer_info->>'first_name', ' ', o.customer_info->>'last_name')
-    ) as customer_name,
-    o.customer_info->>'phone' as customer_phone,
+    o.customer_name,
+    o.customer_phone,
     COUNT(oi.id) as items_count,
     SUM(oi.quantity) as total_items,
     o.created_at,
@@ -834,7 +932,7 @@ SELECT
     o.id,
     o.company_id,
     o.order_number,
-    o.source,
+    o.marketplace_id,
     o.status,
     o.payment_status,
     o.order_date,
@@ -844,7 +942,7 @@ SELECT
     CASE
         WHEN o.status = 'new' AND o.created_at < NOW() - INTERVAL '24 hours' THEN 'not_confirmed_24h'
         WHEN o.payment_status = 'pending' AND o.created_at < NOW() - INTERVAL '48 hours' THEN 'payment_delayed'
-        WHEN o.status = 'processing' AND o.confirmed_at < NOW() - INTERVAL '72 hours' THEN 'processing_delayed'
+        WHEN o.status = 'processing' AND o.processing_started < NOW() - INTERVAL '72 hours' THEN 'processing_delayed'
         WHEN EXISTS (
             SELECT 1 FROM incoming_order_items oi
             WHERE oi.order_id = o.id AND oi.product_id IS NULL
@@ -858,7 +956,7 @@ WHERE o.status NOT IN ('delivered', 'cancelled')
   AND (
     (o.status = 'new' AND o.created_at < NOW() - INTERVAL '24 hours') OR
     (o.payment_status = 'pending' AND o.created_at < NOW() - INTERVAL '48 hours') OR
-    (o.status = 'processing' AND o.confirmed_at < NOW() - INTERVAL '72 hours') OR
+    (o.status = 'processing' AND o.processing_started < NOW() - INTERVAL '72 hours') OR
     EXISTS (
         SELECT 1 FROM incoming_order_items oi
         WHERE oi.order_id = o.id AND oi.product_id IS NULL

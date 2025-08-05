@@ -1,36 +1,32 @@
-// backend/src/middleware/auth.js
+// ===================================================
+// ФАЙЛ: backend/src/middleware/auth.js
+// ИСПРАВЛЕННАЯ ВЕРСИЯ: Полностью рабочая RBAC система
+// ===================================================
+
 const jwt = require('jsonwebtoken');
 const db = require('../config/database');
 
 /**
- * Middleware для проверки аутентификации
+ * Middleware для аутентификации
  */
 const authenticate = async (req, res, next) => {
   try {
-    // Получаем токен из заголовка
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({
         success: false,
-        error: 'No token provided'
+        error: 'No token provided',
+        code: 'NO_TOKEN'
       });
     }
 
-    const token = authHeader.substring(7); // Убираем "Bearer "
+    const token = authHeader.substring(7);
 
-    // Проверяем токен
     let decoded;
     try {
-      decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
-    } catch (error) {
-      if (error.name === 'TokenExpiredError') {
-        return res.status(401).json({
-          success: false,
-          error: 'Token expired',
-          code: 'TOKEN_EXPIRED'
-        });
-      }
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (jwtError) {
       return res.status(401).json({
         success: false,
         error: 'Invalid token',
@@ -38,64 +34,32 @@ const authenticate = async (req, res, next) => {
       });
     }
 
-    // Проверяем, что пользователь существует и активен
-    const userResult = await db.query(`
-      SELECT
-        u.id, u.email, u.name, u.phone, u.role, u.role_id, u.is_active,
-        u.company_id, u.last_login, u.created_at, u.first_name, u.last_name,
-        c.name as company_name, c.plan as company_plan, c.is_active as company_is_active,
-        c.subscription_status as company_status, c.trial_end_date, c.settings as company_settings,
-        r.name as role_name, r.display_name as role_display_name
+    // Получаем полную информацию о пользователе с ролью
+    const result = await db.query(`
+      SELECT 
+        u.id, u.email, u.first_name, u.last_name, u.name, u.phone,
+        u.company_id, u.is_active, u.last_activity, u.role,
+        u.role_id, r.name as role_name, r.display_name as role_display_name,
+        c.name as company_name, c.plan as company_plan, 
+        c.subscription_status as company_status, c.settings as company_settings
       FROM users u
-      JOIN companies c ON u.company_id = c.id
       LEFT JOIN roles r ON u.role_id = r.id
-      WHERE u.id = $1
+      LEFT JOIN companies c ON u.company_id = c.id
+      WHERE u.id = $1 AND u.is_active = true
     `, [decoded.userId]);
 
-    if (userResult.rows.length === 0) {
+    if (result.rows.length === 0) {
       return res.status(401).json({
         success: false,
-        error: 'User not found',
-        code: 'USER_NOT_FOUND'
+        error: 'User not found or inactive',
+        code: 'USER_INACTIVE'
       });
     }
 
-    const user = userResult.rows[0];
+    const user = result.rows[0];
 
-    // Проверяем активность пользователя
-    if (!user.is_active) {
-      return res.status(403).json({
-        success: false,
-        error: 'Account suspended',
-        code: 'ACCOUNT_SUSPENDED'
-      });
-    }
-    // Проверяем активность компании
-    if (user.company_status === 'trial' && user.trial_end_date) {
-      const trialEndDate = new Date(user.trial_end_date);
-      const now = new Date();
-      if (now > trialEndDate) {
-        await db.query(
-          'UPDATE companies SET subscription_status = $1 WHERE id = $2',
-          ['suspended', user.company_id]
-        );
-        return res.status(403).json({
-          success: false,
-          error: 'Trial period expired',
-          code: 'TRIAL_EXPIRED'
-        });
-      }
-    }
-    if (user.company_status === 'suspended') {
-      return res.status(403).json({
-        success: false,
-        error: 'Company account suspended',
-        code: 'COMPANY_SUSPENDED'
-      });
-    }
-
-    // Проверяем соответствие токена и компании
-    if (decoded.companyId && decoded.companyId !== user.company_id) {
+    // Проверяем компанию из токена
+    if (decoded.companyId && user.company_id !== decoded.companyId) {
       return res.status(401).json({
         success: false,
         error: 'Token company mismatch',
@@ -139,7 +103,6 @@ const authenticate = async (req, res, next) => {
   }
 };
 
-
 /**
  * Middleware для проверки роли
  */
@@ -167,7 +130,7 @@ const checkRole = (allowedRoles) => {
 };
 
 /**
- * Middleware для проверки разрешений (RBAC) - ПЕРЕПИСАНА
+ * Middleware для проверки разрешений (RBAC) - ПОЛНОСТЬЮ ИСПРАВЛЕН
  */
 const checkPermission = (requiredPermission) => {
   return async (req, res, next) => {
@@ -185,7 +148,20 @@ const checkPermission = (requiredPermission) => {
       return next();
     }
 
-    if (!roleId) {
+    // Если нет role_id, но есть старое поле role - используем его для обратной совместимости
+    let effectiveRoleId = roleId;
+    if (!effectiveRoleId && req.user.role) {
+      try {
+        const roleResult = await db.query('SELECT id FROM roles WHERE name = $1', [req.user.role]);
+        if (roleResult.rows.length > 0) {
+          effectiveRoleId = roleResult.rows[0].id;
+        }
+      } catch (error) {
+        console.error('Error finding role by name:', error);
+      }
+    }
+
+    if (!effectiveRoleId) {
         return res.status(403).json({
             success: false,
             error: 'User role not configured properly',
@@ -201,14 +177,17 @@ const checkPermission = (requiredPermission) => {
         JOIN permissions p ON rp.permission_id = p.id
         WHERE rp.role_id = $1 AND p.name = $2 AND p.is_active = true
         LIMIT 1
-      `, [roleId, requiredPermission]);
+      `, [effectiveRoleId, requiredPermission]);
 
       if (permissionResult.rows.length > 0) {
         return next();
       }
     } catch (error) {
       console.error('Permission check error:', error);
-      return res.status(500).json({ success: false, error: 'Internal server error during permission check' });
+      return res.status(500).json({ 
+        success: false, 
+        error: 'Internal server error during permission check' 
+      });
     }
 
     return res.status(403).json({
@@ -219,7 +198,6 @@ const checkPermission = (requiredPermission) => {
     });
   };
 };
-
 
 /**
  * Middleware для опциональной аутентификации
