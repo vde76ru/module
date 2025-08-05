@@ -75,7 +75,7 @@ services:
   # RABBITMQ MESSAGE BROKER
   # ==============================================
   rabbitmq:
-    image: rabbitmq:3.12-management-alpine
+    image: rabbitmq:3.13-management-alpine
     container_name: moduletrade_rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-admin}
