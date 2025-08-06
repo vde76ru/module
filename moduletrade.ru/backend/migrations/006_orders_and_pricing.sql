@@ -12,6 +12,7 @@
 CREATE TABLE orders (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_id UUID NOT NULL,
+    marketplace_id UUID,
     order_number VARCHAR(100) UNIQUE,
     external_order_id VARCHAR(255),
     internal_order_number VARCHAR(100),
@@ -36,13 +37,17 @@ CREATE TABLE orders (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
 
-    CONSTRAINT fk_orders_company_id
+        CONSTRAINT fk_orders_company_id
         FOREIGN KEY (company_id) REFERENCES companies(id)
-        ON DELETE CASCADE ON UPDATE CASCADE
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_orders_marketplace_id
+        FOREIGN KEY (marketplace_id) REFERENCES marketplaces(id)
+        ON DELETE SET NULL ON UPDATE CASCADE
 );
 
 COMMENT ON TABLE orders IS 'Заказы компаний';
 COMMENT ON COLUMN orders.company_id IS 'Компания-владелец заказа';
+COMMENT ON COLUMN orders.marketplace_id IS 'Маркетплейс, с которого поступил заказ';
 COMMENT ON COLUMN orders.order_number IS 'Номер заказа';
 COMMENT ON COLUMN orders.external_order_id IS 'ID заказа во внешней системе (маркетплейс)';
 COMMENT ON COLUMN orders.internal_order_number IS 'Внутренний номер заказа';
@@ -66,6 +71,7 @@ COMMENT ON COLUMN orders.status IS 'Статус заказа: new, processing, 
 COMMENT ON COLUMN orders.commission_amount IS 'Сумма комиссии маркетплейса';
 
 CREATE INDEX idx_orders_company_id ON orders (company_id);
+CREATE INDEX idx_orders_marketplace_id ON orders (marketplace_id);
 CREATE INDEX idx_orders_order_number ON orders (order_number);
 CREATE INDEX idx_orders_external_order_id ON orders (external_order_id);
 CREATE INDEX idx_orders_internal_order_number ON orders (internal_order_number);
