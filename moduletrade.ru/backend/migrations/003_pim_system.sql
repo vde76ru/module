@@ -14,6 +14,7 @@ CREATE TABLE categories (
     company_id UUID NOT NULL,
     parent_id UUID,
     name VARCHAR(255) NOT NULL,
+    canonical_name VARCHAR(255),
     slug VARCHAR(255),
     description TEXT,
     sort_order INTEGER DEFAULT 0,
@@ -26,11 +27,11 @@ CREATE TABLE categories (
     products_count INTEGER DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    
-    CONSTRAINT fk_categories_company_id 
+
+    CONSTRAINT fk_categories_company_id
         FOREIGN KEY (company_id) REFERENCES companies(id)
         ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_categories_parent_id 
+    CONSTRAINT fk_categories_parent_id
         FOREIGN KEY (parent_id) REFERENCES categories(id)
         ON DELETE CASCADE ON UPDATE CASCADE
 );
@@ -39,6 +40,7 @@ COMMENT ON TABLE categories IS 'Иерархический справочник 
 COMMENT ON COLUMN categories.company_id IS 'Компания-владелец категории';
 COMMENT ON COLUMN categories.parent_id IS 'Родительская категория для построения дерева (NULL для корневых категорий)';
 COMMENT ON COLUMN categories.name IS 'Название категории';
+COMMENT ON COLUMN categories.canonical_name IS 'Каноническое название категории для поиска и группировки';
 COMMENT ON COLUMN categories.slug IS 'URL-friendly версия названия для SEO';
 COMMENT ON COLUMN categories.description IS 'Описание категории';
 COMMENT ON COLUMN categories.sort_order IS 'Порядок сортировки среди категорий одного уровня';
@@ -50,11 +52,11 @@ COMMENT ON COLUMN categories.meta_keywords IS 'SEO ключевые слова';
 COMMENT ON COLUMN categories.settings IS 'Дополнительные настройки категории в JSON формате';
 COMMENT ON COLUMN categories.products_count IS 'Кэшированное количество товаров в категории (включая подкатегории)';
 
-ALTER TABLE categories ADD CONSTRAINT categories_name_unique_per_parent 
+ALTER TABLE categories ADD CONSTRAINT categories_name_unique_per_parent
     UNIQUE (company_id, parent_id, name);
-ALTER TABLE categories ADD CONSTRAINT categories_slug_unique_per_company 
+ALTER TABLE categories ADD CONSTRAINT categories_slug_unique_per_company
     UNIQUE (company_id, slug);
-ALTER TABLE categories ADD CONSTRAINT categories_no_self_parent_check 
+ALTER TABLE categories ADD CONSTRAINT categories_no_self_parent_check
     CHECK (parent_id != id);
 
 CREATE INDEX idx_categories_company_id ON categories (company_id);
@@ -74,6 +76,7 @@ CREATE TABLE brands (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_id UUID NOT NULL,
     name VARCHAR(255) NOT NULL,
+    canonical_name VARCHAR(255),
     slug VARCHAR(255),
     description TEXT,
     logo_url VARCHAR(500),
@@ -88,8 +91,8 @@ CREATE TABLE brands (
     products_count INTEGER DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    
-    CONSTRAINT fk_brands_company_id 
+
+    CONSTRAINT fk_brands_company_id
         FOREIGN KEY (company_id) REFERENCES companies(id)
         ON DELETE CASCADE ON UPDATE CASCADE
 );
@@ -97,6 +100,7 @@ CREATE TABLE brands (
 COMMENT ON TABLE brands IS 'Справочник брендов для классификации товаров';
 COMMENT ON COLUMN brands.company_id IS 'Компания-владелец бренда';
 COMMENT ON COLUMN brands.name IS 'Название бренда';
+COMMENT ON COLUMN brands.canonical_name IS 'Каноническое название бренда для поиска и группировки';
 COMMENT ON COLUMN brands.slug IS 'URL-friendly версия названия';
 COMMENT ON COLUMN brands.description IS 'Описание бренда';
 COMMENT ON COLUMN brands.logo_url IS 'URL логотипа бренда';
@@ -110,9 +114,9 @@ COMMENT ON COLUMN brands.meta_description IS 'SEO описание для пои
 COMMENT ON COLUMN brands.settings IS 'Дополнительные настройки бренда';
 COMMENT ON COLUMN brands.products_count IS 'Кэшированное количество товаров бренда';
 
-ALTER TABLE brands ADD CONSTRAINT brands_name_unique_per_company 
+ALTER TABLE brands ADD CONSTRAINT brands_name_unique_per_company
     UNIQUE (company_id, name);
-ALTER TABLE brands ADD CONSTRAINT brands_slug_unique_per_company 
+ALTER TABLE brands ADD CONSTRAINT brands_slug_unique_per_company
     UNIQUE (company_id, slug);
 
 CREATE INDEX idx_brands_company_id ON brands (company_id);
@@ -164,14 +168,14 @@ CREATE TABLE products (
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    
-    CONSTRAINT fk_products_company_id 
+
+    CONSTRAINT fk_products_company_id
         FOREIGN KEY (company_id) REFERENCES companies(id)
         ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_products_brand_id 
+    CONSTRAINT fk_products_brand_id
         FOREIGN KEY (brand_id) REFERENCES brands(id)
         ON DELETE SET NULL ON UPDATE CASCADE,
-    CONSTRAINT fk_products_category_id 
+    CONSTRAINT fk_products_category_id
         FOREIGN KEY (category_id) REFERENCES categories(id)
         ON DELETE SET NULL ON UPDATE CASCADE
 );
@@ -211,11 +215,11 @@ COMMENT ON COLUMN products.external_data IS 'Дополнительные дан
 COMMENT ON COLUMN products.last_sync IS 'Дата последней синхронизации';
 COMMENT ON COLUMN products.is_active IS 'Активен ли товар';
 
-ALTER TABLE products ADD CONSTRAINT products_sku_unique_per_company 
+ALTER TABLE products ADD CONSTRAINT products_sku_unique_per_company
     UNIQUE (company_id, sku);
-ALTER TABLE products ADD CONSTRAINT products_slug_unique_per_company 
+ALTER TABLE products ADD CONSTRAINT products_slug_unique_per_company
     UNIQUE (company_id, slug);
-ALTER TABLE products ADD CONSTRAINT products_barcode_unique_per_company 
+ALTER TABLE products ADD CONSTRAINT products_barcode_unique_per_company
     UNIQUE (company_id, barcode);
 
 CREATE INDEX idx_products_company_id ON products (company_id);
@@ -262,8 +266,8 @@ CREATE TABLE media (
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    
-    CONSTRAINT fk_media_product_id 
+
+    CONSTRAINT fk_media_product_id
         FOREIGN KEY (product_id) REFERENCES products(id)
         ON DELETE CASCADE ON UPDATE CASCADE
 );
@@ -285,8 +289,8 @@ COMMENT ON COLUMN media.sort_order IS 'Порядок сортировки ме�
 COMMENT ON COLUMN media.metadata IS 'Дополнительные метаданные медиафайла';
 
 -- Ограничение: только один основной медиафайл на товар
-CREATE UNIQUE INDEX media_one_primary_per_product 
-    ON media (product_id) 
+CREATE UNIQUE INDEX media_one_primary_per_product
+    ON media (product_id)
     WHERE is_primary = true;
 
 CREATE INDEX idx_media_product_id ON media (product_id);
@@ -297,24 +301,24 @@ CREATE INDEX idx_media_is_primary ON media (is_primary);
 -- ================================================================
 -- ТРИГГЕРЫ
 -- ================================================================
-CREATE TRIGGER update_categories_updated_at 
-    BEFORE UPDATE ON categories 
-    FOR EACH ROW 
+CREATE TRIGGER update_categories_updated_at
+    BEFORE UPDATE ON categories
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_brands_updated_at 
-    BEFORE UPDATE ON brands 
-    FOR EACH ROW 
+CREATE TRIGGER update_brands_updated_at
+    BEFORE UPDATE ON brands
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_products_updated_at 
-    BEFORE UPDATE ON products 
-    FOR EACH ROW 
+CREATE TRIGGER update_products_updated_at
+    BEFORE UPDATE ON products
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_media_updated_at 
-    BEFORE UPDATE ON media 
-    FOR EACH ROW 
+CREATE TRIGGER update_media_updated_at
+    BEFORE UPDATE ON media
+    FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- ================================================================
@@ -347,17 +351,17 @@ BEGIN
     IF NEW.slug IS NULL OR NEW.slug = '' THEN
         NEW.slug := generate_slug(NEW.name);
     END IF;
-    
+
     -- Проверяем уникальность slug
     WHILE EXISTS (
-        SELECT 1 FROM categories 
-        WHERE company_id = NEW.company_id 
-        AND slug = NEW.slug 
+        SELECT 1 FROM categories
+        WHERE company_id = NEW.company_id
+        AND slug = NEW.slug
         AND id != COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000')
     ) LOOP
         NEW.slug := NEW.slug || '-' || floor(random() * 1000)::text;
     END LOOP;
-    
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -369,17 +373,17 @@ BEGIN
     IF NEW.slug IS NULL OR NEW.slug = '' THEN
         NEW.slug := generate_slug(NEW.name);
     END IF;
-    
+
     -- Проверяем уникальность slug
     WHILE EXISTS (
-        SELECT 1 FROM brands 
-        WHERE company_id = NEW.company_id 
-        AND slug = NEW.slug 
+        SELECT 1 FROM brands
+        WHERE company_id = NEW.company_id
+        AND slug = NEW.slug
         AND id != COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000')
     ) LOOP
         NEW.slug := NEW.slug || '-' || floor(random() * 1000)::text;
     END LOOP;
-    
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -391,35 +395,35 @@ BEGIN
     IF NEW.slug IS NULL OR NEW.slug = '' THEN
         NEW.slug := generate_slug(NEW.name);
     END IF;
-    
+
     -- Проверяем уникальность slug
     WHILE EXISTS (
-        SELECT 1 FROM products 
-        WHERE company_id = NEW.company_id 
-        AND slug = NEW.slug 
+        SELECT 1 FROM products
+        WHERE company_id = NEW.company_id
+        AND slug = NEW.slug
         AND id != COALESCE(NEW.id, '00000000-0000-0000-0000-000000000000')
     ) LOOP
         NEW.slug := NEW.slug || '-' || floor(random() * 1000)::text;
     END LOOP;
-    
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
 -- Триггеры для автоматической генерации slug
-CREATE TRIGGER categories_slug_trigger 
-    BEFORE INSERT OR UPDATE ON categories 
-    FOR EACH ROW 
+CREATE TRIGGER categories_slug_trigger
+    BEFORE INSERT OR UPDATE ON categories
+    FOR EACH ROW
     EXECUTE FUNCTION categories_generate_slug();
 
-CREATE TRIGGER brands_slug_trigger 
-    BEFORE INSERT OR UPDATE ON brands 
-    FOR EACH ROW 
+CREATE TRIGGER brands_slug_trigger
+    BEFORE INSERT OR UPDATE ON brands
+    FOR EACH ROW
     EXECUTE FUNCTION brands_generate_slug();
 
-CREATE TRIGGER products_slug_trigger 
-    BEFORE INSERT OR UPDATE ON products 
-    FOR EACH ROW 
+CREATE TRIGGER products_slug_trigger
+    BEFORE INSERT OR UPDATE ON products
+    FOR EACH ROW
     EXECUTE FUNCTION products_generate_slug();
 
 -- ================================================================
@@ -432,26 +436,26 @@ RETURNS TRIGGER AS $$
 BEGIN
     -- Обновляем счетчик для старой категории
     IF TG_OP = 'DELETE' OR (TG_OP = 'UPDATE' AND OLD.category_id IS DISTINCT FROM NEW.category_id) THEN
-        UPDATE categories 
+        UPDATE categories
         SET products_count = (
-            SELECT COUNT(*) 
-            FROM products 
+            SELECT COUNT(*)
+            FROM products
             WHERE category_id = OLD.category_id AND is_active = true
         )
         WHERE id = OLD.category_id;
     END IF;
-    
+
     -- Обновляем счетчик для новой категории
     IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.category_id IS DISTINCT FROM NEW.category_id) THEN
-        UPDATE categories 
+        UPDATE categories
         SET products_count = (
-            SELECT COUNT(*) 
-            FROM products 
+            SELECT COUNT(*)
+            FROM products
             WHERE category_id = NEW.category_id AND is_active = true
         )
         WHERE id = NEW.category_id;
     END IF;
-    
+
     RETURN COALESCE(NEW, OLD);
 END;
 $$ LANGUAGE plpgsql;
@@ -462,26 +466,26 @@ RETURNS TRIGGER AS $$
 BEGIN
     -- Обновляем счетчик для старого бренда
     IF TG_OP = 'DELETE' OR (TG_OP = 'UPDATE' AND OLD.brand_id IS DISTINCT FROM NEW.brand_id) THEN
-        UPDATE brands 
+        UPDATE brands
         SET products_count = (
-            SELECT COUNT(*) 
-            FROM products 
+            SELECT COUNT(*)
+            FROM products
             WHERE brand_id = OLD.brand_id AND is_active = true
         )
         WHERE id = OLD.brand_id;
     END IF;
-    
+
     -- Обновляем счетчик для нового бренда
     IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND OLD.brand_id IS DISTINCT FROM NEW.brand_id) THEN
-        UPDATE brands 
+        UPDATE brands
         SET products_count = (
-            SELECT COUNT(*) 
-            FROM products 
+            SELECT COUNT(*)
+            FROM products
             WHERE brand_id = NEW.brand_id AND is_active = true
         )
         WHERE id = NEW.brand_id;
     END IF;
-    
+
     RETURN COALESCE(NEW, OLD);
 END;
 $$ LANGUAGE plpgsql;
@@ -502,7 +506,7 @@ CREATE TRIGGER update_brand_products_count_trigger
 -- ================================================================
 
 -- Функция для проверки лимита товаров
-CREATE OR REPLACE FUNCTION check_products_limit(p_company_id UUID) 
+CREATE OR REPLACE FUNCTION check_products_limit(p_company_id UUID)
 RETURNS JSONB AS $$
 DECLARE
     v_current_count INTEGER;
@@ -512,7 +516,7 @@ BEGIN
     INTO v_current_count
     FROM products
     WHERE company_id = p_company_id AND is_active = true;
-    
+
     -- Проверяем лимит через общую функцию
     RETURN check_company_limits(p_company_id, 'products', v_current_count);
 END;
@@ -532,9 +536,9 @@ BEGIN
         SELECT c.id, c.name, 0 as level
         FROM categories c
         WHERE c.id = p_category_id
-        
+
         UNION ALL
-        
+
         -- Рекурсивный случай: дочерние категории
         SELECT c.id, c.name, ct.level + 1
         FROM categories c
@@ -556,9 +560,9 @@ BEGIN
         SELECT c.id, c.name, 0 as level
         FROM categories c
         WHERE c.id = p_category_id
-        
+
         UNION ALL
-        
+
         -- Рекурсивный случай: родительские категории
         SELECT c.id, c.name, cp.level + 1
         FROM categories c
@@ -572,4 +576,4 @@ $$ LANGUAGE plpgsql;
 
 -- ================================================================
 -- ЗАВЕРШЕНИЕ МИГРАЦИИ 003
--- ================================================================ 
+-- ================================================================

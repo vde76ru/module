@@ -41,7 +41,6 @@ CREATE TABLE tariffs (
     description TEXT,
     price_monthly DECIMAL(10,2) DEFAULT 0.00,
     price_yearly DECIMAL(10,2) DEFAULT 0.00,
-    price DECIMAL(10,2) DEFAULT 0.00,
     currency VARCHAR(3) DEFAULT 'RUB',
     billing_period VARCHAR(20) DEFAULT 'monthly',
     limits JSONB NOT NULL DEFAULT '{}',
@@ -57,7 +56,6 @@ COMMENT ON COLUMN tariffs.name IS 'Название тарифа (наприме
 COMMENT ON COLUMN tariffs.description IS 'Описание тарифа и его возможностей';
 COMMENT ON COLUMN tariffs.price_monthly IS 'Цена за месяц в рублях';
 COMMENT ON COLUMN tariffs.price_yearly IS 'Цена за год в рублях (обычно со скидкой)';
-COMMENT ON COLUMN tariffs.price IS 'Базовая цена тарифа';
 COMMENT ON COLUMN tariffs.currency IS 'Валюта тарифа';
 COMMENT ON COLUMN tariffs.billing_period IS 'Период биллинга';
 COMMENT ON COLUMN tariffs.limits IS 'Ограничения тарифа: количество товаров, пользователей, интеграций и т.д.';

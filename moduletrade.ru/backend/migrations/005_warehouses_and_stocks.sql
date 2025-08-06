@@ -127,9 +127,9 @@ CREATE INDEX idx_warehouse_product_links_low_stock ON warehouse_product_links (w
 CREATE INDEX idx_warehouse_product_links_location ON warehouse_product_links (location_code);
 
 -- ================================================================
--- ТАБЛИЦА: Stocks - Детальная информация об остатках
+-- ТАБЛИЦА: Stock_Batches - Партии товаров с детальной информацией
 -- ================================================================
-CREATE TABLE stocks (
+CREATE TABLE stock_batches (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     warehouse_id UUID NOT NULL,
     product_id UUID NOT NULL,
@@ -149,39 +149,39 @@ CREATE TABLE stocks (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
 
-    CONSTRAINT fk_stocks_warehouse_id
+    CONSTRAINT fk_stock_batches_warehouse_id
         FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
         ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_stocks_product_id
+    CONSTRAINT fk_stock_batches_product_id
         FOREIGN KEY (product_id) REFERENCES products(id)
         ON DELETE CASCADE ON UPDATE CASCADE
 );
 
-COMMENT ON TABLE stocks IS 'Детальная информация об остатках товаров на складах';
-COMMENT ON COLUMN stocks.warehouse_id IS 'Склад';
-COMMENT ON COLUMN stocks.product_id IS 'Товар';
-COMMENT ON COLUMN stocks.quantity IS 'Количество товара';
-COMMENT ON COLUMN stocks.price IS 'Цена товара';
-COMMENT ON COLUMN stocks.cost_price IS 'Себестоимость товара';
-COMMENT ON COLUMN stocks.min_quantity IS 'Минимальное количество';
-COMMENT ON COLUMN stocks.max_quantity IS 'Максимальное количество';
-COMMENT ON COLUMN stocks.reorder_point IS 'Точка перезаказа';
-COMMENT ON COLUMN stocks.batch_number IS 'Номер партии';
-COMMENT ON COLUMN stocks.expiry_date IS 'Дата истечения срока годности';
-COMMENT ON COLUMN stocks.last_receipt_date IS 'Дата последнего поступления';
-COMMENT ON COLUMN stocks.last_sale_date IS 'Дата последней продажи';
-COMMENT ON COLUMN stocks.location_code IS 'Код места хранения';
-COMMENT ON COLUMN stocks.storage_conditions IS 'Условия хранения';
-COMMENT ON COLUMN stocks.is_active IS 'Активна ли запись';
+COMMENT ON TABLE stock_batches IS 'Партии товаров с детальной информацией для учета по сериям/срокам годности';
+COMMENT ON COLUMN stock_batches.warehouse_id IS 'Склад';
+COMMENT ON COLUMN stock_batches.product_id IS 'Товар';
+COMMENT ON COLUMN stock_batches.quantity IS 'Количество товара в партии';
+COMMENT ON COLUMN stock_batches.price IS 'Цена товара в партии';
+COMMENT ON COLUMN stock_batches.cost_price IS 'Себестоимость товара в партии';
+COMMENT ON COLUMN stock_batches.min_quantity IS 'Минимальное количество в партии';
+COMMENT ON COLUMN stock_batches.max_quantity IS 'Максимальное количество в партии';
+COMMENT ON COLUMN stock_batches.reorder_point IS 'Точка перезаказа для партии';
+COMMENT ON COLUMN stock_batches.batch_number IS 'Номер партии товара';
+COMMENT ON COLUMN stock_batches.expiry_date IS 'Дата истечения срока годности партии';
+COMMENT ON COLUMN stock_batches.last_receipt_date IS 'Дата последнего поступления в партию';
+COMMENT ON COLUMN stock_batches.last_sale_date IS 'Дата последней продажи из партии';
+COMMENT ON COLUMN stock_batches.location_code IS 'Код места хранения партии';
+COMMENT ON COLUMN stock_batches.storage_conditions IS 'Условия хранения партии';
+COMMENT ON COLUMN stock_batches.is_active IS 'Активна ли партия';
 
-CREATE INDEX idx_stocks_warehouse_id ON stocks (warehouse_id);
-CREATE INDEX idx_stocks_product_id ON stocks (product_id);
-CREATE INDEX idx_stocks_quantity ON stocks (quantity);
-CREATE INDEX idx_stocks_batch_number ON stocks (batch_number);
-CREATE INDEX idx_stocks_expiry_date ON stocks (expiry_date);
-CREATE INDEX idx_stocks_location_code ON stocks (location_code);
-CREATE INDEX idx_stocks_is_active ON stocks (is_active);
-CREATE INDEX idx_stocks_low_stock ON stocks (warehouse_id, product_id, quantity, min_quantity)
+CREATE INDEX idx_stock_batches_warehouse_id ON stock_batches (warehouse_id);
+CREATE INDEX idx_stock_batches_product_id ON stock_batches (product_id);
+CREATE INDEX idx_stock_batches_quantity ON stock_batches (quantity);
+CREATE INDEX idx_stock_batches_batch_number ON stock_batches (batch_number);
+CREATE INDEX idx_stock_batches_expiry_date ON stock_batches (expiry_date);
+CREATE INDEX idx_stock_batches_location_code ON stock_batches (location_code);
+CREATE INDEX idx_stock_batches_is_active ON stock_batches (is_active);
+CREATE INDEX idx_stock_batches_low_stock ON stock_batches (warehouse_id, product_id, quantity, min_quantity)
     WHERE quantity <= min_quantity;
 
 -- ================================================================
@@ -194,7 +194,6 @@ CREATE TABLE warehouse_movements (
     to_warehouse_id UUID,
     product_id UUID NOT NULL,
     movement_type VARCHAR(50) NOT NULL,
-    type VARCHAR(50),
     quantity DECIMAL(12,3) NOT NULL,
     unit_price DECIMAL(12,2),
     total_value DECIMAL(12,2),
@@ -203,7 +202,6 @@ CREATE TABLE warehouse_movements (
     reason TEXT,
     notes TEXT,
     metadata JSONB DEFAULT '{}'::jsonb,
-    user_id UUID,
     created_by UUID,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -220,9 +218,6 @@ CREATE TABLE warehouse_movements (
     CONSTRAINT fk_warehouse_movements_product_id
         FOREIGN KEY (product_id) REFERENCES products(id)
         ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_warehouse_movements_user_id
-        FOREIGN KEY (user_id) REFERENCES users(id)
-        ON DELETE SET NULL ON UPDATE CASCADE,
     CONSTRAINT fk_warehouse_movements_created_by
         FOREIGN KEY (created_by) REFERENCES users(id)
         ON DELETE SET NULL ON UPDATE CASCADE
@@ -234,7 +229,6 @@ COMMENT ON COLUMN warehouse_movements.from_warehouse_id IS 'Склад-исто�
 COMMENT ON COLUMN warehouse_movements.to_warehouse_id IS 'Склад-назначение (для переводов)';
 COMMENT ON COLUMN warehouse_movements.product_id IS 'Товар';
 COMMENT ON COLUMN warehouse_movements.movement_type IS 'Тип движения: receipt, sale, transfer, adjustment, return';
-COMMENT ON COLUMN warehouse_movements.type IS 'Альтернативное название типа движения';
 COMMENT ON COLUMN warehouse_movements.quantity IS 'Количество товара';
 COMMENT ON COLUMN warehouse_movements.unit_price IS 'Цена за единицу';
 COMMENT ON COLUMN warehouse_movements.total_value IS 'Общая стоимость';
@@ -243,18 +237,15 @@ COMMENT ON COLUMN warehouse_movements.reference_id IS 'ID связанной с�
 COMMENT ON COLUMN warehouse_movements.reason IS 'Причина движения';
 COMMENT ON COLUMN warehouse_movements.notes IS 'Примечания к движению';
 COMMENT ON COLUMN warehouse_movements.metadata IS 'Дополнительные данные';
-COMMENT ON COLUMN warehouse_movements.user_id IS 'Пользователь, создавший движение (основное поле)';
-COMMENT ON COLUMN warehouse_movements.created_by IS 'Пользователь, создавший движение (альтернативное поле)';
+COMMENT ON COLUMN warehouse_movements.created_by IS 'Пользователь, создавший движение';
 
 CREATE INDEX idx_warehouse_movements_warehouse_id ON warehouse_movements (warehouse_id);
 CREATE INDEX idx_warehouse_movements_from_warehouse_id ON warehouse_movements (from_warehouse_id);
 CREATE INDEX idx_warehouse_movements_to_warehouse_id ON warehouse_movements (to_warehouse_id);
 CREATE INDEX idx_warehouse_movements_product_id ON warehouse_movements (product_id);
 CREATE INDEX idx_warehouse_movements_movement_type ON warehouse_movements (movement_type);
-CREATE INDEX idx_warehouse_movements_type ON warehouse_movements (type);
 CREATE INDEX idx_warehouse_movements_created_at ON warehouse_movements (created_at DESC);
 CREATE INDEX idx_warehouse_movements_reference ON warehouse_movements (reference_type, reference_id);
-CREATE INDEX idx_warehouse_movements_user_id ON warehouse_movements (user_id);
 CREATE INDEX idx_warehouse_movements_created_by ON warehouse_movements (created_by);
 
 -- ================================================================
@@ -270,8 +261,8 @@ CREATE TRIGGER update_warehouse_product_links_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_stocks_updated_at
-    BEFORE UPDATE ON stocks
+CREATE TRIGGER update_stock_batches_updated_at
+    BEFORE UPDATE ON stock_batches
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
@@ -513,6 +504,33 @@ CREATE TRIGGER update_stock_on_movement_trigger
     AFTER INSERT OR UPDATE OR DELETE ON warehouse_movements
     FOR EACH ROW
     EXECUTE FUNCTION update_stock_on_movement();
+
+-- ================================================================
+-- ПРЕДСТАВЛЕНИЯ
+-- ================================================================
+
+-- Представление для получения общих остатков товаров по всем складам
+CREATE OR REPLACE VIEW v_product_total_stock AS
+SELECT
+    p.id as product_id,
+    p.company_id,
+    p.name as product_name,
+    p.sku,
+    p.internal_code,
+    COALESCE(SUM(wpl.quantity), 0) as total_quantity,
+    COALESCE(SUM(wpl.reserved_quantity), 0) as total_reserved,
+    COALESCE(SUM(wpl.available_quantity), 0) as total_available,
+    COUNT(DISTINCT w.id) FILTER (WHERE wpl.quantity > 0) as warehouses_with_stock,
+    COALESCE(AVG(wpl.price), 0) as avg_price,
+    MIN(wpl.last_updated_at) as earliest_update,
+    MAX(wpl.last_updated_at) as latest_update
+FROM products p
+LEFT JOIN warehouse_product_links wpl ON p.id = wpl.product_id AND wpl.is_active = true
+LEFT JOIN warehouses w ON wpl.warehouse_id = w.id AND w.is_active = true
+WHERE p.is_active = true
+GROUP BY p.id, p.company_id, p.name, p.sku, p.internal_code;
+
+COMMENT ON VIEW v_product_total_stock IS 'Представление для получения общих остатков товаров по всем складам компании';
 
 -- ================================================================
 -- ЗАВЕРШЕНИЕ МИГРАЦИИ 005

@@ -20,12 +20,7 @@ ALTER TABLE product_suppliers ADD COLUMN availability_status VARCHAR(20) DEFAULT
 COMMENT ON COLUMN product_suppliers.availability_status IS 'Статус наличия товара у поставщика: available, out_of_stock, discontinued, limited';
 CREATE INDEX idx_product_suppliers_availability_status ON product_suppliers (availability_status);
 
--- Добавление алиасных полей для совместимости
-ALTER TABLE order_items ADD COLUMN price DECIMAL(12,2);
-COMMENT ON COLUMN order_items.price IS 'Алиас для unit_price для обратной совместимости';
-
-ALTER TABLE product_suppliers ADD COLUMN price DECIMAL(12,2);
-COMMENT ON COLUMN product_suppliers.price IS 'Алиас для supplier_price для обратной совместимости';
+-- Алиасные поля удалены для устранения дублирования данных
 
 -- ================================================================
 -- ТАБЛИЦА: Procurement_Overrides - Переопределения закупок
@@ -280,42 +275,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Функция для обновления алиасных полей
-CREATE OR REPLACE FUNCTION sync_alias_fields()
-RETURNS TRIGGER AS $$
-BEGIN
-    -- Синхронизация price с unit_price в order_items
-    IF TG_TABLE_NAME = 'order_items' THEN
-        IF NEW.unit_price IS DISTINCT FROM OLD.unit_price THEN
-            NEW.price := NEW.unit_price;
-        ELSIF NEW.price IS DISTINCT FROM OLD.price AND NEW.price IS NOT NULL THEN
-            NEW.unit_price := NEW.price;
-        END IF;
-    END IF;
-
-    -- Синхронизация price с supplier_price в product_suppliers
-    IF TG_TABLE_NAME = 'product_suppliers' THEN
-        IF NEW.supplier_price IS DISTINCT FROM OLD.supplier_price THEN
-            NEW.price := NEW.supplier_price;
-        ELSIF NEW.price IS DISTINCT FROM OLD.price AND NEW.price IS NOT NULL THEN
-            NEW.supplier_price := NEW.price;
-        END IF;
-    END IF;
-
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Триггеры для синхронизации алиасных полей
-CREATE TRIGGER sync_order_items_alias_fields
-    BEFORE UPDATE ON order_items
-    FOR EACH ROW
-    EXECUTE FUNCTION sync_alias_fields();
-
-CREATE TRIGGER sync_product_suppliers_alias_fields
-    BEFORE UPDATE ON product_suppliers
-    FOR EACH ROW
-    EXECUTE FUNCTION sync_alias_fields();
+-- Функции и триггеры для синхронизации алиасных полей удалены
 
 -- ================================================================
 -- ЗАВЕРШЕНИЕ МИГРАЦИИ 010

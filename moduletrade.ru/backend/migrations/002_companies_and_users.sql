@@ -15,7 +15,6 @@ CREATE TABLE companies (
     settings JSONB DEFAULT '{}'::jsonb,
     tariff_id UUID NOT NULL,
     trial_ends_at TIMESTAMP WITH TIME ZONE,
-    trial_end_date TIMESTAMP WITH TIME ZONE,
     subscription_end_date TIMESTAMP WITH TIME ZONE,
     status VARCHAR(20) NOT NULL DEFAULT 'trial'
         CHECK (status IN ('active', 'trial', 'blocked', 'archived')),
@@ -39,7 +38,6 @@ COMMENT ON COLUMN companies.name IS 'Название компании';
 COMMENT ON COLUMN companies.settings IS 'Настройки компании: валюта по умолчанию, часовой пояс, локализация и т.д.';
 COMMENT ON COLUMN companies.tariff_id IS 'Внешний ключ на таблицу tariffs - текущий тариф компании';
 COMMENT ON COLUMN companies.trial_ends_at IS 'Дата и время окончания триального периода';
-COMMENT ON COLUMN companies.trial_end_date IS 'Дата окончания триального периода';
 COMMENT ON COLUMN companies.subscription_end_date IS 'Дата окончания подписки';
 COMMENT ON COLUMN companies.status IS 'Статус аккаунта: active - активный, trial - триальный, blocked - заблокирован, archived - архивирован';
 COMMENT ON COLUMN companies.contact_email IS 'Основной email для связи с компанией';
@@ -60,7 +58,6 @@ CREATE INDEX idx_companies_last_activity ON companies (last_activity_at);
 CREATE INDEX idx_companies_status_trial ON companies (status, trial_ends_at)
     WHERE status = 'trial';
 CREATE INDEX idx_companies_is_active ON companies (is_active);
-CREATE INDEX idx_companies_trial_end_date ON companies (trial_end_date);
 CREATE INDEX idx_companies_subscription_end_date ON companies (subscription_end_date);
 
 -- ================================================================
@@ -79,7 +76,6 @@ CREATE TABLE users (
     settings JSONB DEFAULT '{}'::jsonb,
     is_active BOOLEAN DEFAULT TRUE,
     email_verified_at TIMESTAMP WITH TIME ZONE,
-    last_login TIMESTAMP WITH TIME ZONE,
     last_login_at TIMESTAMP WITH TIME ZONE,
     last_login_ip INET,
     password_reset_token VARCHAR(255),
@@ -108,8 +104,7 @@ COMMENT ON COLUMN users.avatar_url IS 'URL аватара пользовател
 COMMENT ON COLUMN users.settings IS 'Персональные настройки пользователя: язык, тема, уведомления и т.д.';
 COMMENT ON COLUMN users.is_active IS 'Активен ли пользователь (может ли входить в систему)';
 COMMENT ON COLUMN users.email_verified_at IS 'Дата и время подтверждения email адреса';
-COMMENT ON COLUMN users.last_login IS 'Дата и время последнего входа в систему (основное поле)';
-COMMENT ON COLUMN users.last_login_at IS 'Дата и время последнего входа в систему (альтернативное поле для совместимости)';
+COMMENT ON COLUMN users.last_login_at IS 'Дата и время последнего входа в систему';
 COMMENT ON COLUMN users.last_login_ip IS 'IP адрес последнего входа';
 COMMENT ON COLUMN users.password_reset_token IS 'Токен для сброса пароля';
 COMMENT ON COLUMN users.password_reset_expires_at IS 'Время истечения токена сброса пароля';
@@ -126,7 +121,6 @@ CREATE INDEX idx_users_role ON users (role);
 CREATE INDEX idx_users_role_id ON users (role_id);
 CREATE UNIQUE INDEX idx_users_email ON users (email);
 CREATE INDEX idx_users_is_active ON users (is_active);
-CREATE INDEX idx_users_last_login ON users (last_login);
 CREATE INDEX idx_users_last_login_at ON users (last_login_at);
 CREATE INDEX idx_users_password_reset_token ON users (password_reset_token)
     WHERE password_reset_token IS NOT NULL;
