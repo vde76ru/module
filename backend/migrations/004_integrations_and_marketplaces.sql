@@ -160,12 +160,6 @@ CREATE INDEX idx_marketplaces_last_sync_status ON marketplaces (last_sync_status
 CREATE INDEX idx_marketplaces_company_active ON marketplaces (company_id, status, priority);
 
 -- ================================================================
--- ТАБЛИЦА: Product_Suppliers - Связь товаров с поставщиками (УДАЛЕНА - дублируется в миграции 006)
--- ================================================================
--- Таблица product_suppliers создается в миграции 006 с более полной структурой
--- включающей поля: original_price, currency, price_calculated_at, price_calculation_log
-
--- ================================================================
 -- ТАБЛИЦА: Marketplace_Settings - Настройки товаров для маркетплейсов
 -- ================================================================
 CREATE TABLE marketplace_settings (
@@ -406,325 +400,6 @@ CREATE INDEX idx_system_settings_key ON system_settings (setting_key);
 CREATE INDEX idx_system_settings_is_public ON system_settings (is_public);
 
 -- ================================================================
--- ТРИГГЕРЫ
--- ================================================================
-CREATE TRIGGER update_suppliers_updated_at
-    BEFORE UPDATE ON suppliers
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_marketplaces_updated_at
-    BEFORE UPDATE ON marketplaces
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
--- Триггер для product_suppliers удален - таблица создается в миграции 006
-
-CREATE TRIGGER update_marketplace_settings_updated_at
-    BEFORE UPDATE ON marketplace_settings
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_marketplace_integration_settings_updated_at
-    BEFORE UPDATE ON marketplace_integration_settings
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_marketplace_integrations_updated_at
-    BEFORE UPDATE ON marketplace_integrations
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_supplier_integrations_updated_at
-    BEFORE UPDATE ON supplier_integrations
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_system_settings_updated_at
-    BEFORE UPDATE ON system_settings
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
--- ================================================================
--- ФУНКЦИИ ДЛЯ РАБОТЫ С ИНТЕГРАЦИЯМИ
--- ================================================================
-
--- Функция для проверки лимитов компании
-CREATE OR REPLACE FUNCTION check_company_limits(p_company_id UUID, p_limit_type VARCHAR, p_current_count INTEGER)
-RETURNS JSONB AS $$
-DECLARE
-    v_company_subscription VARCHAR;
-    v_limit INTEGER;
-    v_result JSONB;
-BEGIN
-    -- Получаем подписку компании
-    SELECT subscription_status INTO v_company_subscription
-    FROM companies
-    WHERE id = p_company_id;
-
-    -- Определяем лимиты в зависимости от типа и подписки
-    CASE p_limit_type
-        WHEN 'suppliers' THEN
-            CASE v_company_subscription
-                WHEN 'free' THEN v_limit := 5;
-                WHEN 'basic' THEN v_limit := 20;
-                WHEN 'premium' THEN v_limit := 100;
-                WHEN 'enterprise' THEN v_limit := -1; -- Безлимитно
-                ELSE v_limit := 5;
-            END CASE;
-        WHEN 'marketplaces' THEN
-            CASE v_company_subscription
-                WHEN 'free' THEN v_limit := 3;
-                WHEN 'basic' THEN v_limit := 10;
-                WHEN 'premium' THEN v_limit := 50;
-                WHEN 'enterprise' THEN v_limit := -1; -- Безлимитно
-                ELSE v_limit := 3;
-            END CASE;
-        WHEN 'warehouses' THEN
-            CASE v_company_subscription
-                WHEN 'free' THEN v_limit := 2;
-                WHEN 'basic' THEN v_limit := 5;
-                WHEN 'premium' THEN v_limit := 20;
-                WHEN 'enterprise' THEN v_limit := -1; -- Безлимитно
-                ELSE v_limit := 2;
-            END CASE;
-        ELSE
-            v_limit := 0;
-    END CASE;
-
-    -- Формируем результат
-    v_result := jsonb_build_object(
-        'limit_type', p_limit_type,
-        'current_count', p_current_count,
-        'limit', v_limit,
-        'subscription', v_company_subscription,
-        'can_add', CASE 
-            WHEN v_limit = -1 THEN true
-            ELSE p_current_count < v_limit
-        END,
-        'remaining', CASE 
-            WHEN v_limit = -1 THEN -1
-            ELSE GREATEST(0, v_limit - p_current_count)
-        END
-    );
-
-    RETURN v_result;
-END;
-$$ LANGUAGE plpgsql;
-
--- Функция для проверки лимита поставщиков
-CREATE OR REPLACE FUNCTION check_suppliers_limit(p_company_id UUID)
-RETURNS JSONB AS $$
-DECLARE
-    v_current_count INTEGER;
-BEGIN
-    -- Считаем активных поставщиков компании
-    SELECT COUNT(*)
-    INTO v_current_count
-    FROM suppliers
-    WHERE company_id = p_company_id AND status = 'active';
-
-    -- Проверяем лимит через общую функцию
-    RETURN check_company_limits(p_company_id, 'suppliers', v_current_count);
-END;
-$$ LANGUAGE plpgsql;
-
--- Функция для проверки лимита маркетплейсов
-CREATE OR REPLACE FUNCTION check_marketplaces_limit(p_company_id UUID)
-RETURNS JSONB AS $$
-DECLARE
-    v_current_count INTEGER;
-BEGIN
-    -- Считаем активных маркетплейсов компании
-    SELECT COUNT(*)
-    INTO v_current_count
-    FROM marketplaces
-    WHERE company_id = p_company_id AND status = 'active';
-
-    -- Проверяем лимит через общую функцию
-    RETURN check_company_limits(p_company_id, 'marketplaces', v_current_count);
-END;
-$$ LANGUAGE plpgsql;
-
--- Функция для получения предпочтительного поставщика товара
-CREATE OR REPLACE FUNCTION get_preferred_supplier(p_product_id UUID)
-RETURNS TABLE (
-    supplier_id UUID,
-    supplier_name VARCHAR,
-    supplier_price DECIMAL,
-    supplier_currency VARCHAR,
-    lead_time_days INTEGER
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        s.id,
-        s.name,
-        ps.supplier_price,
-        ps.supplier_currency,
-        ps.lead_time_days
-    FROM product_suppliers ps
-    JOIN suppliers s ON ps.supplier_id = s.id
-    WHERE ps.product_id = p_product_id
-        AND ps.is_preferred = true
-        AND ps.is_active = true
-        AND s.status = 'active'
-    ORDER BY s.priority DESC, ps.supplier_price ASC
-    LIMIT 1;
-END;
-$$ LANGUAGE plpgsql;
-
--- Функция для получения активных интеграций маркетплейса
-CREATE OR REPLACE FUNCTION get_active_marketplace_integrations(p_marketplace_id UUID)
-RETURNS TABLE (
-    integration_id UUID,
-    integration_type VARCHAR,
-    api_endpoint VARCHAR,
-    last_sync_at TIMESTAMP WITH TIME ZONE,
-    error_count INTEGER
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        mi.id,
-        mi.integration_type,
-        mi.api_endpoint,
-        mi.last_sync_at,
-        mi.error_count
-    FROM marketplace_integrations mi
-    WHERE mi.marketplace_id = p_marketplace_id
-        AND mi.status = 'active'
-    ORDER BY mi.last_sync_at ASC NULLS FIRST;
-END;
-$$ LANGUAGE plpgsql;
-
--- Функция для получения активных интеграций поставщика
-CREATE OR REPLACE FUNCTION get_active_supplier_integrations(p_supplier_id UUID)
-RETURNS TABLE (
-    integration_id UUID,
-    integration_type VARCHAR,
-    api_endpoint VARCHAR,
-    last_sync_at TIMESTAMP WITH TIME ZONE,
-    error_count INTEGER
-) AS $$
-BEGIN
-    RETURN QUERY
-    SELECT
-        si.id,
-        si.integration_type,
-        si.api_endpoint,
-        si.last_sync_at,
-        si.error_count
-    FROM supplier_integrations si
-    WHERE si.supplier_id = p_supplier_id
-        AND si.status = 'active'
-    ORDER BY si.last_sync_at ASC NULLS FIRST;
-END;
-$$ LANGUAGE plpgsql;
-
--- Функция для обновления статуса синхронизации
-CREATE OR REPLACE FUNCTION update_sync_status(
-    p_entity_type VARCHAR,
-    p_entity_id UUID,
-    p_status VARCHAR,
-    p_error TEXT DEFAULT NULL
-) RETURNS BOOLEAN AS $$
-BEGIN
-    CASE p_entity_type
-        WHEN 'supplier' THEN
-            UPDATE suppliers
-            SET last_sync_at = CURRENT_TIMESTAMP,
-                last_sync_status = p_status,
-                last_sync_error = p_error,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = p_entity_id;
-        WHEN 'marketplace' THEN
-            UPDATE marketplaces
-            SET last_sync_at = CURRENT_TIMESTAMP,
-                last_sync_status = p_status,
-                last_sync_error = p_error,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = p_entity_id;
-        WHEN 'product_supplier' THEN
-            UPDATE product_suppliers
-            SET last_sync_at = CURRENT_TIMESTAMP,
-                sync_status = p_status,
-                sync_error = p_error,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = p_entity_id;
-        WHEN 'marketplace_setting' THEN
-            UPDATE marketplace_settings
-            SET last_sync_at = CURRENT_TIMESTAMP,
-                sync_status = p_status,
-                sync_error = p_error,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = p_entity_id;
-        ELSE
-            RETURN FALSE;
-    END CASE;
-
-    RETURN TRUE;
-END;
-$$ LANGUAGE plpgsql;
-
--- ================================================================
--- ТАБЛИЦА: Product_Mappings - Связи товаров с внешними системами
--- ================================================================
-CREATE TABLE product_mappings (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    company_id UUID NOT NULL,
-    product_id UUID NOT NULL,
-    system_id UUID NOT NULL,
-    external_id VARCHAR(255) NOT NULL,
-    mapping_type VARCHAR(50) DEFAULT 'product',
-    external_data JSONB DEFAULT '{}'::jsonb,
-    is_active BOOLEAN DEFAULT TRUE,
-    last_sync_at TIMESTAMP WITH TIME ZONE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-
-    CONSTRAINT fk_product_mappings_company_id
-        FOREIGN KEY (company_id) REFERENCES companies(id)
-        ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_product_mappings_product_id
-        FOREIGN KEY (product_id) REFERENCES products(id)
-        ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_product_mappings_system_id
-        FOREIGN KEY (system_id) REFERENCES external_systems(id)
-        ON DELETE CASCADE ON UPDATE CASCADE
-);
-
-COMMENT ON TABLE product_mappings IS 'Связи товаров с внешними системами';
-COMMENT ON COLUMN product_mappings.company_id IS 'Компания';
-COMMENT ON COLUMN product_mappings.product_id IS 'Товар';
-COMMENT ON COLUMN product_mappings.system_id IS 'Внешняя система';
-COMMENT ON COLUMN product_mappings.external_id IS 'ID товара во внешней системе';
-COMMENT ON COLUMN product_mappings.mapping_type IS 'Тип связи: product, variant, bundle';
-COMMENT ON COLUMN product_mappings.external_data IS 'Дополнительные данные из внешней системы';
-COMMENT ON COLUMN product_mappings.is_active IS 'Активна ли связь';
-COMMENT ON COLUMN product_mappings.last_sync_at IS 'Время последней синхронизации';
-
-ALTER TABLE product_mappings ADD CONSTRAINT product_mappings_unique
-    UNIQUE (company_id, system_id, external_id);
-
-CREATE INDEX idx_product_mappings_company_id ON product_mappings (company_id);
-CREATE INDEX idx_product_mappings_product_id ON product_mappings (product_id);
-CREATE INDEX idx_product_mappings_system_id ON product_mappings (system_id);
-CREATE INDEX idx_product_mappings_external_id ON product_mappings (external_id);
-CREATE INDEX idx_product_mappings_mapping_type ON product_mappings (mapping_type);
-CREATE INDEX idx_product_mappings_is_active ON product_mappings (is_active);
-
--- ================================================================
--- ТАБЛИЦА: Marketplace_Product_Links - Связи товаров с маркетплейсами (УДАЛЕНА - дублируется в миграции 006)
--- ================================================================
--- Таблица marketplace_product_links создается в миграции 006 с более полной структурой
--- включающей поля: price_calculated_at, price_calculation_log, additional_expenses
-
-
--- ТАБЛИЦА: Exchange_Rates - Курсы валют (УДАЛЕНА - дублируется в миграции 006)
--- ================================================================
--- Таблица exchange_rates создается в миграции 006
-
--- ================================================================
 -- ТАБЛИЦА: Multi_Warehouse_Components - Компоненты мульти-складов
 -- ================================================================
 CREATE TABLE multi_warehouse_components (
@@ -838,8 +513,6 @@ CREATE INDEX idx_incoming_order_items_order_id ON incoming_order_items (order_id
 CREATE INDEX idx_incoming_order_items_external_product_id ON incoming_order_items (external_product_id);
 
 -- ================================================================
-
-=======
 -- ТАБЛИЦА: External_Systems - Внешние системы
 -- ================================================================
 CREATE TABLE external_systems (
@@ -1002,7 +675,7 @@ CREATE INDEX idx_role_permissions_role_id ON role_permissions (role_id);
 CREATE INDEX idx_role_permissions_permission_id ON role_permissions (permission_id);
 CREATE INDEX idx_role_permissions_is_active ON role_permissions (is_active);
 
-
+-- ================================================================
 -- ТАБЛИЦА: Tenant_Integrations - Интеграции тенантов
 -- ================================================================
 CREATE TABLE tenant_integrations (
@@ -1049,18 +722,42 @@ CREATE INDEX IF NOT EXISTS idx_products_main_supplier_id
     ON products (main_supplier_id);
 
 -- ================================================================
--- ТРИГГЕРЫ ДЛЯ НОВЫХ ТАБЛИЦ
+-- ТРИГГЕРЫ
 -- ================================================================
-CREATE TRIGGER update_product_mappings_updated_at
-    BEFORE UPDATE ON product_mappings
+CREATE TRIGGER update_suppliers_updated_at
+    BEFORE UPDATE ON suppliers
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- Триггер для marketplace_product_links удален - таблица создается в миграции 006
+CREATE TRIGGER update_marketplaces_updated_at
+    BEFORE UPDATE ON marketplaces
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
 
--- Триггер для product_suppliers удален - таблица создается в миграции 006
+CREATE TRIGGER update_marketplace_settings_updated_at
+    BEFORE UPDATE ON marketplace_settings
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
 
--- Триггер для exchange_rates удален - таблица создается в миграции 006
+CREATE TRIGGER update_marketplace_integration_settings_updated_at
+    BEFORE UPDATE ON marketplace_integration_settings
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_marketplace_integrations_updated_at
+    BEFORE UPDATE ON marketplace_integrations
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_supplier_integrations_updated_at
+    BEFORE UPDATE ON supplier_integrations
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_system_settings_updated_at
+    BEFORE UPDATE ON system_settings
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_multi_warehouse_components_updated_at
     BEFORE UPDATE ON multi_warehouse_components
@@ -1106,6 +803,146 @@ CREATE TRIGGER update_role_permissions_updated_at
     BEFORE UPDATE ON role_permissions
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
+
+-- ================================================================
+-- ФУНКЦИИ ДЛЯ РАБОТЫ С ИНТЕГРАЦИЯМИ
+-- ================================================================
+
+-- Функция для проверки лимитов компании
+CREATE OR REPLACE FUNCTION check_company_limits(p_company_id UUID, p_limit_type VARCHAR, p_current_count INTEGER)
+RETURNS JSONB AS $$
+DECLARE
+    v_company_subscription VARCHAR;
+    v_limit INTEGER;
+    v_result JSONB;
+BEGIN
+    -- Получаем подписку компании
+    SELECT subscription_status INTO v_company_subscription
+    FROM companies
+    WHERE id = p_company_id;
+
+    -- Определяем лимиты в зависимости от типа и подписки
+    CASE p_limit_type
+        WHEN 'suppliers' THEN
+            CASE v_company_subscription
+                WHEN 'free' THEN v_limit := 5;
+                WHEN 'basic' THEN v_limit := 20;
+                WHEN 'premium' THEN v_limit := 100;
+                WHEN 'enterprise' THEN v_limit := -1; -- Безлимитно
+                ELSE v_limit := 5;
+            END CASE;
+        WHEN 'marketplaces' THEN
+            CASE v_company_subscription
+                WHEN 'free' THEN v_limit := 3;
+                WHEN 'basic' THEN v_limit := 10;
+                WHEN 'premium' THEN v_limit := 50;
+                WHEN 'enterprise' THEN v_limit := -1; -- Безлимитно
+                ELSE v_limit := 3;
+            END CASE;
+        WHEN 'warehouses' THEN
+            CASE v_company_subscription
+                WHEN 'free' THEN v_limit := 2;
+                WHEN 'basic' THEN v_limit := 5;
+                WHEN 'premium' THEN v_limit := 20;
+                WHEN 'enterprise' THEN v_limit := -1; -- Безлимитно
+                ELSE v_limit := 2;
+            END CASE;
+        ELSE
+            v_limit := 0;
+    END CASE;
+
+    -- Формируем результат
+    v_result := jsonb_build_object(
+        'limit_type', p_limit_type,
+        'current_count', p_current_count,
+        'limit', v_limit,
+        'subscription', v_company_subscription,
+        'can_add', CASE 
+            WHEN v_limit = -1 THEN true
+            ELSE p_current_count < v_limit
+        END,
+        'remaining', CASE 
+            WHEN v_limit = -1 THEN -1
+            ELSE GREATEST(0, v_limit - p_current_count)
+        END
+    );
+
+    RETURN v_result;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Функция для проверки лимита поставщиков
+CREATE OR REPLACE FUNCTION check_suppliers_limit(p_company_id UUID)
+RETURNS JSONB AS $$
+DECLARE
+    v_current_count INTEGER;
+BEGIN
+    -- Считаем активных поставщиков компании
+    SELECT COUNT(*)
+    INTO v_current_count
+    FROM suppliers
+    WHERE company_id = p_company_id AND status = 'active';
+
+    -- Проверяем лимит через общую функцию
+    RETURN check_company_limits(p_company_id, 'suppliers', v_current_count);
+END;
+$$ LANGUAGE plpgsql;
+
+-- Функция для проверки лимита маркетплейсов
+CREATE OR REPLACE FUNCTION check_marketplaces_limit(p_company_id UUID)
+RETURNS JSONB AS $$
+DECLARE
+    v_current_count INTEGER;
+BEGIN
+    -- Считаем активных маркетплейсов компании
+    SELECT COUNT(*)
+    INTO v_current_count
+    FROM marketplaces
+    WHERE company_id = p_company_id AND status = 'active';
+
+    -- Проверяем лимит через общую функцию
+    RETURN check_company_limits(p_company_id, 'marketplaces', v_current_count);
+END;
+$$ LANGUAGE plpgsql;
+
+-- Функция для обновления статуса синхронизации
+CREATE OR REPLACE FUNCTION update_sync_status(
+    p_entity_type VARCHAR,
+    p_entity_id UUID,
+    p_status VARCHAR,
+    p_error TEXT DEFAULT NULL
+) RETURNS BOOLEAN AS $$
+BEGIN
+    CASE p_entity_type
+        WHEN 'supplier' THEN
+            UPDATE suppliers
+            SET last_sync_at = CURRENT_TIMESTAMP,
+                last_sync_status = p_status,
+                last_sync_error = p_error,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = p_entity_id;
+        WHEN 'marketplace' THEN
+            UPDATE marketplaces
+            SET last_sync_at = CURRENT_TIMESTAMP,
+                last_sync_status = p_status,
+                last_sync_error = p_error,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = p_entity_id;
+        WHEN 'marketplace_setting' THEN
+            UPDATE marketplace_settings
+            SET last_sync_at = CURRENT_TIMESTAMP,
+                sync_status = p_status,
+                sync_error = p_error,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = p_entity_id;
+        ELSE
+            RETURN FALSE;
+    END CASE;
+
+    RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql;
+
 -- ================================================================
 -- ЗАВЕРШЕНИЕ МИГРАЦИИ 004
 -- ================================================================

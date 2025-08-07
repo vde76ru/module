@@ -12,11 +12,8 @@
 CREATE TABLE sync_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_id UUID NOT NULL,
-
-=======
     marketplace_id UUID,
     sync_id VARCHAR(255),
-
     sync_type VARCHAR(50) NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'pending',
     results JSONB DEFAULT '{}'::jsonb,
@@ -26,33 +23,23 @@ CREATE TABLE sync_logs (
     items_processed INTEGER DEFAULT 0,
     items_succeeded INTEGER DEFAULT 0,
     items_failed INTEGER DEFAULT 0,
-
-=======
     details JSONB DEFAULT '{}'::jsonb,
-    error_message TEXT,
-
     metadata JSONB DEFAULT '{}'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
 
     CONSTRAINT fk_sync_logs_company_id
         FOREIGN KEY (company_id) REFERENCES companies(id)
-
-=======
         ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT fk_sync_logs_marketplace_id
         FOREIGN KEY (marketplace_id) REFERENCES marketplaces(id)
-
         ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 COMMENT ON TABLE sync_logs IS 'Логи синхронизации данных';
 COMMENT ON COLUMN sync_logs.company_id IS 'Компания';
-
-=======
 COMMENT ON COLUMN sync_logs.marketplace_id IS 'Маркетплейс для синхронизации';
 COMMENT ON COLUMN sync_logs.sync_id IS 'Уникальный ID синхронизации';
-
 COMMENT ON COLUMN sync_logs.sync_type IS 'Тип синхронизации: products, orders, inventory, marketplaces';
 COMMENT ON COLUMN sync_logs.status IS 'Статус: pending, running, completed, failed';
 COMMENT ON COLUMN sync_logs.results IS 'Результаты синхронизации';
@@ -62,19 +49,12 @@ COMMENT ON COLUMN sync_logs.error_message IS 'Сообщение об ошибк
 COMMENT ON COLUMN sync_logs.items_processed IS 'Количество обработанных элементов';
 COMMENT ON COLUMN sync_logs.items_succeeded IS 'Количество успешно обработанных элементов';
 COMMENT ON COLUMN sync_logs.items_failed IS 'Количество элементов с ошибками';
-
-COMMENT ON COLUMN sync_logs.metadata IS 'Дополнительные метаданные';
-
-CREATE INDEX idx_sync_logs_company_id ON sync_logs (company_id);
-=======
 COMMENT ON COLUMN sync_logs.details IS 'Детали синхронизации в формате JSON';
-COMMENT ON COLUMN sync_logs.error_message IS 'Сообщение об ошибке';
 COMMENT ON COLUMN sync_logs.metadata IS 'Дополнительные метаданные';
 
 CREATE INDEX idx_sync_logs_company_id ON sync_logs (company_id);
 CREATE INDEX idx_sync_logs_marketplace_id ON sync_logs (marketplace_id);
 CREATE INDEX idx_sync_logs_sync_id ON sync_logs (sync_id);
-
 CREATE INDEX idx_sync_logs_sync_type ON sync_logs (sync_type);
 CREATE INDEX idx_sync_logs_status ON sync_logs (status);
 CREATE INDEX idx_sync_logs_started_at ON sync_logs (started_at DESC);
@@ -93,13 +73,8 @@ CREATE TABLE api_logs (
     status VARCHAR(20) DEFAULT 'success',
     response_code INTEGER,
     response_time_ms INTEGER,
-
-    request_body TEXT,
-    response_body TEXT,
-=======
     request_body JSONB,
     response_body JSONB,
-
     error_message TEXT,
     ip_address INET,
     user_agent TEXT,

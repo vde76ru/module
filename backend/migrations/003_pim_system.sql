@@ -105,8 +105,6 @@ CREATE INDEX idx_products_category_id ON products (category_id);
 CREATE INDEX idx_products_source_type ON products (source_type);
 CREATE INDEX idx_products_is_active ON products (is_active);
 CREATE INDEX idx_products_popularity_score ON products (popularity_score DESC);
-
-=======
 CREATE INDEX idx_products_view_count ON products (view_count DESC);
 CREATE INDEX idx_products_sku ON products (sku);
 CREATE INDEX idx_products_barcode ON products (barcode);
