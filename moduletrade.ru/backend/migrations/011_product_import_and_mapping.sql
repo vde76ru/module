@@ -128,31 +128,6 @@ CREATE TABLE IF NOT EXISTS external_categories (
 );
 
 -- ================================================================
--- ТАБЛИЦА: Product_Attributes - Атрибуты товаров (если не существует)
--- ================================================================
-CREATE TABLE IF NOT EXISTS product_attributes (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    company_id UUID NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    display_name VARCHAR(255),
-    type VARCHAR(50) DEFAULT 'text', -- 'text', 'number', 'boolean', 'select'
-    unit VARCHAR(50),
-    is_required BOOLEAN DEFAULT FALSE,
-    is_searchable BOOLEAN DEFAULT FALSE,
-    is_filterable BOOLEAN DEFAULT FALSE,
-    settings JSONB DEFAULT '{}'::jsonb,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-
-    CONSTRAINT fk_product_attributes_company_id
-        FOREIGN KEY (company_id) REFERENCES companies(id)
-        ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT uk_product_attributes_company_name
-        UNIQUE (company_id, name)
-);
-
--- ================================================================
 -- ТАБЛИЦА: Attribute_Values - Значения атрибутов
 -- ================================================================
 CREATE TABLE IF NOT EXISTS attribute_values (
@@ -214,34 +189,6 @@ CREATE TABLE IF NOT EXISTS pricing_settings (
 );
 
 -- ================================================================
--- ДОБАВЛЕНИЕ НЕДОСТАЮЩИХ ПОЛЕЙ В СУЩЕСТВУЮЩИЕ ТАБЛИЦЫ
--- ================================================================
-
--- Добавляем поля в таблицу products
-ALTER TABLE products ADD COLUMN IF NOT EXISTS original_name VARCHAR(500);
-ALTER TABLE products ADD COLUMN IF NOT EXISTS popularity_score DECIMAL(10,2) DEFAULT 0;
-
--- Добавляем поля в таблицу brands
-ALTER TABLE brands ADD COLUMN IF NOT EXISTS mrp_price DECIMAL(12,2) DEFAULT 0;
-ALTER TABLE brands ADD COLUMN IF NOT EXISTS rrp_price DECIMAL(12,2) DEFAULT 0;
-ALTER TABLE brands ADD COLUMN IF NOT EXISTS enforce_mrp BOOLEAN DEFAULT FALSE;
-ALTER TABLE brands ADD COLUMN IF NOT EXISTS enforce_rrp BOOLEAN DEFAULT FALSE;
-ALTER TABLE brands ADD COLUMN IF NOT EXISTS wholesale_markup DECIMAL(5,2) DEFAULT 15;
-ALTER TABLE brands ADD COLUMN IF NOT EXISTS retail_markup DECIMAL(5,2) DEFAULT 30;
-
--- Добавляем поля в таблицу warehouse_product_links (правильное название таблицы)
-ALTER TABLE warehouse_product_links ADD COLUMN IF NOT EXISTS reserved_quantity INTEGER DEFAULT 0;
-ALTER TABLE warehouse_product_links ADD COLUMN IF NOT EXISTS mrp_price DECIMAL(12,2) DEFAULT 0;
-ALTER TABLE warehouse_product_links ADD COLUMN IF NOT EXISTS rrp_price DECIMAL(12,2) DEFAULT 0;
-
--- Добавляем поля в таблицу orders
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS warehouse_id UUID;
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_type VARCHAR(50) DEFAULT 'retail';
-
--- Добавляем поля в таблицу order_items
-ALTER TABLE order_items ADD COLUMN IF NOT EXISTS warehouse_id UUID;
-
--- ================================================================
 -- ИНДЕКСЫ ДЛЯ ПРОИЗВОДИТЕЛЬНОСТИ
 -- ================================================================
 
@@ -271,11 +218,6 @@ CREATE INDEX IF NOT EXISTS idx_external_categories_supplier_id ON external_categ
 CREATE INDEX IF NOT EXISTS idx_external_categories_parent_id ON external_categories (parent_id);
 CREATE INDEX IF NOT EXISTS idx_external_categories_external_id ON external_categories (external_id);
 
--- Индексы для product_attributes
-CREATE INDEX IF NOT EXISTS idx_product_attributes_company_id ON product_attributes (company_id);
-CREATE INDEX IF NOT EXISTS idx_product_attributes_name ON product_attributes (name);
-CREATE INDEX IF NOT EXISTS idx_product_attributes_type ON product_attributes (type);
-
 -- Индексы для attribute_values
 CREATE INDEX IF NOT EXISTS idx_attribute_values_attribute_id ON attribute_values (attribute_id);
 CREATE INDEX IF NOT EXISTS idx_attribute_values_value ON attribute_values (value);
@@ -287,15 +229,6 @@ CREATE INDEX IF NOT EXISTS idx_order_processing_rules_priority ON order_processi
 
 -- Индексы для pricing_settings
 CREATE INDEX IF NOT EXISTS idx_pricing_settings_company_id ON pricing_settings (company_id);
-
--- Индексы для новых полей
-CREATE INDEX IF NOT EXISTS idx_products_popularity_score ON products (popularity_score DESC);
-CREATE INDEX IF NOT EXISTS idx_brands_mrp_price ON brands (mrp_price);
-CREATE INDEX IF NOT EXISTS idx_brands_rrp_price ON brands (rrp_price);
-CREATE INDEX IF NOT EXISTS idx_warehouse_product_links_reserved_quantity ON warehouse_product_links (reserved_quantity);
-CREATE INDEX IF NOT EXISTS idx_orders_warehouse_id ON orders (warehouse_id);
-CREATE INDEX IF NOT EXISTS idx_orders_order_type ON orders (order_type);
-CREATE INDEX IF NOT EXISTS idx_order_items_warehouse_id ON order_items (warehouse_id);
 
 -- ================================================================
 -- ТРИГГЕРЫ ДЛЯ ОБНОВЛЕНИЯ TIMESTAMP
@@ -331,12 +264,6 @@ CREATE TRIGGER update_external_categories_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
--- Триггер для product_attributes
-CREATE TRIGGER update_product_attributes_updated_at
-    BEFORE UPDATE ON product_attributes
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
 -- Триггер для attribute_values
 CREATE TRIGGER update_attribute_values_updated_at
     BEFORE UPDATE ON attribute_values
@@ -364,22 +291,6 @@ COMMENT ON TABLE name_processing_rules IS 'Правила обработки н�
 COMMENT ON TABLE attribute_mappings IS 'Маппинг атрибутов товаров между поставщиками и внутренней системой';
 COMMENT ON TABLE category_mappings IS 'Маппинг категорий товаров между поставщиками и внутренней системой';
 COMMENT ON TABLE external_categories IS 'Внешние категории поставщиков';
-COMMENT ON TABLE product_attributes IS 'Атрибуты товаров для маппинга';
 COMMENT ON TABLE attribute_values IS 'Значения атрибутов товаров';
 COMMENT ON TABLE order_processing_rules IS 'Правила обработки заказов';
 COMMENT ON TABLE pricing_settings IS 'Настройки ценовой политики';
-
-COMMENT ON COLUMN products.original_name IS 'Оригинальное название товара от поставщика';
-COMMENT ON COLUMN products.popularity_score IS 'Рейтинг популярности товара';
-COMMENT ON COLUMN brands.mrp_price IS 'Минимальная розничная цена';
-COMMENT ON COLUMN brands.rrp_price IS 'Рекомендуемая розничная цена';
-COMMENT ON COLUMN brands.enforce_mrp IS 'Обязательно соблюдать МРЦ';
-COMMENT ON COLUMN brands.enforce_rrp IS 'Обязательно соблюдать РРЦ';
-COMMENT ON COLUMN brands.wholesale_markup IS 'Наценка для оптовой цены (%)';
-COMMENT ON COLUMN brands.retail_markup IS 'Наценка для розничной цены (%)';
-COMMENT ON COLUMN warehouse_product_links.reserved_quantity IS 'Зарезервированное количество';
-COMMENT ON COLUMN warehouse_product_links.mrp_price IS 'Минимальная розничная цена на складе';
-COMMENT ON COLUMN warehouse_product_links.rrp_price IS 'Рекомендуемая розничная цена на складе';
-COMMENT ON COLUMN orders.warehouse_id IS 'Склад для выполнения заказа';
-COMMENT ON COLUMN orders.order_type IS 'Тип заказа: retail или business';
-COMMENT ON COLUMN order_items.warehouse_id IS 'Склад для позиции заказа'; 

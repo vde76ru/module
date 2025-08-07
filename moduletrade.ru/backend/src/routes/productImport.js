@@ -1,10 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const ProductImportService = require('../services/productImportService');
-const AttributeMappingService = require('../services/attributeMappingService');
-const { authenticateToken, requireRole } = require('../middleware/auth');
-const { validateRequest } = require('../middleware/validation');
+const AttributeMappingService = require('../services/AttributeMappingService');
+const { authenticate, checkPermission } = require('../middleware/auth');
 const logger = require('../utils/logger');
+const db = require('../config/database');
 
 // ================================================================
 // ИМПОРТ ТОВАРОВ ОТ ПОСТАВЩИКОВ
@@ -15,13 +15,8 @@ const logger = require('../utils/logger');
  * Импорт товаров от поставщика по брендам
  */
 router.post('/import-by-brands', 
-  authenticateToken,
-  requireRole(['admin', 'manager']),
-  validateRequest({
-    supplier_id: 'required|uuid',
-    brand_ids: 'required|array',
-    options: 'object'
-  }),
+  authenticate,
+  checkPermission('products.import'),
   async (req, res) => {
     try {
       const { supplier_id, brand_ids, options = {} } = req.body;
@@ -55,7 +50,7 @@ router.post('/import-by-brands',
  * Получение доступных брендов поставщика
  */
 router.get('/supplier-brands/:supplierId',
-  authenticateToken,
+  authenticate,
   async (req, res) => {
     try {
       const { supplierId } = req.params;
@@ -89,8 +84,8 @@ router.get('/supplier-brands/:supplierId',
  * Сопоставление товаров по бренду + артикул
  */
 router.post('/match-products',
-  authenticateToken,
-  requireRole(['admin', 'manager']),
+  authenticate,
+  checkPermission('products.manage'),
   async (req, res) => {
     try {
       const companyId = req.user.company_id;
@@ -122,12 +117,8 @@ router.post('/match-products',
  * Автоматический маппинг атрибутов
  */
 router.post('/auto-map-attributes',
-  authenticateToken,
-  requireRole(['admin', 'manager']),
-  validateRequest({
-    supplier_id: 'required|uuid',
-    attributes: 'required|object'
-  }),
+  authenticate,
+  checkPermission('products.manage'),
   async (req, res) => {
     try {
       const { supplier_id, attributes } = req.body;
@@ -160,7 +151,7 @@ router.post('/auto-map-attributes',
  * Получение маппингов поставщика
  */
 router.get('/supplier-mappings/:supplierId',
-  authenticateToken,
+  authenticate,
   async (req, res) => {
     try {
       const { supplierId } = req.params;
@@ -188,12 +179,8 @@ router.get('/supplier-mappings/:supplierId',
  * Обновление маппинга атрибута
  */
 router.put('/attribute-mapping/:supplierId/:externalKey',
-  authenticateToken,
-  requireRole(['admin', 'manager']),
-  validateRequest({
-    internal_name: 'required|string',
-    conversion_rules: 'object'
-  }),
+  authenticate,
+  checkPermission('products.manage'),
   async (req, res) => {
     try {
       const { supplierId, externalKey } = req.params;
@@ -227,12 +214,8 @@ router.put('/attribute-mapping/:supplierId/:externalKey',
  * Маппинг категорий
  */
 router.post('/map-categories',
-  authenticateToken,
-  requireRole(['admin', 'manager']),
-  validateRequest({
-    supplier_id: 'required|uuid',
-    external_categories: 'required|array'
-  }),
+  authenticate,
+  checkPermission('products.manage'),
   async (req, res) => {
     try {
       const { supplier_id, external_categories } = req.body;
@@ -269,7 +252,7 @@ router.post('/map-categories',
  * Получение правил обработки названий
  */
 router.get('/name-rules',
-  authenticateToken,
+  authenticate,
   async (req, res) => {
     try {
       const companyId = req.user.company_id;
@@ -280,7 +263,7 @@ router.get('/name-rules',
         ORDER BY priority
       `;
       
-      const result = await req.app.locals.db.query(query, [companyId]);
+      const result = await db.query(query, [companyId]);
 
       res.json({
         success: true,
@@ -302,15 +285,8 @@ router.get('/name-rules',
  * Создание правила обработки названий
  */
 router.post('/name-rules',
-  authenticateToken,
-  requireRole(['admin', 'manager']),
-  validateRequest({
-    name: 'required|string',
-    type: 'required|string',
-    priority: 'integer',
-    enabled: 'boolean',
-    settings: 'object'
-  }),
+  authenticate,
+  checkPermission('products.manage'),
   async (req, res) => {
     try {
       const { name, type, priority = 0, enabled = true, settings = {} } = req.body;
@@ -323,7 +299,7 @@ router.post('/name-rules',
         RETURNING *
       `;
       
-      const result = await req.app.locals.db.query(query, [
+      const result = await db.query(query, [
         companyId, name, type, priority, enabled, settings
       ]);
 
@@ -348,15 +324,8 @@ router.post('/name-rules',
  * Обновление правила обработки названий
  */
 router.put('/name-rules/:ruleId',
-  authenticateToken,
-  requireRole(['admin', 'manager']),
-  validateRequest({
-    name: 'string',
-    type: 'string',
-    priority: 'integer',
-    enabled: 'boolean',
-    settings: 'object'
-  }),
+  authenticate,
+  checkPermission('products.manage'),
   async (req, res) => {
     try {
       const { ruleId } = req.params;
@@ -374,7 +343,7 @@ router.put('/name-rules/:ruleId',
         RETURNING *
       `;
       
-      const result = await req.app.locals.db.query(query, [
+      const result = await db.query(query, [
         ruleId, companyId, ...Object.values(updates)
       ]);
 
@@ -406,8 +375,8 @@ router.put('/name-rules/:ruleId',
  * Удаление правила обработки названий
  */
 router.delete('/name-rules/:ruleId',
-  authenticateToken,
-  requireRole(['admin', 'manager']),
+  authenticate,
+  checkPermission('products.manage'),
   async (req, res) => {
     try {
       const { ruleId } = req.params;
@@ -419,7 +388,7 @@ router.delete('/name-rules/:ruleId',
         WHERE id = $1 AND company_id = $2
       `;
       
-      const result = await req.app.locals.db.query(query, [ruleId, companyId]);
+      const result = await db.query(query, [ruleId, companyId]);
 
       if (result.rowCount === 0) {
         return res.status(404).json({
@@ -452,7 +421,7 @@ router.delete('/name-rules/:ruleId',
  * Получение статистики импорта
  */
 router.get('/stats',
-  authenticateToken,
+  authenticate,
   async (req, res) => {
     try {
       const companyId = req.user.company_id;
@@ -467,7 +436,7 @@ router.get('/stats',
         WHERE company_id = $1
       `;
       
-      const result = await req.app.locals.db.query(query, [companyId]);
+      const result = await db.query(query, [companyId]);
 
       res.json({
         success: true,
@@ -476,6 +445,364 @@ router.get('/stats',
 
     } catch (error) {
       logger.error('Failed to get import stats:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/product-import/status/:sessionId
+ * Получение статуса импорта
+ */
+router.get('/status/:sessionId',
+  authenticate,
+  async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const companyId = req.user.company_id;
+
+      const status = await ProductImportService.getImportStatus(sessionId);
+
+      res.json({
+        success: true,
+        data: status
+      });
+
+    } catch (error) {
+      logger.error('Failed to get import status:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/product-import/logs/:sessionId
+ * Получение логов импорта
+ */
+router.get('/logs/:sessionId',
+  authenticate,
+  async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const { limit = 100 } = req.query;
+
+      const logs = await ProductImportService.getImportLogs(sessionId, parseInt(limit));
+
+      res.json({
+        success: true,
+        data: logs
+      });
+
+    } catch (error) {
+      logger.error('Failed to get import logs:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/product-import/statistics
+ * Получение статистики импорта
+ */
+router.get('/statistics',
+  authenticate,
+  async (req, res) => {
+    try {
+      const companyId = req.user.company_id;
+      const { days = 30 } = req.query;
+
+      const statistics = await ProductImportService.getImportStatistics(companyId, parseInt(days));
+
+      res.json({
+        success: true,
+        data: statistics
+      });
+
+    } catch (error) {
+      logger.error('Failed to get import statistics:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+/**
+ * POST /api/product-import/cancel/:sessionId
+ * Отмена активного импорта
+ */
+router.post('/cancel/:sessionId',
+  authenticate,
+  checkPermission('products.manage'),
+  async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+
+      const result = await ProductImportService.cancelImport(sessionId);
+
+      res.json({
+        success: true,
+        data: result
+      });
+
+    } catch (error) {
+      logger.error('Failed to cancel import:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/product-import/active
+ * Получение активных импортов
+ */
+router.get('/active',
+  authenticateToken,
+  async (req, res) => {
+    try {
+      const activeImports = ProductImportService.getActiveImports();
+
+      res.json({
+        success: true,
+        data: activeImports
+      });
+
+    } catch (error) {
+      logger.error('Failed to get active imports:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/product-import/brand-mappings
+ * Получение маппингов брендов к поставщикам
+ */
+router.get('/brand-mappings',
+  authenticateToken,
+  async (req, res) => {
+    try {
+      const companyId = req.user.company_id;
+      const { supplier_id, brand_id } = req.query;
+
+      let whereConditions = ['company_id = $1'];
+      let params = [companyId];
+      let paramIndex = 2;
+
+      if (supplier_id) {
+        whereConditions.push(`supplier_id = $${paramIndex}`);
+        params.push(supplier_id);
+        paramIndex++;
+      }
+
+      if (brand_id) {
+        whereConditions.push(`brand_id = $${paramIndex}`);
+        params.push(brand_id);
+        paramIndex++;
+      }
+
+      const query = `
+        SELECT bsm.*, 
+               s.name as supplier_name,
+               b.name as brand_name
+        FROM brand_supplier_mappings bsm
+        JOIN suppliers s ON bsm.supplier_id = s.id
+        JOIN brands b ON bsm.brand_id = b.id
+        WHERE ${whereConditions.join(' AND ')}
+        ORDER BY bsm.created_at DESC
+      `;
+
+      const result = await db.query(query, params);
+
+      res.json({
+        success: true,
+        data: result.rows
+      });
+
+    } catch (error) {
+      logger.error('Failed to get brand mappings:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+/**
+ * DELETE /api/product-import/brand-mappings/:brandId/:supplierId
+ * Удаление маппинга бренда к поставщику
+ */
+router.delete('/brand-mappings/:brandId/:supplierId',
+  authenticateToken,
+  requireRole(['admin', 'manager']),
+  async (req, res) => {
+    try {
+      const { brandId, supplierId } = req.params;
+      const companyId = req.user.company_id;
+
+      const query = `
+        DELETE FROM brand_supplier_mappings 
+        WHERE company_id = $1 AND brand_id = $2 AND supplier_id = $3
+      `;
+
+      await db.query(query, [companyId, brandId, supplierId]);
+
+      res.json({
+        success: true,
+        message: 'Маппинг бренда к поставщику удален'
+      });
+
+    } catch (error) {
+      logger.error('Failed to delete brand mapping:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+/**
+ * GET /api/product-import/product-links
+ * Получение связей товаров с поставщиками
+ */
+router.get('/product-links',
+  authenticateToken,
+  async (req, res) => {
+    try {
+      const companyId = req.user.company_id;
+      const { product_id, supplier_id } = req.query;
+
+      let whereConditions = ['company_id = $1'];
+      let params = [companyId];
+      let paramIndex = 2;
+
+      if (product_id) {
+        whereConditions.push(`product_id = $${paramIndex}`);
+        params.push(product_id);
+        paramIndex++;
+      }
+
+      if (supplier_id) {
+        whereConditions.push(`supplier_id = $${paramIndex}`);
+        params.push(supplier_id);
+        paramIndex++;
+      }
+
+      const query = `
+        SELECT psl.*, 
+               s.name as supplier_name,
+               p.name as product_name,
+               p.sku as product_sku
+        FROM product_supplier_links psl
+        JOIN suppliers s ON psl.supplier_id = s.id
+        JOIN products p ON psl.product_id = p.id
+        WHERE ${whereConditions.join(' AND ')}
+        ORDER BY psl.created_at DESC
+      `;
+
+      const result = await db.query(query, params);
+
+      res.json({
+        success: true,
+        data: result.rows
+      });
+
+    } catch (error) {
+      logger.error('Failed to get product links:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+/**
+ * POST /api/product-import/sync-prices
+ * Синхронизация цен от поставщиков
+ */
+router.post('/sync-prices',
+  authenticateToken,
+  requireRole(['admin', 'manager']),
+  validateRequest({
+    supplier_id: 'required|uuid',
+    product_ids: 'array'
+  }),
+  async (req, res) => {
+    try {
+      const { supplier_id, product_ids } = req.body;
+      const companyId = req.user.company_id;
+
+      const result = await ProductImportService.syncPricesFromSupplier(
+        companyId, 
+        supplier_id, 
+        product_ids
+      );
+
+      res.json({
+        success: true,
+        data: result,
+        message: `Синхронизировано цен для ${result.synced} товаров`
+      });
+
+    } catch (error) {
+      logger.error('Price sync failed:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  }
+);
+
+/**
+ * POST /api/product-import/sync-stocks
+ * Синхронизация остатков от поставщиков
+ */
+router.post('/sync-stocks',
+  authenticateToken,
+  requireRole(['admin', 'manager']),
+  validateRequest({
+    supplier_id: 'required|uuid',
+    product_ids: 'array'
+  }),
+  async (req, res) => {
+    try {
+      const { supplier_id, product_ids } = req.body;
+      const companyId = req.user.company_id;
+
+      const result = await ProductImportService.syncStocksFromSupplier(
+        companyId, 
+        supplier_id, 
+        product_ids
+      );
+
+      res.json({
+        success: true,
+        data: result,
+        message: `Синхронизировано остатков для ${result.synced} товаров`
+      });
+
+    } catch (error) {
+      logger.error('Stock sync failed:', error);
       res.status(500).json({
         success: false,
         error: error.message

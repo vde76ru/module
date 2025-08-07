@@ -10,6 +10,8 @@ const AnalyticsJob = require('./analyticsJob');
 const PriceUpdateJob = require('./priceUpdateJob');
 const SubscriptionJob = require('./subscriptionJob');
 const SyncJob = require('./syncJob');
+const PopularityUpdateJob = require('./popularityUpdateJob');
+const CacheCleanupJob = require('./cacheCleanupJob');
 
 class JobScheduler {
   constructor() {
@@ -51,6 +53,18 @@ class JobScheduler {
     // Синхронизация с маркетплейсами - каждые 15 минут
     this.scheduleJob('marketplace-sync', '*/15 * * * *', () => {
       SyncJob.syncAllMarketplaces();
+    });
+
+    // Обновление популярности товаров - каждый день в 4:00
+    this.scheduleJob('popularity-update', '0 4 * * *', () => {
+      const popularityJob = new PopularityUpdateJob();
+      popularityJob.run();
+    });
+
+    // Очистка кэша - каждый день в 5:00
+    this.scheduleJob('cache-cleanup', '0 5 * * *', () => {
+      const cacheJob = new CacheCleanupJob();
+      cacheJob.run();
     });
 
     // Очистка старых логов - каждый день в 3:00
@@ -131,6 +145,14 @@ class JobScheduler {
           break;
         case 'marketplace-sync':
           await SyncJob.syncAllMarketplaces();
+          break;
+        case 'popularity-update':
+          const popularityJob = new PopularityUpdateJob();
+          await popularityJob.run();
+          break;
+        case 'cache-cleanup':
+          const cacheJob = new CacheCleanupJob();
+          await cacheJob.run();
           break;
         case 'log-cleanup':
           await this.cleanupOldLogs();

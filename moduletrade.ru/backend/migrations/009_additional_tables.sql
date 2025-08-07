@@ -117,128 +117,10 @@ CREATE INDEX idx_api_logs_request_id ON api_logs (request_id);
 CREATE INDEX idx_api_logs_response_time_ms ON api_logs (response_time_ms);
 
 -- ================================================================
--- ТАБЛИЦА: Supplier_Orders - Заказы у поставщиков
--- ================================================================
-CREATE TABLE supplier_orders (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    company_id UUID NOT NULL,
-    supplier_id UUID NOT NULL,
-    order_number VARCHAR(100) NOT NULL,
-    external_order_number VARCHAR(100),
-    status VARCHAR(20) DEFAULT 'pending',
-    total_amount DECIMAL(12,2) DEFAULT 0.00,
-    currency VARCHAR(3) DEFAULT 'RUB',
-    order_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    expected_delivery_date TIMESTAMP WITH TIME ZONE,
-    actual_delivery_date TIMESTAMP WITH TIME ZONE,
-    payment_terms VARCHAR(100),
-    payment_status VARCHAR(20) DEFAULT 'pending',
-    notes TEXT,
-    metadata JSONB DEFAULT '{}'::jsonb,
-    created_by UUID,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-
-    CONSTRAINT fk_supplier_orders_company_id
-        FOREIGN KEY (company_id) REFERENCES companies(id)
-        ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_supplier_orders_supplier_id
-        FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
-        ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_supplier_orders_created_by
-        FOREIGN KEY (created_by) REFERENCES users(id)
-        ON DELETE SET NULL ON UPDATE CASCADE
-);
-
-COMMENT ON TABLE supplier_orders IS 'Заказы у поставщиков';
-COMMENT ON COLUMN supplier_orders.company_id IS 'Компания-заказчик';
-COMMENT ON COLUMN supplier_orders.supplier_id IS 'Поставщик';
-COMMENT ON COLUMN supplier_orders.order_number IS 'Номер заказа';
-COMMENT ON COLUMN supplier_orders.external_order_number IS 'Номер заказа в системе поставщика';
-COMMENT ON COLUMN supplier_orders.status IS 'Статус заказа: pending, confirmed, shipped, delivered, cancelled';
-COMMENT ON COLUMN supplier_orders.total_amount IS 'Общая сумма заказа';
-COMMENT ON COLUMN supplier_orders.currency IS 'Валюта заказа';
-COMMENT ON COLUMN supplier_orders.order_date IS 'Дата заказа';
-COMMENT ON COLUMN supplier_orders.expected_delivery_date IS 'Ожидаемая дата доставки';
-COMMENT ON COLUMN supplier_orders.actual_delivery_date IS 'Фактическая дата доставки';
-COMMENT ON COLUMN supplier_orders.payment_terms IS 'Условия оплаты';
-COMMENT ON COLUMN supplier_orders.payment_status IS 'Статус оплаты: pending, paid, overdue';
-COMMENT ON COLUMN supplier_orders.notes IS 'Примечания к заказу';
-COMMENT ON COLUMN supplier_orders.metadata IS 'Дополнительные данные';
-COMMENT ON COLUMN supplier_orders.created_by IS 'Пользователь, создавший заказ';
-
-ALTER TABLE supplier_orders ADD CONSTRAINT supplier_orders_number_unique_per_company
-    UNIQUE (company_id, order_number);
-
-CREATE INDEX idx_supplier_orders_company_id ON supplier_orders (company_id);
-CREATE INDEX idx_supplier_orders_supplier_id ON supplier_orders (supplier_id);
-CREATE INDEX idx_supplier_orders_order_number ON supplier_orders (order_number);
-CREATE INDEX idx_supplier_orders_status ON supplier_orders (status);
-CREATE INDEX idx_supplier_orders_order_date ON supplier_orders (order_date DESC);
-CREATE INDEX idx_supplier_orders_payment_status ON supplier_orders (payment_status);
-CREATE INDEX idx_supplier_orders_expected_delivery ON supplier_orders (expected_delivery_date);
-CREATE INDEX idx_supplier_orders_created_by ON supplier_orders (created_by);
-
--- ================================================================
--- ТАБЛИЦА: Supplier_Order_Items - Позиции заказов у поставщиков
--- ================================================================
-CREATE TABLE supplier_order_items (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    order_id UUID NOT NULL,
-    product_id UUID NOT NULL,
-    external_product_id VARCHAR(255),
-    name VARCHAR(500),
-    quantity DECIMAL(12,3) NOT NULL,
-    price DECIMAL(12,2) NOT NULL,
-    total_price DECIMAL(12,2) NOT NULL,
-    received_quantity DECIMAL(12,3) DEFAULT 0,
-    status VARCHAR(20) DEFAULT 'pending',
-    notes TEXT,
-    metadata JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-
-    CONSTRAINT fk_supplier_order_items_order_id
-        FOREIGN KEY (order_id) REFERENCES supplier_orders(id)
-        ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_supplier_order_items_product_id
-        FOREIGN KEY (product_id) REFERENCES products(id)
-        ON DELETE CASCADE ON UPDATE CASCADE
-);
-
-COMMENT ON TABLE supplier_order_items IS 'Позиции заказов у поставщиков';
-COMMENT ON COLUMN supplier_order_items.order_id IS 'Заказ у поставщика';
-COMMENT ON COLUMN supplier_order_items.product_id IS 'Товар';
-COMMENT ON COLUMN supplier_order_items.external_product_id IS 'ID товара в системе поставщика';
-COMMENT ON COLUMN supplier_order_items.name IS 'Название товара в заказе';
-COMMENT ON COLUMN supplier_order_items.quantity IS 'Заказанное количество';
-COMMENT ON COLUMN supplier_order_items.price IS 'Цена за единицу';
-COMMENT ON COLUMN supplier_order_items.total_price IS 'Общая стоимость позиции';
-COMMENT ON COLUMN supplier_order_items.received_quantity IS 'Полученное количество';
-COMMENT ON COLUMN supplier_order_items.status IS 'Статус позиции: pending, confirmed, shipped, received, cancelled';
-COMMENT ON COLUMN supplier_order_items.notes IS 'Примечания к позиции';
-COMMENT ON COLUMN supplier_order_items.metadata IS 'Дополнительные данные';
-
-CREATE INDEX idx_supplier_order_items_order_id ON supplier_order_items (order_id);
-CREATE INDEX idx_supplier_order_items_product_id ON supplier_order_items (product_id);
-CREATE INDEX idx_supplier_order_items_external_product_id ON supplier_order_items (external_product_id);
-CREATE INDEX idx_supplier_order_items_status ON supplier_order_items (status);
-
--- ================================================================
 -- ТРИГГЕРЫ
 -- ================================================================
 CREATE TRIGGER update_sync_logs_updated_at
     BEFORE UPDATE ON sync_logs
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_supplier_orders_updated_at
-    BEFORE UPDATE ON supplier_orders
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_supplier_order_items_updated_at
-    BEFORE UPDATE ON supplier_order_items
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
@@ -255,7 +137,7 @@ BEGIN
     SELECT COALESCE(SUM(total_price), 0)
     INTO v_total
     FROM supplier_order_items
-    WHERE order_id = p_order_id;
+    WHERE supplier_order_id = p_order_id;
 
     -- Обновляем общую сумму заказа
     UPDATE supplier_orders

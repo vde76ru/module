@@ -226,23 +226,23 @@ DECLARE
 BEGIN
     -- Формируем базовый ключ
     v_cache_key := p_cache_type;
-    
+
     -- Добавляем тип сущности
     IF p_entity_type IS NOT NULL THEN
         v_cache_key := v_cache_key || ':' || p_entity_type;
     END IF;
-    
+
     -- Добавляем ID сущности
     IF p_entity_id IS NOT NULL THEN
         v_cache_key := v_cache_key || ':' || p_entity_id::TEXT;
     END IF;
-    
+
     -- Добавляем хеш дополнительных параметров
     IF p_additional_params IS NOT NULL AND p_additional_params != '{}'::jsonb THEN
         v_params_hash := encode(sha256(p_additional_params::TEXT::BYTEA), 'hex');
         v_cache_key := v_cache_key || ':' || substring(v_params_hash from 1 for 8);
     END IF;
-    
+
     RETURN v_cache_key;
 END;
 $$ LANGUAGE plpgsql;
@@ -260,31 +260,31 @@ BEGIN
     FROM cache_keys
     WHERE cache_key = p_cache_key
       AND is_active = TRUE;
-    
+
     -- Если кэш не найден
     IF v_cache_record.id IS NULL THEN
         RETURN FALSE;
     END IF;
-    
+
     -- Проверяем время истечения
     IF v_cache_record.expires_at IS NOT NULL AND v_cache_record.expires_at < CURRENT_TIMESTAMP THEN
         RETURN FALSE;
     END IF;
-    
+
     -- Проверяем хеш данных
     IF p_current_hash IS NOT NULL AND v_cache_record.data_hash IS NOT NULL THEN
         IF v_cache_record.data_hash != p_current_hash THEN
             RETURN FALSE;
         END IF;
     END IF;
-    
+
     -- Обновляем время последнего обращения
     UPDATE cache_keys
-    SET 
+    SET
         last_accessed = CURRENT_TIMESTAMP,
         access_count = access_count + 1
     WHERE id = v_cache_record.id;
-    
+
     RETURN TRUE;
 END;
 $$ LANGUAGE plpgsql;
@@ -307,15 +307,15 @@ BEGIN
     IF p_entity_id IS NOT NULL THEN
         v_pattern := v_pattern || ':' || p_entity_id::TEXT;
     END IF;
-    
+
     -- Инвалидируем кэш
     UPDATE cache_keys
     SET is_active = FALSE
     WHERE cache_key LIKE v_pattern || '%'
       AND is_active = TRUE;
-    
+
     GET DIAGNOSTICS v_invalidated_count = ROW_COUNT;
-    
+
     RETURN v_invalidated_count;
 END;
 $$ LANGUAGE plpgsql;
@@ -328,17 +328,17 @@ DECLARE
 BEGIN
     -- Удаляем истекший кэш
     DELETE FROM cache_keys
-    WHERE expires_at IS NOT NULL 
+    WHERE expires_at IS NOT NULL
       AND expires_at < CURRENT_TIMESTAMP;
-    
+
     GET DIAGNOSTICS v_cleaned_count = ROW_COUNT;
-    
+
     -- Деактивируем кэш, к которому не обращались более 24 часов
     UPDATE cache_keys
     SET is_active = FALSE
     WHERE last_accessed < CURRENT_TIMESTAMP - INTERVAL '24 hours'
       AND is_active = TRUE;
-    
+
     RETURN v_cleaned_count;
 END;
 $$ LANGUAGE plpgsql;
@@ -354,7 +354,7 @@ CREATE OR REPLACE FUNCTION record_performance_metric(
 ) RETURNS VOID AS $$
 BEGIN
     INSERT INTO performance_metrics (
-        company_id, metric_type, metric_name, metric_value, 
+        company_id, metric_type, metric_name, metric_value,
         metric_unit, context, recorded_at
     ) VALUES (
         p_company_id, p_metric_type, p_metric_name, p_metric_value,
@@ -378,7 +378,7 @@ CREATE OR REPLACE FUNCTION get_performance_metrics(
 ) AS $$
 BEGIN
     RETURN QUERY
-    SELECT 
+    SELECT
         pm.metric_type,
         pm.metric_name,
         AVG(pm.metric_value) as avg_value,
@@ -406,18 +406,18 @@ BEGIN
     SELECT * INTO v_schedule
     FROM sync_schedules
     WHERE id = p_schedule_id;
-    
+
     -- Здесь должна быть логика парсинга cron выражения
     -- Для простоты используем базовую логику
     v_next_run := CURRENT_TIMESTAMP + INTERVAL '1 hour';
-    
+
     -- Обновляем расписание
     UPDATE sync_schedules
-    SET 
+    SET
         last_run = CURRENT_TIMESTAMP,
         next_run = v_next_run
     WHERE id = p_schedule_id;
-    
+
     RETURN v_next_run;
 END;
 $$ LANGUAGE plpgsql;
@@ -445,7 +445,7 @@ BEGIN
             END IF;
         END LOOP;
     END IF;
-    
+
     -- Записываем лог
     INSERT INTO data_change_logs (
         company_id, table_name, record_id, operation,
@@ -467,19 +467,19 @@ RETURNS TRIGGER AS $$
 BEGIN
     -- Инвалидируем кэш товаров
     PERFORM invalidate_cache('products', 'product', NEW.id);
-    
+
     -- Инвалидируем кэш категорий
     IF TG_OP = 'UPDATE' AND OLD.category_id IS DISTINCT FROM NEW.category_id THEN
         PERFORM invalidate_cache('categories', 'category', OLD.category_id);
         PERFORM invalidate_cache('categories', 'category', NEW.category_id);
     END IF;
-    
+
     -- Инвалидируем кэш брендов
     IF TG_OP = 'UPDATE' AND OLD.brand_id IS DISTINCT FROM NEW.brand_id THEN
         PERFORM invalidate_cache('brands', 'brand', OLD.brand_id);
         PERFORM invalidate_cache('brands', 'brand', NEW.brand_id);
     END IF;
-    
+
     RETURN COALESCE(NEW, OLD);
 END;
 $$ LANGUAGE plpgsql;
@@ -495,7 +495,7 @@ RETURNS TRIGGER AS $$
 BEGIN
     -- Инвалидируем кэш цен
     PERFORM invalidate_cache('prices', 'product', NEW.product_id);
-    
+
     RETURN COALESCE(NEW, OLD);
 END;
 $$ LANGUAGE plpgsql;
@@ -512,13 +512,13 @@ BEGIN
     -- Инвалидируем кэш остатков
     PERFORM invalidate_cache('stocks', 'product', NEW.product_id);
     PERFORM invalidate_cache('stocks', 'warehouse', NEW.warehouse_id);
-    
+
     RETURN COALESCE(NEW, OLD);
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trigger_invalidate_stocks_cache
-    AFTER INSERT OR UPDATE OR DELETE ON warehouse_stocks
+    AFTER INSERT OR UPDATE OR DELETE ON warehouse_product_links
     FOR EACH ROW
     EXECUTE FUNCTION invalidate_stocks_cache();
 
@@ -530,7 +530,7 @@ CREATE TRIGGER trigger_invalidate_stocks_cache
 INSERT INTO cache_invalidation_rules (rule_name, cache_type, trigger_table, trigger_operation, invalidation_pattern) VALUES
 ('Products cache invalidation', 'products', 'products', 'UPDATE', 'products:product:*'),
 ('Prices cache invalidation', 'prices', 'prices', 'UPDATE', 'prices:product:*'),
-('Stocks cache invalidation', 'stocks', 'warehouse_stocks', 'UPDATE', 'stocks:product:*'),
+    ('Stocks cache invalidation', 'stocks', 'warehouse_product_links', 'UPDATE', 'stocks:product:*'),
 ('Categories cache invalidation', 'categories', 'categories', 'UPDATE', 'categories:category:*'),
 ('Brands cache invalidation', 'brands', 'brands', 'UPDATE', 'brands:brand:*');
 
@@ -543,4 +543,4 @@ INSERT INTO sync_schedules (company_id, schedule_name, schedule_type, cron_expre
 
 -- ================================================================
 -- ЗАВЕРШЕНИЕ МИГРАЦИИ 015
--- ================================================================ 
+-- ================================================================

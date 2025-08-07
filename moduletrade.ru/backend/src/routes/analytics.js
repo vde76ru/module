@@ -252,7 +252,7 @@ router.get('/products', authenticate, async (req, res) => {
     const { limit = 50, sort = 'revenue:desc' } = req.query;
 
     const [sortField, sortDirection] = sort.split(':');
-    const validSorts = ['revenue', 'orders_count', 'quantity_sold'];
+    const validSorts = ['revenue', 'orders_count', 'quantity_sold', 'profit', 'margin', 'popularity'];
     const finalSort = validSorts.includes(sortField) ? sortField : 'revenue';
     const finalDirection = sortDirection === 'asc' ? 'ASC' : 'DESC';
 
@@ -267,13 +267,20 @@ router.get('/products', authenticate, async (req, res) => {
         COUNT(DISTINCT oi.order_id) as orders_count,
         SUM(oi.quantity) as quantity_sold,
         SUM(oi.quantity * oi.price) as revenue,
-        AVG(oi.price) as avg_price
+        AVG(oi.price) as avg_price,
+        COALESCE(pop.popularity_score, 0) as popularity_score,
+        COALESCE(pop.view_count, 0) as view_count,
+        COALESCE(pop.order_count, 0) as order_count,
+        COALESCE(SUM(oi.quantity * (oi.price - COALESCE(ps.original_price, 0))), 0) as profit,
+        COALESCE(AVG((oi.price - COALESCE(ps.original_price, 0)) / oi.price * 100), 0) as margin_percentage
       FROM products p
       LEFT JOIN order_items oi ON p.id = oi.product_id
       LEFT JOIN brands b ON p.brand_id = b.id
       LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN product_popularity pop ON p.id = pop.product_id
+      LEFT JOIN product_suppliers ps ON p.id = ps.product_id
       WHERE p.company_id = $1
-      GROUP BY p.id, p.name, p.internal_code, b.canonical_name, c.canonical_name
+      GROUP BY p.id, p.name, p.internal_code, b.canonical_name, c.canonical_name, pop.popularity_score, pop.view_count, pop.order_count
       HAVING COUNT(oi.id) > 0
       ORDER BY ${finalSort} ${finalDirection}
       LIMIT $2
@@ -286,6 +293,290 @@ router.get('/products', authenticate, async (req, res) => {
 
   } catch (error) {
     console.error('Products analytics error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+/**
+ * ✅ НОВЫЙ ЭНДПОИНТ: GET /analytics/popularity
+ * Аналитика популярности товаров
+ */
+router.get('/popularity', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const { limit = 50, sort = 'popularity_score:desc' } = req.query;
+
+    const [sortField, sortDirection] = sort.split(':');
+    const validSorts = ['popularity_score', 'view_count', 'order_count', 'conversion_rate'];
+    const finalSort = validSorts.includes(sortField) ? sortField : 'popularity_score';
+    const finalDirection = sortDirection === 'asc' ? 'ASC' : 'DESC';
+
+    const popularityStats = await db.query(`
+      SELECT
+        p.id,
+        p.name,
+        p.internal_code,
+        b.canonical_name as brand_name,
+        c.canonical_name as category_name,
+        COALESCE(pop.popularity_score, 0) as popularity_score,
+        COALESCE(pop.view_count, 0) as view_count,
+        COALESCE(pop.order_count, 0) as order_count,
+        CASE
+          WHEN pop.view_count > 0
+          THEN (pop.order_count::FLOAT / pop.view_count * 100)
+          ELSE 0
+        END as conversion_rate,
+        pop.last_updated
+      FROM products p
+      LEFT JOIN product_popularity pop ON p.id = pop.product_id
+      LEFT JOIN brands b ON p.brand_id = b.id
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE p.company_id = $1
+      ORDER BY ${finalSort} ${finalDirection}
+      LIMIT $2
+    `, [companyId, limit]);
+
+    res.json({
+      success: true,
+      data: popularityStats.rows
+    });
+
+  } catch (error) {
+    console.error('Popularity analytics error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+/**
+ * ✅ НОВЫЙ ЭНДПОИНТ: GET /analytics/warehouse
+ * Аналитика складов
+ */
+router.get('/warehouse', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const { warehouse_id } = req.query;
+
+    let whereConditions = ['ws.company_id = $1'];
+    const queryParams = [companyId];
+    let paramIndex = 2;
+
+    if (warehouse_id) {
+      whereConditions.push(`ws.warehouse_id = $${paramIndex}`);
+      queryParams.push(warehouse_id);
+      paramIndex++;
+    }
+
+    const warehouseStats = await db.query(`
+      SELECT
+        w.name as warehouse_name,
+        w.type as warehouse_type,
+        w.city,
+        COUNT(DISTINCT ws.product_id) as total_products,
+        SUM(ws.quantity) as total_quantity,
+        AVG(ws.purchase_price) as avg_purchase_price,
+        AVG(ws.retail_price) as avg_retail_price,
+        AVG(ws.website_price) as avg_website_price,
+        AVG(ws.marketplace_price) as avg_marketplace_price,
+        COUNT(CASE WHEN ws.quantity <= 10 THEN 1 END) as low_stock_products,
+        COUNT(CASE WHEN ws.expiry_date <= NOW() + INTERVAL '30 days' THEN 1 END) as expiring_products
+              FROM warehouse_product_links ws
+      JOIN warehouses w ON ws.warehouse_id = w.id
+      WHERE ${whereConditions.join(' AND ')}
+      GROUP BY w.id, w.name, w.type, w.city
+      ORDER BY total_products DESC
+    `, queryParams);
+
+    res.json({
+      success: true,
+      data: warehouseStats.rows
+    });
+
+  } catch (error) {
+    console.error('Warehouse analytics error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+/**
+ * ✅ НОВЫЙ ЭНДПОИНТ: GET /analytics/marketplace
+ * Аналитика по маркетплейсам
+ */
+router.get('/marketplace', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const { date_from, date_to } = req.query;
+
+    let whereConditions = ['o.company_id = $1'];
+    const queryParams = [companyId];
+    let paramIndex = 2;
+
+    if (date_from) {
+      whereConditions.push(`o.order_date >= $${paramIndex}`);
+      queryParams.push(date_from);
+      paramIndex++;
+    }
+
+    if (date_to) {
+      whereConditions.push(`o.order_date <= $${paramIndex}`);
+      queryParams.push(date_to);
+      paramIndex++;
+    }
+
+    const marketplaceStats = await db.query(`
+      SELECT
+        m.name as marketplace_name,
+        m.type as marketplace_type,
+        COUNT(DISTINCT o.id) as orders_count,
+        SUM(o.total_amount) as total_revenue,
+        AVG(o.total_amount) as avg_order_value,
+        SUM(o.commission_amount) as total_commission,
+        COUNT(DISTINCT oi.product_id) as unique_products_sold,
+        SUM(oi.quantity) as total_quantity_sold
+      FROM orders o
+      JOIN marketplaces m ON o.marketplace_id = m.id
+      JOIN order_items oi ON o.id = oi.order_id
+      WHERE ${whereConditions.join(' AND ')}
+      GROUP BY m.id, m.name, m.type
+      ORDER BY total_revenue DESC
+    `, queryParams);
+
+    res.json({
+      success: true,
+      data: marketplaceStats.rows
+    });
+
+  } catch (error) {
+    console.error('Marketplace analytics error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+/**
+ * ✅ НОВЫЙ ЭНДПОИНТ: GET /analytics/brand
+ * Аналитика по брендам
+ */
+router.get('/brand', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const { date_from, date_to } = req.query;
+
+    let whereConditions = ['p.company_id = $1'];
+    const queryParams = [companyId];
+    let paramIndex = 2;
+
+    if (date_from) {
+      whereConditions.push(`o.order_date >= $${paramIndex}`);
+      queryParams.push(date_from);
+      paramIndex++;
+    }
+
+    if (date_to) {
+      whereConditions.push(`o.order_date <= $${paramIndex}`);
+      queryParams.push(date_to);
+      paramIndex++;
+    }
+
+    const brandStats = await db.query(`
+      SELECT
+        b.name as brand_name,
+        b.canonical_name,
+        COUNT(DISTINCT p.id) as total_products,
+        COUNT(DISTINCT o.id) as orders_count,
+        SUM(oi.quantity) as quantity_sold,
+        SUM(oi.quantity * oi.price) as revenue,
+        AVG(oi.price) as avg_price,
+        COALESCE(SUM(oi.quantity * (oi.price - COALESCE(ps.original_price, 0))), 0) as profit,
+        COALESCE(AVG((oi.price - COALESCE(ps.original_price, 0)) / oi.price * 100), 0) as margin_percentage
+      FROM brands b
+      JOIN products p ON b.id = p.brand_id
+      LEFT JOIN order_items oi ON p.id = oi.product_id
+      LEFT JOIN orders o ON oi.order_id = o.id
+      LEFT JOIN product_suppliers ps ON p.id = ps.product_id
+      WHERE ${whereConditions.join(' AND ')}
+      GROUP BY b.id, b.name, b.canonical_name
+      ORDER BY revenue DESC
+    `, queryParams);
+
+    res.json({
+      success: true,
+      data: brandStats.rows
+    });
+
+  } catch (error) {
+    console.error('Brand analytics error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+/**
+ * ✅ НОВЫЙ ЭНДПОИНТ: GET /analytics/category
+ * Аналитика по категориям
+ */
+router.get('/category', authenticate, async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const { date_from, date_to } = req.query;
+
+    let whereConditions = ['p.company_id = $1'];
+    const queryParams = [companyId];
+    let paramIndex = 2;
+
+    if (date_from) {
+      whereConditions.push(`o.order_date >= $${paramIndex}`);
+      queryParams.push(date_from);
+      paramIndex++;
+    }
+
+    if (date_to) {
+      whereConditions.push(`o.order_date <= $${paramIndex}`);
+      queryParams.push(date_to);
+      paramIndex++;
+    }
+
+    const categoryStats = await db.query(`
+      SELECT
+        c.name as category_name,
+        c.canonical_name,
+        c.level,
+        COUNT(DISTINCT p.id) as total_products,
+        COUNT(DISTINCT o.id) as orders_count,
+        SUM(oi.quantity) as quantity_sold,
+        SUM(oi.quantity * oi.price) as revenue,
+        AVG(oi.price) as avg_price,
+        COALESCE(SUM(oi.quantity * (oi.price - COALESCE(ps.original_price, 0))), 0) as profit,
+        COALESCE(AVG((oi.price - COALESCE(ps.original_price, 0)) / oi.price * 100), 0) as margin_percentage
+      FROM categories c
+      JOIN products p ON c.id = p.category_id
+      LEFT JOIN order_items oi ON p.id = oi.product_id
+      LEFT JOIN orders o ON oi.order_id = o.id
+      LEFT JOIN product_suppliers ps ON p.id = ps.product_id
+      WHERE ${whereConditions.join(' AND ')}
+      GROUP BY c.id, c.name, c.canonical_name, c.level
+      ORDER BY revenue DESC
+    `, queryParams);
+
+    res.json({
+      success: true,
+      data: categoryStats.rows
+    });
+
+  } catch (error) {
+    console.error('Category analytics error:', error);
     res.status(500).json({
       success: false,
       error: 'Internal server error'

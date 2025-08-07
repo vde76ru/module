@@ -84,13 +84,45 @@ CREATE INDEX idx_suppliers_last_sync_status ON suppliers (last_sync_status);
 CREATE INDEX idx_suppliers_company_active ON suppliers (company_id, status, priority);
 
 -- ================================================================
--- ДОБАВЛЕНИЕ ВНЕШНЕГО КЛЮЧА ДЛЯ main_supplier_id В ТАБЛИЦЕ products
+-- ДОБАВЛЕНИЕ ПОЛЯ main_supplier_id В ТАБЛИЦЕ products
 -- ================================================================
 
--- Добавляем внешний ключ для main_supplier_id в таблице products
-ALTER TABLE products ADD CONSTRAINT fk_products_main_supplier_id
-    FOREIGN KEY (main_supplier_id) REFERENCES suppliers(id)
-    ON DELETE SET NULL ON UPDATE CASCADE;
+-- Добавляем поле main_supplier_id в таблицу products (с проверкой существования)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'products' AND column_name = 'main_supplier_id'
+    ) THEN
+        ALTER TABLE products ADD COLUMN main_supplier_id UUID;
+    END IF;
+END $$;
+
+-- Добавляем внешний ключ для main_supplier_id в таблице products (с проверкой существования)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE table_name = 'products' AND constraint_name = 'fk_products_main_supplier_id'
+    ) THEN
+        ALTER TABLE products ADD CONSTRAINT fk_products_main_supplier_id
+            FOREIGN KEY (main_supplier_id) REFERENCES suppliers(id)
+            ON DELETE SET NULL ON UPDATE CASCADE;
+    END IF;
+END $$;
+
+COMMENT ON COLUMN products.main_supplier_id IS 'Основной поставщик товара';
+
+-- Создаем индекс только если он не существует
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_indexes
+        WHERE tablename = 'products' AND indexname = 'idx_products_main_supplier_id'
+    ) THEN
+        CREATE INDEX idx_products_main_supplier_id ON products (main_supplier_id);
+    END IF;
+END $$;
 
 -- ================================================================
 -- ТАБЛИЦА: Marketplaces - Маркетплейсы для продаж

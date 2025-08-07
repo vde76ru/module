@@ -123,12 +123,34 @@ router.post('/', authenticate, checkPermission('products.create'), async (req, r
             slug
         } = req.body;
 
-        // Валидация обязательных полей
-        if (!name) {
+        // Расширенная валидация полей
+        const validationErrors = this.validateProductData({
+            name,
+            description,
+            short_description,
+            sku,
+            barcode,
+            brand_id,
+            category_id,
+            weight,
+            length,
+            width,
+            height,
+            status,
+            is_visible,
+            attributes,
+            meta_title,
+            meta_description,
+            meta_keywords,
+            slug
+        });
+
+        if (validationErrors.length > 0) {
             await client.query('ROLLBACK');
             return res.status(400).json({
                 success: false,
-                error: 'Product name is required'
+                error: 'Validation failed',
+                details: validationErrors
             });
         }
 
@@ -422,5 +444,88 @@ router.get('/categories/list', authenticate, async (req, res) => {
         });
     }
 });
+
+/**
+ * Валидация данных товара
+ */
+function validateProductData(data) {
+  const errors = [];
+
+  // Проверка обязательных полей
+  if (!data.name || data.name.trim().length === 0) {
+    errors.push('Product name is required');
+  }
+
+  if (data.name && data.name.length > 255) {
+    errors.push('Product name cannot exceed 255 characters');
+  }
+
+  // Проверка SKU
+  if (data.sku && data.sku.length > 100) {
+    errors.push('SKU cannot exceed 100 characters');
+  }
+
+  // Проверка штрихкода
+  if (data.barcode && data.barcode.length > 50) {
+    errors.push('Barcode cannot exceed 50 characters');
+  }
+
+  // Проверка описания
+  if (data.description && data.description.length > 5000) {
+    errors.push('Description cannot exceed 5000 characters');
+  }
+
+  if (data.short_description && data.short_description.length > 500) {
+    errors.push('Short description cannot exceed 500 characters');
+  }
+
+  // Проверка размеров
+  if (data.weight && (isNaN(data.weight) || data.weight < 0)) {
+    errors.push('Weight must be a positive number');
+  }
+
+  if (data.length && (isNaN(data.length) || data.length < 0)) {
+    errors.push('Length must be a positive number');
+  }
+
+  if (data.width && (isNaN(data.width) || data.width < 0)) {
+    errors.push('Width must be a positive number');
+  }
+
+  if (data.height && (isNaN(data.height) || data.height < 0)) {
+    errors.push('Height must be a positive number');
+  }
+
+  // Проверка статуса
+  const validStatuses = ['active', 'inactive', 'draft', 'archived'];
+  if (data.status && !validStatuses.includes(data.status)) {
+    errors.push('Invalid status value');
+  }
+
+  // Проверка атрибутов
+  if (data.attributes && typeof data.attributes !== 'object') {
+    errors.push('Attributes must be an object');
+  }
+
+  // Проверка мета-полей
+  if (data.meta_title && data.meta_title.length > 60) {
+    errors.push('Meta title cannot exceed 60 characters');
+  }
+
+  if (data.meta_description && data.meta_description.length > 160) {
+    errors.push('Meta description cannot exceed 160 characters');
+  }
+
+  if (data.meta_keywords && data.meta_keywords.length > 255) {
+    errors.push('Meta keywords cannot exceed 255 characters');
+  }
+
+  // Проверка slug
+  if (data.slug && !/^[a-z0-9-]+$/.test(data.slug)) {
+    errors.push('Slug can only contain lowercase letters, numbers, and hyphens');
+  }
+
+  return errors;
+}
 
 module.exports = router;

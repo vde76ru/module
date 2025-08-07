@@ -198,7 +198,7 @@ class BillingService {
    * Смена тарифа
    */
   async changeTariff(companyId, tariffName, paymentMethodId = null) {
-    const client = await this.pool.connect();
+    const client = await db.getClient();
 
     try {
       await client.query('BEGIN');

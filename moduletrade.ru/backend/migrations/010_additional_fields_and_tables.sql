@@ -10,14 +10,6 @@
 -- ДОБАВЛЕНИЕ НЕДОСТАЮЩИХ ПОЛЕЙ В СУЩЕСТВУЮЩИЕ ТАБЛИЦЫ
 -- ================================================================
 
--- Добавляем недостающие поля в таблицу products
-ALTER TABLE products ADD COLUMN IF NOT EXISTS sku VARCHAR(255);
-ALTER TABLE products ADD COLUMN IF NOT EXISTS barcode VARCHAR(255);
-ALTER TABLE products ADD COLUMN IF NOT EXISTS slug VARCHAR(255);
-ALTER TABLE products ADD COLUMN IF NOT EXISTS external_id VARCHAR(255);
-ALTER TABLE products ADD COLUMN IF NOT EXISTS external_data JSONB DEFAULT '{}'::jsonb;
-ALTER TABLE products ADD COLUMN IF NOT EXISTS last_sync TIMESTAMP WITH TIME ZONE;
-
 -- Добавляем комментарии к новым полям
 COMMENT ON COLUMN products.sku IS 'Артикул товара (Stock Keeping Unit)';
 COMMENT ON COLUMN products.barcode IS 'Штрих-код товара';
@@ -40,54 +32,6 @@ ALTER TABLE products ADD CONSTRAINT products_barcode_unique_per_company
     UNIQUE (company_id, barcode);
 ALTER TABLE products ADD CONSTRAINT products_slug_unique_per_company
     UNIQUE (company_id, slug);
-
--- ================================================================
--- ТАБЛИЦА: User_Sessions - Сессии пользователей (если не создана)
--- ================================================================
--- Эта таблица уже должна быть создана в миграции 007, но на всякий случай
-CREATE TABLE IF NOT EXISTS user_sessions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID NOT NULL,
-    session_token VARCHAR(255) UNIQUE NOT NULL,
-    refresh_token VARCHAR(255),
-    ip_address INET,
-    user_agent TEXT,
-    login_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    last_activity TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP WITH TIME ZONE,
-    is_active BOOLEAN DEFAULT TRUE,
-    metadata JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-
-    CONSTRAINT fk_user_sessions_user_id
-        FOREIGN KEY (user_id) REFERENCES users(id)
-        ON DELETE CASCADE ON UPDATE CASCADE
-);
-
--- ================================================================
--- ТАБЛИЦА: Billing_Transactions - Транзакции биллинга (если не создана)
--- ================================================================
--- Эта таблица уже должна быть создана в миграции 002, но на всякий случай
-CREATE TABLE IF NOT EXISTS billing_transactions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    billing_account_id UUID NOT NULL,
-    transaction_type VARCHAR(50) NOT NULL,
-    amount DECIMAL(12,2) NOT NULL,
-    currency VARCHAR(3) DEFAULT 'RUB',
-    status VARCHAR(20) DEFAULT 'pending',
-    transaction_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    reference_type VARCHAR(50),
-    reference_id UUID,
-    description TEXT,
-    metadata JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-
-    CONSTRAINT fk_billing_transactions_billing_account_id
-        FOREIGN KEY (billing_account_id) REFERENCES billing_accounts(id)
-        ON DELETE CASCADE ON UPDATE CASCADE
-);
 
 -- ================================================================
 -- ФУНКЦИИ ДЛЯ РАБОТЫ С НОВЫМИ ПОЛЯМИ

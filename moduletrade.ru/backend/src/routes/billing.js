@@ -352,7 +352,7 @@ router.post('/change-tariff', authenticate, checkPermission('billing.manage'), a
     }
 
     // Начинаем транзакцию
-    client = await db.pool.connect();
+    client = await db.getClient();
     await client.query('BEGIN');
 
     try {
@@ -529,7 +529,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 async function handlePaymentSuccess(paymentIntent) {
   const { company_id, tariff_id, tariff_name } = paymentIntent.metadata;
 
-  const client = await db.pool.connect();
+  const client = await db.getClient();
   await client.query('BEGIN');
 
   try {

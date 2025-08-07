@@ -21,8 +21,7 @@ CREATE TABLE products (
     category_id UUID,
     attributes JSONB DEFAULT '{}'::jsonb,
     source_type VARCHAR(50) DEFAULT 'manual',
-    main_supplier_id UUID, -- Внешний ключ будет добавлен позже в миграции 004
-    
+
     -- Информация о товаре
     base_unit VARCHAR(50) DEFAULT 'шт',
     is_divisible BOOLEAN DEFAULT FALSE,
@@ -33,13 +32,13 @@ CREATE TABLE products (
     height DECIMAL(10,3),
     volume DECIMAL(12,6),
     dimensions JSONB DEFAULT '{}'::jsonb,
-    
+
     -- Популярность и аналитика
     popularity_score INTEGER DEFAULT 0,
     view_count INTEGER DEFAULT 0,
     sales_count INTEGER DEFAULT 0,
     last_sale_date TIMESTAMP WITH TIME ZONE,
-    
+
     -- SEO и метаданные
     short_description TEXT,
     sku VARCHAR(100),
@@ -48,22 +47,22 @@ CREATE TABLE products (
     meta_title VARCHAR(255),
     meta_description TEXT,
     meta_keywords TEXT,
-    
+
     -- Внешние данные
     external_id VARCHAR(100),
     external_data JSONB DEFAULT '{}'::jsonb,
     supplier_data JSONB DEFAULT '{}'::jsonb, -- Данные от всех поставщиков
     last_sync TIMESTAMP WITH TIME ZONE,
-    
+
     -- Статус и видимость
     status VARCHAR(50) DEFAULT 'active',
     is_visible BOOLEAN DEFAULT TRUE,
     is_active BOOLEAN DEFAULT TRUE,
-    
+
     -- Настройки обработки
     name_processing_rules JSONB DEFAULT '{}'::jsonb, -- Правила обработки названия
     mapping_settings JSONB DEFAULT '{}'::jsonb, -- Настройки маппинга
-    
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
 
@@ -89,7 +88,6 @@ COMMENT ON COLUMN products.brand_id IS 'Бренд товара';
 COMMENT ON COLUMN products.category_id IS 'Категория товара';
 COMMENT ON COLUMN products.attributes IS 'Атрибуты товара в JSON формате';
 COMMENT ON COLUMN products.source_type IS 'Тип источника: manual, import, api';
-COMMENT ON COLUMN products.main_supplier_id IS 'Основной поставщик товара';
 COMMENT ON COLUMN products.base_unit IS 'Базовая единица измерения';
 COMMENT ON COLUMN products.is_divisible IS 'Делимый ли товар';
 COMMENT ON COLUMN products.min_order_quantity IS 'Минимальное количество для заказа';
@@ -137,7 +135,7 @@ CREATE INDEX idx_products_barcode ON products (barcode);
 CREATE INDEX idx_products_slug ON products (slug);
 CREATE INDEX idx_products_external_id ON products (external_id);
 CREATE INDEX idx_products_last_sync ON products (last_sync);
-CREATE INDEX idx_products_main_supplier_id ON products (main_supplier_id);
+
 CREATE INDEX idx_products_last_sale_date ON products (last_sale_date);
 
 CREATE INDEX idx_products_name_trgm ON products USING gin (name gin_trgm_ops);
@@ -448,7 +446,7 @@ BEGIN
         SELECT pav.product_id, jsonb_agg(
             jsonb_build_object(
                 'attribute', to_jsonb(pa.*),
-                'value', CASE 
+                'value', CASE
                     WHEN pav.value_text IS NOT NULL THEN pav.value_text
                     WHEN pav.value_number IS NOT NULL THEN pav.value_number::text
                     WHEN pav.value_boolean IS NOT NULL THEN pav.value_boolean::text
@@ -501,7 +499,7 @@ BEGIN
     FOR v_attr_key, v_attr_value IN SELECT * FROM jsonb_each_text(p_attributes)
     LOOP
         INSERT INTO temp_search_results
-        SELECT 
+        SELECT
             p.id,
             p.name,
             b.name,
@@ -509,7 +507,7 @@ BEGIN
             jsonb_agg(
                 jsonb_build_object(
                     'attribute_name', pa.name,
-                    'attribute_value', CASE 
+                    'attribute_value', CASE
                         WHEN pav.value_text IS NOT NULL THEN pav.value_text
                         WHEN pav.value_number IS NOT NULL THEN pav.value_number::text
                         WHEN pav.value_boolean IS NOT NULL THEN pav.value_boolean::text
@@ -517,8 +515,8 @@ BEGIN
                     END
                 )
             ),
-            CASE 
-                WHEN pa.name ILIKE '%' || v_attr_key || '%' OR 
+            CASE
+                WHEN pa.name ILIKE '%' || v_attr_key || '%' OR
                      pav.value_text ILIKE '%' || v_attr_value || '%' THEN 10
                 ELSE 1
             END
@@ -527,9 +525,9 @@ BEGIN
         LEFT JOIN categories c ON p.category_id = c.id
         LEFT JOIN product_attribute_values pav ON p.id = pav.product_id
         LEFT JOIN product_attributes pa ON pav.attribute_id = pa.id
-        WHERE p.company_id = p_company_id 
+        WHERE p.company_id = p_company_id
           AND p.is_active = TRUE
-          AND (pa.name ILIKE '%' || v_attr_key || '%' OR 
+          AND (pa.name ILIKE '%' || v_attr_key || '%' OR
                pav.value_text ILIKE '%' || v_attr_value || '%')
         GROUP BY p.id, p.name, b.name, c.name
         ON CONFLICT (product_id) DO UPDATE SET
@@ -538,7 +536,7 @@ BEGIN
 
     -- Возвращаем результаты
     RETURN QUERY
-    SELECT 
+    SELECT
         tsr.product_id,
         tsr.product_name,
         tsr.brand_name,

@@ -198,17 +198,21 @@ CREATE INDEX idx_order_processing_logs_created_at ON order_processing_logs (crea
 CREATE TABLE supplier_orders (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_id UUID NOT NULL,
-    order_id UUID NOT NULL,
+    order_id UUID, -- добавить это поле
     supplier_id UUID NOT NULL,
-    external_order_id VARCHAR(255),
-    status VARCHAR(50) DEFAULT 'pending',
+    order_number VARCHAR(100) NOT NULL,
+    external_order_number VARCHAR(100),
+    status VARCHAR(50) DEFAULT 'pending', -- изменить с VARCHAR(20)
+    total_amount DECIMAL(12,2) DEFAULT 0.00,
+    currency VARCHAR(3) DEFAULT 'RUB',
     order_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     expected_delivery_date TIMESTAMP WITH TIME ZONE,
     actual_delivery_date TIMESTAMP WITH TIME ZONE,
-    total_amount DECIMAL(12,2) DEFAULT 0.00,
-    currency VARCHAR(3) DEFAULT 'RUB',
+    payment_terms VARCHAR(100), -- добавить
+    payment_status VARCHAR(20) DEFAULT 'pending', -- добавить
     notes TEXT,
     metadata JSONB DEFAULT '{}'::jsonb,
+    created_by UUID, -- добавить
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
 
@@ -220,29 +224,40 @@ CREATE TABLE supplier_orders (
         ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT fk_supplier_orders_supplier_id
         FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
-        ON DELETE CASCADE ON UPDATE CASCADE
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_supplier_orders_created_by
+        FOREIGN KEY (created_by) REFERENCES users(id)
+        ON DELETE SET NULL ON UPDATE CASCADE
 );
 
 COMMENT ON TABLE supplier_orders IS 'Заказы у поставщиков';
 COMMENT ON COLUMN supplier_orders.company_id IS 'Компания';
 COMMENT ON COLUMN supplier_orders.order_id IS 'Заказ';
 COMMENT ON COLUMN supplier_orders.supplier_id IS 'Поставщик';
-COMMENT ON COLUMN supplier_orders.external_order_id IS 'Внешний ID заказа';
-COMMENT ON COLUMN supplier_orders.status IS 'Статус заказа';
+COMMENT ON COLUMN supplier_orders.order_number IS 'Номер заказа';
+COMMENT ON COLUMN supplier_orders.external_order_number IS 'Номер заказа в системе поставщика';
+COMMENT ON COLUMN supplier_orders.status IS 'Статус заказа: pending, confirmed, shipped, delivered, cancelled';
+COMMENT ON COLUMN supplier_orders.total_amount IS 'Общая сумма заказа';
+COMMENT ON COLUMN supplier_orders.currency IS 'Валюта заказа';
 COMMENT ON COLUMN supplier_orders.order_date IS 'Дата заказа';
 COMMENT ON COLUMN supplier_orders.expected_delivery_date IS 'Ожидаемая дата доставки';
 COMMENT ON COLUMN supplier_orders.actual_delivery_date IS 'Фактическая дата доставки';
-COMMENT ON COLUMN supplier_orders.total_amount IS 'Общая сумма заказа';
-COMMENT ON COLUMN supplier_orders.currency IS 'Валюта заказа';
-COMMENT ON COLUMN supplier_orders.notes IS 'Примечания';
+COMMENT ON COLUMN supplier_orders.payment_terms IS 'Условия оплаты';
+COMMENT ON COLUMN supplier_orders.payment_status IS 'Статус оплаты: pending, paid, overdue';
+COMMENT ON COLUMN supplier_orders.notes IS 'Примечания к заказу';
 COMMENT ON COLUMN supplier_orders.metadata IS 'Дополнительные данные';
+COMMENT ON COLUMN supplier_orders.created_by IS 'Пользователь, создавший заказ';
 
 CREATE INDEX idx_supplier_orders_company_id ON supplier_orders (company_id);
 CREATE INDEX idx_supplier_orders_order_id ON supplier_orders (order_id);
 CREATE INDEX idx_supplier_orders_supplier_id ON supplier_orders (supplier_id);
-CREATE INDEX idx_supplier_orders_external_order_id ON supplier_orders (external_order_id);
+CREATE INDEX idx_supplier_orders_order_number ON supplier_orders (order_number);
+CREATE INDEX idx_supplier_orders_external_order_number ON supplier_orders (external_order_number);
 CREATE INDEX idx_supplier_orders_status ON supplier_orders (status);
-CREATE INDEX idx_supplier_orders_order_date ON supplier_orders (order_date);
+CREATE INDEX idx_supplier_orders_order_date ON supplier_orders (order_date DESC);
+CREATE INDEX idx_supplier_orders_payment_status ON supplier_orders (payment_status);
+CREATE INDEX idx_supplier_orders_expected_delivery ON supplier_orders (expected_delivery_date);
+CREATE INDEX idx_supplier_orders_created_by ON supplier_orders (created_by);
 
 -- ================================================================
 -- ТАБЛИЦА: Supplier_Order_Items - Позиции заказов у поставщиков
@@ -252,11 +267,15 @@ CREATE TABLE supplier_order_items (
     supplier_order_id UUID NOT NULL,
     product_id UUID NOT NULL,
     external_product_id VARCHAR(255),
+    name VARCHAR(500), -- добавить
     quantity DECIMAL(12,3) NOT NULL,
     unit_price DECIMAL(12,2) NOT NULL,
     total_price DECIMAL(12,2) NOT NULL,
-    currency VARCHAR(3) DEFAULT 'RUB',
+    currency VARCHAR(3) DEFAULT 'RUB', -- оставить
+    received_quantity DECIMAL(12,3) DEFAULT 0, -- добавить
+    status VARCHAR(20) DEFAULT 'pending', -- добавить
     notes TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb, -- добавить
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
 
@@ -272,15 +291,20 @@ COMMENT ON TABLE supplier_order_items IS 'Позиции заказов у по�
 COMMENT ON COLUMN supplier_order_items.supplier_order_id IS 'Заказ у поставщика';
 COMMENT ON COLUMN supplier_order_items.product_id IS 'Товар';
 COMMENT ON COLUMN supplier_order_items.external_product_id IS 'Внешний ID товара';
+COMMENT ON COLUMN supplier_order_items.name IS 'Название товара';
 COMMENT ON COLUMN supplier_order_items.quantity IS 'Количество';
 COMMENT ON COLUMN supplier_order_items.unit_price IS 'Цена за единицу';
 COMMENT ON COLUMN supplier_order_items.total_price IS 'Общая стоимость';
 COMMENT ON COLUMN supplier_order_items.currency IS 'Валюта';
+COMMENT ON COLUMN supplier_order_items.received_quantity IS 'Полученное количество';
+COMMENT ON COLUMN supplier_order_items.status IS 'Статус позиции: pending, confirmed, shipped, received';
 COMMENT ON COLUMN supplier_order_items.notes IS 'Примечания';
+COMMENT ON COLUMN supplier_order_items.metadata IS 'Дополнительные данные';
 
 CREATE INDEX idx_supplier_order_items_supplier_order_id ON supplier_order_items (supplier_order_id);
 CREATE INDEX idx_supplier_order_items_product_id ON supplier_order_items (product_id);
 CREATE INDEX idx_supplier_order_items_external_product_id ON supplier_order_items (external_product_id);
+CREATE INDEX idx_supplier_order_items_status ON supplier_order_items (status);
 
 -- ================================================================
 -- ТАБЛИЦА: Price_Types - Типы цен
@@ -706,7 +730,7 @@ CREATE INDEX idx_exchange_rates_updated_at ON exchange_rates (updated_at DESC);
 -- ФУНКЦИИ
 -- ================================================================
 
--- Функция для автоматического резервирования товаров
+-- Функция для резервирования товаров заказа
 CREATE OR REPLACE FUNCTION reserve_order_items(
     p_order_id UUID
 ) RETURNS BOOLEAN AS $$
@@ -717,49 +741,49 @@ DECLARE
     v_success BOOLEAN := TRUE;
 BEGIN
     -- Получаем все позиции заказа
-    FOR v_order_item IN 
-        SELECT * FROM order_items 
+    FOR v_order_item IN
+        SELECT * FROM order_items
         WHERE order_id = p_order_id
     LOOP
         -- Ищем склад с достаточным количеством товара
         SELECT * INTO v_warehouse_stock
-        FROM warehouse_stocks
+        FROM warehouse_product_links
         WHERE product_id = v_order_item.product_id
           AND available_quantity >= v_order_item.quantity
           AND is_active = TRUE
         ORDER BY available_quantity DESC
         LIMIT 1;
-        
+
         -- Если нашли склад с достаточным количеством
         IF v_warehouse_stock.id IS NOT NULL THEN
             -- Резервируем товар
-            UPDATE warehouse_stocks
-            SET 
+            UPDATE warehouse_product_links
+            SET
                 reserved_quantity = reserved_quantity + v_order_item.quantity,
                 available_quantity = available_quantity - v_order_item.quantity
             WHERE id = v_warehouse_stock.id;
-            
+
             -- Обновляем позицию заказа
             UPDATE order_items
-            SET 
+            SET
                 warehouse_id = v_warehouse_stock.warehouse_id,
                 reserved_quantity = v_order_item.quantity,
                 cost_price = v_warehouse_stock.purchase_price
             WHERE id = v_order_item.id;
-            
+
         ELSE
             -- Не удалось зарезервировать товар
             v_success := FALSE;
         END IF;
     END LOOP;
-    
+
     -- Обновляем статус заказа
     IF v_success THEN
         UPDATE orders
         SET is_reserved = TRUE
         WHERE id = p_order_id;
     END IF;
-    
+
     RETURN v_success;
 END;
 $$ LANGUAGE plpgsql;
@@ -772,19 +796,19 @@ DECLARE
     v_order_item RECORD;
 BEGIN
     -- Получаем все позиции заказа
-    FOR v_order_item IN 
-        SELECT * FROM order_items 
+    FOR v_order_item IN
+        SELECT * FROM order_items
         WHERE order_id = p_order_id AND reserved_quantity > 0
     LOOP
         -- Освобождаем резерв
-        UPDATE warehouse_stocks
-        SET 
+        UPDATE warehouse_product_links
+        SET
             reserved_quantity = reserved_quantity - v_order_item.reserved_quantity,
             available_quantity = available_quantity + v_order_item.reserved_quantity
-        WHERE warehouse_id = v_order_item.warehouse_id 
+        WHERE warehouse_id = v_order_item.warehouse_id
           AND product_id = v_order_item.product_id;
     END LOOP;
-    
+
     -- Обновляем статус заказа
     UPDATE orders
     SET is_reserved = FALSE
@@ -805,28 +829,28 @@ BEGIN
     -- Проверяем email на корпоративные домены
     IF p_customer_email IS NOT NULL THEN
         v_email_domain := split_part(p_customer_email, '@', 2);
-        
+
         -- Список корпоративных доменов
         IF v_email_domain IN ('company.com', 'business.ru', 'corp.net') THEN
             v_order_type := 'business';
         END IF;
     END IF;
-    
+
     -- Проверяем метаданные на признаки бизнес-заказа
     IF p_metadata ? 'is_business' AND p_metadata->>'is_business' = 'true' THEN
         v_order_type := 'business';
     END IF;
-    
+
     -- Проверяем имя на корпоративные признаки
     IF p_customer_name IS NOT NULL AND (
-        p_customer_name ILIKE '%ООО%' OR 
-        p_customer_name ILIKE '%ИП%' OR 
+        p_customer_name ILIKE '%ООО%' OR
+        p_customer_name ILIKE '%ИП%' OR
         p_customer_name ILIKE '%LLC%' OR
         p_customer_name ILIKE '%LTD%'
     ) THEN
         v_order_type := 'business';
     END IF;
-    
+
     RETURN v_order_type;
 END;
 $$ LANGUAGE plpgsql;
@@ -860,8 +884,8 @@ RETURNS TRIGGER AS $$
 BEGIN
     IF NEW.order_type IS NULL OR NEW.order_type = 'retail' THEN
         NEW.order_type := determine_order_type(
-            NEW.customer_email, 
-            NEW.customer_name, 
+            NEW.customer_email,
+            NEW.customer_name,
             NEW.metadata
         );
     END IF;
