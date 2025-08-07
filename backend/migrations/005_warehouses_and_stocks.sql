@@ -1,9 +1,9 @@
 -- ================================================================
--- МИГРАЦИЯ 005: Склады и остатки
+-- МИГРАЦИЯ 005: Склады и остатки (ИСПРАВЛЕНА)
 -- Описание: Создает таблицы для управления складами и остатками товаров
 -- Дата: 2025-01-27
 -- Блок: Склады и Остатки
--- Зависимости: 002 (companies), 003 (products)
+-- Зависимости: 002 (companies), 003 (products), 004 (suppliers)
 -- ================================================================
 
 -- ================================================================
@@ -52,6 +52,39 @@ CREATE INDEX idx_warehouses_code ON warehouses (code);
 CREATE INDEX idx_warehouses_type ON warehouses (type);
 CREATE INDEX idx_warehouses_is_main ON warehouses (is_main);
 CREATE INDEX idx_warehouses_is_active ON warehouses (is_active);
+
+-- ================================================================
+-- ТАБЛИЦА: Multi_Warehouse_Components - Компоненты мульти-складов
+-- ================================================================
+CREATE TABLE multi_warehouse_components (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    multi_warehouse_id UUID NOT NULL,
+    component_warehouse_id UUID NOT NULL,
+    weight DECIMAL(5,2) DEFAULT 1.00,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+
+    CONSTRAINT fk_multi_warehouse_components_multi_warehouse_id
+        FOREIGN KEY (multi_warehouse_id) REFERENCES warehouses(id)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT fk_multi_warehouse_components_component_warehouse_id
+        FOREIGN KEY (component_warehouse_id) REFERENCES warehouses(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+COMMENT ON TABLE multi_warehouse_components IS 'Компоненты мульти-складов';
+COMMENT ON COLUMN multi_warehouse_components.multi_warehouse_id IS 'Мульти-склад';
+COMMENT ON COLUMN multi_warehouse_components.component_warehouse_id IS 'Компонентный склад';
+COMMENT ON COLUMN multi_warehouse_components.weight IS 'Вес компонента';
+COMMENT ON COLUMN multi_warehouse_components.is_active IS 'Активен ли компонент';
+
+ALTER TABLE multi_warehouse_components ADD CONSTRAINT multi_warehouse_components_unique
+    UNIQUE (multi_warehouse_id, component_warehouse_id);
+
+CREATE INDEX idx_multi_warehouse_components_multi_warehouse_id ON multi_warehouse_components (multi_warehouse_id);
+CREATE INDEX idx_multi_warehouse_components_component_warehouse_id ON multi_warehouse_components (component_warehouse_id);
+CREATE INDEX idx_multi_warehouse_components_is_active ON multi_warehouse_components (is_active);
 
 -- ================================================================
 -- ТАБЛИЦА: Warehouse_Product_Links - Остатки товаров на складах
@@ -330,6 +363,11 @@ CREATE TRIGGER update_warehouses_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+CREATE TRIGGER update_multi_warehouse_components_updated_at
+    BEFORE UPDATE ON multi_warehouse_components
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
 CREATE TRIGGER update_warehouse_product_links_updated_at
     BEFORE UPDATE ON warehouse_product_links
     FOR EACH ROW
@@ -603,6 +641,67 @@ COMMENT ON COLUMN v_product_total_stock.total_quantity IS 'Общее колич
 COMMENT ON COLUMN v_product_total_stock.available_quantity IS 'Доступное количество товара на всех складах';
 COMMENT ON COLUMN v_product_total_stock.warehouse_count IS 'Количество складов, где есть товар';
 COMMENT ON COLUMN v_product_total_stock.avg_quantity IS 'Среднее количество товара на склад';
+
+-- Функция для пересчета остатков мульти-склада
+CREATE OR REPLACE FUNCTION recalculate_multi_warehouse_stock(p_multi_warehouse_id UUID)
+RETURNS BOOLEAN AS $$
+DECLARE
+    v_component_warehouse_id UUID;
+    v_product_id UUID;
+    v_total_quantity DECIMAL;
+    v_total_available DECIMAL;
+    v_total_reserved DECIMAL;
+    v_avg_cost DECIMAL;
+BEGIN
+    -- Получаем все компонентные склады
+    FOR v_component_warehouse_id IN
+        SELECT component_warehouse_id
+        FROM multi_warehouse_components
+        WHERE multi_warehouse_id = p_multi_warehouse_id
+            AND is_active = TRUE
+    LOOP
+        -- Для каждого товара на компонентном складе
+        FOR v_product_id IN
+            SELECT DISTINCT product_id
+            FROM warehouse_product_links
+            WHERE warehouse_id = v_component_warehouse_id
+                AND is_active = TRUE
+        LOOP
+            -- Суммируем остатки по всем компонентным складам
+            SELECT
+                COALESCE(SUM(quantity), 0),
+                COALESCE(SUM(available_quantity), 0),
+                COALESCE(SUM(reserved_quantity), 0),
+                COALESCE(AVG(unit_cost), 0)
+            INTO v_total_quantity, v_total_available, v_total_reserved, v_avg_cost
+            FROM warehouse_product_links wpl
+            JOIN multi_warehouse_components mwc ON wpl.warehouse_id = mwc.component_warehouse_id
+            WHERE mwc.multi_warehouse_id = p_multi_warehouse_id
+                AND wpl.product_id = v_product_id
+                AND wpl.is_active = TRUE
+                AND mwc.is_active = TRUE;
+
+            -- Обновляем или создаем запись в мульти-складе
+            INSERT INTO warehouse_product_links (
+                warehouse_id, product_id, quantity, available_quantity,
+                reserved_quantity, unit_cost, last_updated
+            ) VALUES (
+                p_multi_warehouse_id, v_product_id, v_total_quantity,
+                v_total_available, v_total_reserved, v_avg_cost, CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (warehouse_id, product_id)
+            DO UPDATE SET
+                quantity = EXCLUDED.quantity,
+                available_quantity = EXCLUDED.available_quantity,
+                reserved_quantity = EXCLUDED.reserved_quantity,
+                unit_cost = EXCLUDED.unit_cost,
+                last_updated = CURRENT_TIMESTAMP;
+        END LOOP;
+    END LOOP;
+
+    RETURN TRUE;
+END;
+$$ LANGUAGE plpgsql;
 
 -- ================================================================
 -- ЗАВЕРШЕНИЕ МИГРАЦИИ 005

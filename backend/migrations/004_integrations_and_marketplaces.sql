@@ -1,9 +1,9 @@
 -- ================================================================
--- МИГРАЦИЯ 004: Интеграции и маркетплейсы
+-- МИГРАЦИЯ 004: Интеграции и маркетплейсы (ИСПРАВЛЕНА)
 -- Описание: Создает таблицы для поставщиков, маркетплейсов и их интеграций
 -- Дата: 2025-01-27
 -- Блок: Интеграции и Маркетплейсы
--- Зависимости: 002 (companies)
+-- Зависимости: 002 (companies), 003 (products)
 -- ================================================================
 
 -- ================================================================
@@ -82,6 +82,15 @@ CREATE INDEX idx_suppliers_priority ON suppliers (priority);
 CREATE INDEX idx_suppliers_last_sync_at ON suppliers (last_sync_at);
 CREATE INDEX idx_suppliers_last_sync_status ON suppliers (last_sync_status);
 CREATE INDEX idx_suppliers_company_active ON suppliers (company_id, status, priority);
+
+-- ================================================================
+-- ДОБАВЛЕНИЕ ВНЕШНЕГО КЛЮЧА ДЛЯ main_supplier_id В ТАБЛИЦЕ products
+-- ================================================================
+
+-- Добавляем внешний ключ для main_supplier_id в таблице products
+ALTER TABLE products ADD CONSTRAINT fk_products_main_supplier_id
+    FOREIGN KEY (main_supplier_id) REFERENCES suppliers(id)
+    ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- ================================================================
 -- ТАБЛИЦА: Marketplaces - Маркетплейсы для продаж
@@ -400,39 +409,6 @@ CREATE INDEX idx_system_settings_key ON system_settings (setting_key);
 CREATE INDEX idx_system_settings_is_public ON system_settings (is_public);
 
 -- ================================================================
--- ТАБЛИЦА: Multi_Warehouse_Components - Компоненты мульти-складов
--- ================================================================
-CREATE TABLE multi_warehouse_components (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    multi_warehouse_id UUID NOT NULL,
-    component_warehouse_id UUID NOT NULL,
-    weight DECIMAL(5,2) DEFAULT 1.00,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-
-    CONSTRAINT fk_multi_warehouse_components_multi_warehouse_id
-        FOREIGN KEY (multi_warehouse_id) REFERENCES warehouses(id)
-        ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_multi_warehouse_components_component_warehouse_id
-        FOREIGN KEY (component_warehouse_id) REFERENCES warehouses(id)
-        ON DELETE CASCADE ON UPDATE CASCADE
-);
-
-COMMENT ON TABLE multi_warehouse_components IS 'Компоненты мульти-складов';
-COMMENT ON COLUMN multi_warehouse_components.multi_warehouse_id IS 'Мульти-склад';
-COMMENT ON COLUMN multi_warehouse_components.component_warehouse_id IS 'Компонентный склад';
-COMMENT ON COLUMN multi_warehouse_components.weight IS 'Вес компонента';
-COMMENT ON COLUMN multi_warehouse_components.is_active IS 'Активен ли компонент';
-
-ALTER TABLE multi_warehouse_components ADD CONSTRAINT multi_warehouse_components_unique
-    UNIQUE (multi_warehouse_id, component_warehouse_id);
-
-CREATE INDEX idx_multi_warehouse_components_multi_warehouse_id ON multi_warehouse_components (multi_warehouse_id);
-CREATE INDEX idx_multi_warehouse_components_component_warehouse_id ON multi_warehouse_components (component_warehouse_id);
-CREATE INDEX idx_multi_warehouse_components_is_active ON multi_warehouse_components (is_active);
-
--- ================================================================
 -- ТАБЛИЦА: Incoming_Orders - Входящие заказы
 -- ================================================================
 CREATE TABLE incoming_orders (
@@ -709,19 +685,6 @@ CREATE INDEX idx_tenant_integrations_type ON tenant_integrations (integration_ty
 CREATE INDEX idx_tenant_integrations_is_active ON tenant_integrations (is_active);
 
 -- ================================================================
--- ДОБАВЛЕНИЕ ВНЕШНЕГО КЛЮЧА ДЛЯ main_supplier_id В ТАБЛИЦЕ products
--- ================================================================
-
--- Добавляем внешний ключ для main_supplier_id в таблице products
-ALTER TABLE products ADD CONSTRAINT fk_products_main_supplier_id
-    FOREIGN KEY (main_supplier_id) REFERENCES suppliers(id)
-    ON DELETE SET NULL ON UPDATE CASCADE;
-
--- Создаем индекс для оптимизации запросов по main_supplier_id
-CREATE INDEX IF NOT EXISTS idx_products_main_supplier_id 
-    ON products (main_supplier_id);
-
--- ================================================================
 -- ТРИГГЕРЫ
 -- ================================================================
 CREATE TRIGGER update_suppliers_updated_at
@@ -756,11 +719,6 @@ CREATE TRIGGER update_supplier_integrations_updated_at
 
 CREATE TRIGGER update_system_settings_updated_at
     BEFORE UPDATE ON system_settings
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_multi_warehouse_components_updated_at
-    BEFORE UPDATE ON multi_warehouse_components
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 

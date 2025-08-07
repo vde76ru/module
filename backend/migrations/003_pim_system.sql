@@ -1,5 +1,5 @@
 -- ================================================================
--- МИГРАЦИЯ 003: PIM система - товары и атрибуты
+-- МИГРАЦИЯ 003: PIM система - товары и атрибуты (ИСПРАВЛЕНА)
 -- Описание: Создает таблицы для управления товарами и их атрибутами
 -- Дата: 2025-01-27
 -- Блок: PIM система
@@ -19,7 +19,7 @@ CREATE TABLE products (
     category_id UUID,
     attributes JSONB DEFAULT '{}'::jsonb,
     source_type VARCHAR(50) DEFAULT 'manual',
-    main_supplier_id UUID,
+    main_supplier_id UUID, -- Внешний ключ будет добавлен позже в миграции 004
     base_unit VARCHAR(50) DEFAULT 'шт',
     is_divisible BOOLEAN DEFAULT FALSE,
     min_order_quantity DECIMAL(12,3) DEFAULT 1,
@@ -68,7 +68,7 @@ COMMENT ON COLUMN products.brand_id IS 'Бренд товара';
 COMMENT ON COLUMN products.category_id IS 'Категория товара';
 COMMENT ON COLUMN products.attributes IS 'Атрибуты товара в JSON формате';
 COMMENT ON COLUMN products.source_type IS 'Тип источника: manual, import, api';
-COMMENT ON COLUMN products.main_supplier_id IS 'Основной поставщик товара';
+COMMENT ON COLUMN products.main_supplier_id IS 'Основной поставщик товара (внешний ключ будет добавлен позже)';
 COMMENT ON COLUMN products.base_unit IS 'Базовая единица измерения';
 COMMENT ON COLUMN products.is_divisible IS 'Делимый ли товар';
 COMMENT ON COLUMN products.min_order_quantity IS 'Минимальное количество для заказа';
@@ -111,6 +111,7 @@ CREATE INDEX idx_products_barcode ON products (barcode);
 CREATE INDEX idx_products_slug ON products (slug);
 CREATE INDEX idx_products_external_id ON products (external_id);
 CREATE INDEX idx_products_last_sync ON products (last_sync);
+CREATE INDEX idx_products_main_supplier_id ON products (main_supplier_id);
 
 CREATE INDEX idx_products_name_trgm ON products USING gin (name gin_trgm_ops);
 CREATE INDEX idx_products_company_active ON products (company_id, is_active);
@@ -207,7 +208,11 @@ CREATE TABLE product_attributes (
     validation_rules JSONB DEFAULT '{}'::jsonb,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+
+    CONSTRAINT fk_product_attributes_company_id
+        FOREIGN KEY (company_id) REFERENCES companies(id)
+        ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 COMMENT ON TABLE product_attributes IS 'Атрибуты товаров';
