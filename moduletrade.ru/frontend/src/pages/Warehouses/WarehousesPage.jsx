@@ -63,7 +63,7 @@ const WarehousesPage = () => {
   const dispatch = useDispatch();
   const { items: warehouses = [], loading } = useSelector((state) => state.warehouses || {});
   const { hasPermission } = usePermissions();
-  
+
   const [form] = Form.useForm();
   const [transferForm] = Form.useForm();
 
@@ -156,11 +156,12 @@ const WarehousesPage = () => {
       key: 'type',
       render: (type) => {
         const typeConfig = {
-          physical: { label: 'Физический', icon: <ShopOutlined />, color: 'blue' },
-          virtual: { label: 'Виртуальный', icon: <CloudOutlined />, color: 'green' },
-          multi: { label: 'Мульти-склад', icon: <ApartmentOutlined />, color: 'purple' },
+          main: { label: 'Основной', icon: <ShopOutlined />, color: 'blue' },
+          regional: { label: 'Региональный', icon: <ShopOutlined />, color: 'green' },
+          pickup: { label: 'Пункт выдачи', icon: <ShopOutlined />, color: 'orange' },
+          virtual: { label: 'Виртуальный', icon: <CloudOutlined />, color: 'purple' },
         };
-        const config = typeConfig[type] || typeConfig.physical;
+        const config = typeConfig[type] || typeConfig.main;
         return (
           <Tag icon={config.icon} color={config.color}>
             {config.label}
@@ -277,7 +278,7 @@ const WarehousesPage = () => {
           pagination={{
             pageSize: 20,
             showSizeChanger: true,
-            showTotal: (total, range) => 
+            showTotal: (total, range) =>
               `${range[0]}-${range[1]} из ${total} складов`,
           }}
         />
@@ -316,9 +317,10 @@ const WarehousesPage = () => {
                 rules={[{ required: true, message: 'Выберите тип склада' }]}
               >
                 <Select placeholder="Выберите тип">
-                  <Option value="physical">Физический</Option>
+                  <Option value="main">Основной</Option>
+                  <Option value="regional">Региональный</Option>
+                  <Option value="pickup">Пункт выдачи</Option>
                   <Option value="virtual">Виртуальный</Option>
-                  <Option value="multi">Мульти-склад</Option>
                 </Select>
               </Form.Item>
             </Col>
@@ -329,7 +331,7 @@ const WarehousesPage = () => {
             name="address"
             rules={[{ required: true, message: 'Введите адрес склада' }]}
           >
-            <TextArea 
+            <TextArea
               placeholder="г. Москва, ул. Примерная, д. 1"
               rows={2}
             />
@@ -358,7 +360,7 @@ const WarehousesPage = () => {
             label="Описание"
             name="description"
           >
-            <TextArea 
+            <TextArea
               placeholder="Дополнительная информация о складе"
               rows={3}
             />
@@ -445,7 +447,7 @@ const WarehousesPage = () => {
               { type: 'number', min: 1, message: 'Количество должно быть больше 0' }
             ]}
           >
-            <InputNumber 
+            <InputNumber
               placeholder="1"
               min={1}
               style={{ width: '100%' }}
@@ -456,7 +458,7 @@ const WarehousesPage = () => {
             label="Причина перемещения"
             name="reason"
           >
-            <TextArea 
+            <TextArea
               placeholder="Опишите причину перемещения (необязательно)"
               rows={2}
             />
@@ -480,7 +482,7 @@ const WarehousesPage = () => {
             showIcon
             style={{ marginBottom: 16 }}
           />
-          
+
           <Row gutter={[16, 16]}>
             <Col span={12}>
               <Card title="Зоны хранения" size="small">

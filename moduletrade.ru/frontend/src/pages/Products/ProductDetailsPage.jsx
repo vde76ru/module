@@ -65,9 +65,9 @@ const ProductDetailsPage = () => {
   const fetchDictionaries = async () => {
     try {
       const [categoriesRes, brandsRes, suppliersRes, warehousesRes] = await Promise.all([
-        axios.get('/dictionaries/categories'),
-        axios.get('/dictionaries/brands'),
-        axios.get('/dictionaries/suppliers'),
+        axios.get('/api/categories'),
+        axios.get('/api/brands'),
+        axios.get('/api/suppliers'),
         axios.get('/warehouses'),
       ]);
 
@@ -99,7 +99,7 @@ const ProductDetailsPage = () => {
         ...productData,
         category_id: productData.category?.id,
         brand_id: productData.brand?.id,
-        supplier_id: productData.supplier?.id,
+        main_supplier_id: productData.main_supplier?.id,
       });
     } catch (error) {
       message.error('Ошибка загрузки товара');
@@ -300,7 +300,7 @@ const ProductDetailsPage = () => {
                   </Form.Item>
                 </Col>
                 <Col span={8}>
-                  <Form.Item label="Поставщик" name="supplier_id">
+                  <Form.Item label="Основной поставщик" name="main_supplier_id">
                     <Select placeholder="Выберите поставщика" allowClear>
                       {suppliers.map(supplier => (
                         <Option key={supplier.id} value={supplier.id}>

@@ -70,9 +70,9 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
   const fetchDictionaries = async () => {
     try {
       const [categoriesRes, brandsRes, suppliersRes] = await Promise.all([
-        axios.get('/dictionaries/categories'),
-        axios.get('/dictionaries/brands'),
-        axios.get('/dictionaries/suppliers')
+        axios.get('/api/categories'),
+        axios.get('/api/brands'),
+        axios.get('/api/suppliers')
       ]);
 
       setCategories(categoriesRes.data);
@@ -88,7 +88,7 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
       ...product,
       category_id: product.category?.id,
       brand_id: product.brand?.id,
-      supplier_id: product.supplier?.id
+      main_supplier_id: product.main_supplier?.id
     });
 
     if (product.images) {
@@ -168,7 +168,7 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
   const addSupplierPrice = () => {
     setSupplierPrices([...supplierPrices, {
       id: Date.now(),
-      supplier_id: '',
+      main_supplier_id: '',
       price: 0,
       currency: 'RUB',
       min_quantity: 1,
@@ -226,11 +226,35 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
               </Col>
               <Col span={12}>
                 <Form.Item
+                  name="internal_code"
+                  label="Внутренний код"
+                  rules={[{ required: true, message: 'Введите внутренний код' }]}
+                >
+                  <Input placeholder="INT-001" />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Row gutter={24}>
+              <Col span={12}>
+                <Form.Item
                   name="sku"
                   label="Артикул"
-                  rules={[{ required: true, message: 'Введите артикул' }]}
                 >
                   <Input placeholder="SKU-12345" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  name="source_type"
+                  label="Тип источника"
+                  rules={[{ required: true, message: 'Выберите тип источника' }]}
+                >
+                  <Select placeholder="Выберите тип">
+                    <Option value="manual">Ручной ввод</Option>
+                    <Option value="import">Импорт</Option>
+                    <Option value="api">API</Option>
+                  </Select>
                 </Form.Item>
               </Col>
             </Row>
@@ -243,7 +267,7 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
             </Form.Item>
 
             <Row gutter={24}>
-              <Col span={8}>
+              <Col span={6}>
                 <Form.Item
                   name="category_id"
                   label="Категория"
@@ -258,7 +282,7 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
                   </Select>
                 </Form.Item>
               </Col>
-              <Col span={8}>
+              <Col span={6}>
                 <Form.Item
                   name="brand_id"
                   label="Бренд"
@@ -272,10 +296,10 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
                   </Select>
                 </Form.Item>
               </Col>
-              <Col span={8}>
+              <Col span={6}>
                 <Form.Item
-                  name="supplier_id"
-                  label="Поставщик"
+                  name="main_supplier_id"
+                  label="Основной поставщик"
                 >
                   <Select placeholder="Выберите поставщика" showSearch allowClear>
                     {suppliers.map(supplier => (
@@ -286,10 +310,26 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
                   </Select>
                 </Form.Item>
               </Col>
+              <Col span={6}>
+                <Form.Item
+                  name="base_unit"
+                  label="Единица измерения"
+                  rules={[{ required: true, message: 'Выберите единицу' }]}
+                >
+                  <Select placeholder="Выберите единицу">
+                    <Option value="шт">Штуки</Option>
+                    <Option value="кг">Килограммы</Option>
+                    <Option value="л">Литры</Option>
+                    <Option value="м">Метры</Option>
+                    <Option value="м²">Квадратные метры</Option>
+                    <Option value="м³">Кубические метры</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
             </Row>
 
             <Row gutter={24}>
-              <Col span={8}>
+              <Col span={6}>
                 <Form.Item
                   name="price"
                   label="Цена"
@@ -305,7 +345,7 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
                   />
                 </Form.Item>
               </Col>
-              <Col span={8}>
+              <Col span={6}>
                 <Form.Item
                   name="weight"
                   label="Вес (кг)"
@@ -318,22 +358,88 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
                   />
                 </Form.Item>
               </Col>
-              <Col span={8}>
+              <Col span={6}>
                 <Form.Item
-                  name="currency"
-                  label="Валюта"
+                  name="length"
+                  label="Длина (см)"
                 >
-                  <Select defaultValue="RUB">
-                    <Option value="RUB">₽ RUB</Option>
-                    <Option value="USD">$ USD</Option>
-                    <Option value="EUR">€ EUR</Option>
+                  <InputNumber
+                    min={0}
+                    step={0.1}
+                    placeholder="0.0"
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={6}>
+                <Form.Item
+                  name="width"
+                  label="Ширина (см)"
+                >
+                  <InputNumber
+                    min={0}
+                    step={0.1}
+                    placeholder="0.0"
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Row gutter={24}>
+              <Col span={6}>
+                <Form.Item
+                  name="height"
+                  label="Высота (см)"
+                >
+                  <InputNumber
+                    min={0}
+                    step={0.1}
+                    placeholder="0.0"
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={6}>
+                <Form.Item
+                  name="volume"
+                  label="Объём (м³)"
+                >
+                  <InputNumber
+                    min={0}
+                    step={0.001}
+                    placeholder="0.000"
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={6}>
+                <Form.Item
+                  name="min_order_quantity"
+                  label="Мин. количество заказа"
+                >
+                  <InputNumber
+                    min={1}
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={6}>
+                <Form.Item
+                  name="status"
+                  label="Статус товара"
+                >
+                  <Select placeholder="Выберите статус">
+                    <Option value="draft">Черновик</Option>
+                    <Option value="active">Активный</Option>
+                    <Option value="discontinued">Снят с производства</Option>
                   </Select>
                 </Form.Item>
               </Col>
             </Row>
 
             <Row gutter={24}>
-              <Col span={12}>
+              <Col span={6}>
                 <Form.Item
                   name="is_active"
                   label="Активен"
@@ -342,13 +448,87 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
                   <Switch />
                 </Form.Item>
               </Col>
-              <Col span={12}>
+              <Col span={6}>
                 <Form.Item
-                  name="track_quantity"
-                  label="Отслеживать остатки"
+                  name="is_visible"
+                  label="Видимый в каталоге"
+                  valuePropName="checked"
+                >
+                  <Switch defaultChecked />
+                </Form.Item>
+              </Col>
+              <Col span={6}>
+                <Form.Item
+                  name="is_divisible"
+                  label="Делимый товар"
                   valuePropName="checked"
                 >
                   <Switch />
+                </Form.Item>
+              </Col>
+              <Col span={6}>
+                <Form.Item
+                  name="barcode"
+                  label="Штрихкод"
+                >
+                  <Input placeholder="Штрихкод товара" />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Row gutter={24}>
+              <Col span={12}>
+                <Form.Item
+                  name="short_description"
+                  label="Краткое описание"
+                >
+                  <Input placeholder="Краткое описание для каталога" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  name="external_id"
+                  label="Внешний ID"
+                >
+                  <Input placeholder="ID в внешней системе" />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Row gutter={24}>
+              <Col span={12}>
+                <Form.Item
+                  name="slug"
+                  label="URL slug"
+                >
+                  <Input placeholder="url-friendly-name" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  name="meta_title"
+                  label="Meta Title"
+                >
+                  <Input placeholder="SEO заголовок" />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Row gutter={24}>
+              <Col span={12}>
+                <Form.Item
+                  name="meta_description"
+                  label="Meta Description"
+                >
+                  <TextArea rows={2} placeholder="SEO описание" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item
+                  name="meta_keywords"
+                  label="Meta Keywords"
+                >
+                  <Input placeholder="Ключевые слова через запятую" />
                 </Form.Item>
               </Col>
             </Row>
@@ -422,8 +602,8 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
                   <Col span={6}>
                     <Select
                       placeholder="Поставщик"
-                      value={price.supplier_id}
-                      onChange={(value) => updateSupplierPrice(price.id, 'supplier_id', value)}
+                      value={price.main_supplier_id}
+                      onChange={(value) => updateSupplierPrice(price.id, 'main_supplier_id', value)}
                       style={{ width: '100%' }}
                     >
                       {suppliers.map(supplier => (

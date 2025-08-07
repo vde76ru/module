@@ -217,9 +217,10 @@ const CategoryMapping = () => {
 
         try {
             await api.post('/mapping/categories', {
+                company_id: localStorage.getItem('companyId'),
                 supplier_id: selectedSupplier,
-                supplier_category_id: supplierCategoryId,
-                system_category_id: systemCategoryId
+                external_category_id: supplierCategoryId,
+                internal_category_id: systemCategoryId
             });
 
             setMappings(prev => ({
@@ -297,9 +298,10 @@ const CategoryMapping = () => {
                     onSelect={async (value) => {
                         try {
                             await api.post('/mapping/categories', {
+                                company_id: localStorage.getItem('companyId'),
                                 supplier_id: selectedSupplier,
-                                supplier_category_id: value,
-                                system_category_id: systemCategory.key
+                                external_category_id: value,
+                                internal_category_id: systemCategory.key
                             });
 
                             setMappings(prev => ({

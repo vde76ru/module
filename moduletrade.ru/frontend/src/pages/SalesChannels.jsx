@@ -56,14 +56,20 @@ const SalesChannels = () => {
   const [formData, setFormData] = useState({
     name: '',
     type: 'marketplace',
-    source_id: '',
+    marketplace_id: '',
     default_warehouse_id: '',
     is_active: true,
-    auto_confirm_orders: false,
-    procurement_schedule: {
-      enabled: false,
-      days: [],
-      time: '09:00'
+    settings: {
+      auto_confirm_orders: false,
+      procurement_schedule: {
+        enabled: false,
+        days: [],
+        time: '09:00'
+      },
+      notification_settings: {
+        email_on_new_order: true,
+        sms_on_urgent_order: false
+      }
     }
   });
   const { enqueueSnackbar } = useSnackbar();

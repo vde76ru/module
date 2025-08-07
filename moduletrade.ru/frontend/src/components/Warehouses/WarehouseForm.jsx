@@ -140,9 +140,21 @@ const WarehouseForm = ({ warehouse, visible, onClose, onSuccess }) => {
 
   const warehouseTypes = [
     {
-      value: 'physical',
-      label: 'Физический склад',
-      description: 'Реальный склад с физическим адресом',
+      value: 'main',
+      label: 'Основной склад',
+      description: 'Основной склад компании',
+      icon: <ShopOutlined />
+    },
+    {
+      value: 'regional',
+      label: 'Региональный склад',
+      description: 'Склад в определенном регионе',
+      icon: <ShopOutlined />
+    },
+    {
+      value: 'pickup',
+      label: 'Пункт выдачи',
+      description: 'Пункт выдачи заказов',
       icon: <ShopOutlined />
     },
     {
@@ -150,12 +162,6 @@ const WarehouseForm = ({ warehouse, visible, onClose, onSuccess }) => {
       label: 'Виртуальный склад',
       description: 'Склад для учета товаров без физического местоположения',
       icon: <CloudOutlined />
-    },
-    {
-      value: 'multi',
-      label: 'Мульти-склад',
-      description: 'Объединение нескольких складов в один логический',
-      icon: <ApartmentOutlined />
     }
   ];
 
@@ -191,11 +197,10 @@ const WarehouseForm = ({ warehouse, visible, onClose, onSuccess }) => {
           </Col>
           <Col span={8}>
             <Form.Item
-              name="code"
-              label="Код склада"
-              rules={[{ required: true, message: 'Введите код склада' }]}
+              name="city"
+              label="Город"
             >
-              <Input placeholder="WH001" />
+              <Input placeholder="Москва" />
             </Form.Item>
           </Col>
         </Row>
@@ -253,10 +258,10 @@ const WarehouseForm = ({ warehouse, visible, onClose, onSuccess }) => {
             <Row gutter={24}>
               <Col span={8}>
                 <Form.Item
-                  name="working_hours"
-                  label="Часы работы"
+                  name="email"
+                  label="Email"
                 >
-                  <Input placeholder="9:00 - 18:00" />
+                  <Input placeholder="warehouse@company.com" />
                 </Form.Item>
               </Col>
               <Col span={8}>
@@ -346,7 +351,7 @@ const WarehouseForm = ({ warehouse, visible, onClose, onSuccess }) => {
             </Col>
             <Col span={8}>
               <Form.Item
-                name="auto_reserve"
+                name={['settings', 'auto_reserve']}
                 label={
                   <Space>
                     Автобронирование
@@ -362,7 +367,7 @@ const WarehouseForm = ({ warehouse, visible, onClose, onSuccess }) => {
             </Col>
             <Col span={8}>
               <Form.Item
-                name="allow_negative"
+                name={['settings', 'allow_negative']}
                 label={
                   <Space>
                     Отрицательные остатки

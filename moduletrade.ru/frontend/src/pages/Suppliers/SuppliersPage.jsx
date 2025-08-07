@@ -189,7 +189,7 @@ const SuppliersPage = () => {
           {record.sync_status === 'warning' && <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />}
           {record.sync_status === 'error' && <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />}
           <span>
-            {lastSync 
+            {lastSync
               ? new Date(lastSync).toLocaleDateString('ru-RU')
               : 'Никогда'
             }
@@ -268,18 +268,18 @@ const SuppliersPage = () => {
         </Col>
         <Col span={8}>
           <Card>
-            <Statistic 
-              title="Активных" 
-              value={suppliers.filter(s => s.is_active).length} 
-              valueStyle={{ color: '#52c41a' }} 
+            <Statistic
+              title="Активных"
+              value={suppliers.filter(s => s.is_active).length}
+              valueStyle={{ color: '#52c41a' }}
             />
           </Card>
         </Col>
         <Col span={8}>
           <Card>
-            <Statistic 
-              title="Общее количество товаров" 
-              value={suppliers.reduce((sum, s) => sum + (s.total_products || 0), 0)} 
+            <Statistic
+              title="Общее количество товаров"
+              value={suppliers.reduce((sum, s) => sum + (s.total_products || 0), 0)}
             />
           </Card>
         </Col>
@@ -356,32 +356,44 @@ const SuppliersPage = () => {
             </Select>
           </Form.Item>
 
-          <Form.Item
-            name="api_url"
-            label="URL API"
-            dependencies={['type']}
-            rules={[
-              ({ getFieldValue }) => ({
-                required: getFieldValue('type') === 'api',
-                message: 'Введите URL API',
-              }),
-            ]}
-          >
-            <Input placeholder="https://api.supplier.com/v1" />
-          </Form.Item>
+          <Form.Item label="API Конфигурация" dependencies={['type']}>
+            {({ getFieldValue }) => getFieldValue('type') === 'api' && (
+              <Card size="small" style={{ marginBottom: 16 }}>
+                <Form.Item
+                  name={['api_config', 'url']}
+                  label="API URL"
+                  rules={[{ required: true, message: 'Введите URL API' }]}
+                >
+                  <Input placeholder="https://api.supplier.com/v1" />
+                </Form.Item>
 
-          <Form.Item
-            name="api_key"
-            label="API ключ"
-            dependencies={['type']}
-            rules={[
-              ({ getFieldValue }) => ({
-                required: getFieldValue('type') === 'api',
-                message: 'Введите API ключ',
-              }),
-            ]}
-          >
-            <Input.Password placeholder="Введите API ключ" />
+                <Form.Item
+                  name={['api_config', 'key']}
+                  label="API Key"
+                  rules={[{ required: true, message: 'Введите API ключ' }]}
+                >
+                  <Input.Password placeholder="API ключ" />
+                </Form.Item>
+
+                <Form.Item
+                  name={['api_config', 'secret']}
+                  label="API Secret"
+                >
+                  <Input.Password placeholder="API секрет" />
+                </Form.Item>
+
+                <Form.Item
+                  name={['api_config', 'type']}
+                  label="Тип API"
+                >
+                  <Select placeholder="Выберите тип">
+                    <Option value="rest">REST</Option>
+                    <Option value="graphql">GraphQL</Option>
+                    <Option value="soap">SOAP</Option>
+                  </Select>
+                </Form.Item>
+              </Card>
+            )}
           </Form.Item>
 
           <Form.Item
@@ -389,6 +401,13 @@ const SuppliersPage = () => {
             label="Описание"
           >
             <Input.TextArea rows={3} placeholder="Описание поставщика" />
+          </Form.Item>
+
+          <Form.Item
+            name="contact_info"
+            label="Контактная информация"
+          >
+            <Input.TextArea rows={3} placeholder="Контактная информация" />
           </Form.Item>
 
           <Form.Item

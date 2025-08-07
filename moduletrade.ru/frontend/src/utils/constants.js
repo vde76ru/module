@@ -99,6 +99,141 @@ export const STORAGE_KEYS = {
 };
 
 // =====================================
+// Product Statuses (из БД)
+// =====================================
+export const PRODUCT_STATUSES = {
+  DRAFT: 'draft',
+  ACTIVE: 'active',
+  DISCONTINUED: 'discontinued'
+};
+
+export const PRODUCT_STATUS_LABELS = {
+  [PRODUCT_STATUSES.DRAFT]: 'Черновик',
+  [PRODUCT_STATUSES.ACTIVE]: 'Активный',
+  [PRODUCT_STATUSES.DISCONTINUED]: 'Снят с производства'
+};
+
+export const PRODUCT_STATUS_COLORS = {
+  [PRODUCT_STATUSES.DRAFT]: 'default',
+  [PRODUCT_STATUSES.ACTIVE]: 'green',
+  [PRODUCT_STATUSES.DISCONTINUED]: 'red'
+};
+
+// =====================================
+// Source Types (из БД)
+// =====================================
+export const SOURCE_TYPES = {
+  MANUAL: 'manual',
+  IMPORT: 'import',
+  API: 'api'
+};
+
+export const SOURCE_TYPE_LABELS = {
+  [SOURCE_TYPES.MANUAL]: 'Ручной ввод',
+  [SOURCE_TYPES.IMPORT]: 'Импорт',
+  [SOURCE_TYPES.API]: 'API'
+};
+
+export const SOURCE_TYPE_COLORS = {
+  [SOURCE_TYPES.MANUAL]: 'blue',
+  [SOURCE_TYPES.IMPORT]: 'green',
+  [SOURCE_TYPES.API]: 'purple'
+};
+
+// =====================================
+// Base Units (из БД)
+// =====================================
+export const BASE_UNITS = {
+  PIECE: 'шт',
+  KG: 'кг',
+  LITER: 'л',
+  METER: 'м',
+  SQUARE_METER: 'м²',
+  CUBIC_METER: 'м³'
+};
+
+export const BASE_UNIT_LABELS = {
+  [BASE_UNITS.PIECE]: 'Штуки',
+  [BASE_UNITS.KG]: 'Килограммы',
+  [BASE_UNITS.LITER]: 'Литры',
+  [BASE_UNITS.METER]: 'Метры',
+  [BASE_UNITS.SQUARE_METER]: 'Квадратные метры',
+  [BASE_UNITS.CUBIC_METER]: 'Кубические метры'
+};
+
+// =====================================
+// Subscription Statuses (из БД)
+// =====================================
+export const SUBSCRIPTION_STATUSES = {
+  TRIAL: 'trial',
+  ACTIVE: 'active',
+  EXPIRED: 'expired',
+  CANCELLED: 'cancelled'
+};
+
+export const SUBSCRIPTION_STATUS_LABELS = {
+  [SUBSCRIPTION_STATUSES.TRIAL]: 'Пробный период',
+  [SUBSCRIPTION_STATUSES.ACTIVE]: 'Активна',
+  [SUBSCRIPTION_STATUSES.EXPIRED]: 'Истекла',
+  [SUBSCRIPTION_STATUSES.CANCELLED]: 'Отменена'
+};
+
+// =====================================
+// Warehouse Types (из БД)
+// =====================================
+export const WAREHOUSE_TYPES = {
+  MAIN: 'main',
+  REGIONAL: 'regional',
+  PICKUP: 'pickup',
+  VIRTUAL: 'virtual'
+};
+
+export const WAREHOUSE_TYPE_LABELS = {
+  [WAREHOUSE_TYPES.MAIN]: 'Основной',
+  [WAREHOUSE_TYPES.REGIONAL]: 'Региональный',
+  [WAREHOUSE_TYPES.PICKUP]: 'Пункт выдачи',
+  [WAREHOUSE_TYPES.VIRTUAL]: 'Виртуальный'
+};
+
+// =====================================
+// Supplier Types (из БД)
+// =====================================
+export const SUPPLIER_TYPES = {
+  API: 'api',
+  MANUAL: 'manual',
+  FILE: 'file'
+};
+
+export const SUPPLIER_TYPE_LABELS = {
+  [SUPPLIER_TYPES.API]: 'API',
+  [SUPPLIER_TYPES.MANUAL]: 'Ручной ввод',
+  [SUPPLIER_TYPES.FILE]: 'Файл'
+};
+
+// =====================================
+// Order Statuses (из БД)
+// =====================================
+export const ORDER_STATUSES = {
+  NEW: 'new',
+  CONFIRMED: 'confirmed',
+  PROCESSING: 'processing',
+  SHIPPED: 'shipped',
+  DELIVERED: 'delivered',
+  CANCELLED: 'cancelled',
+  RETURNED: 'returned'
+};
+
+export const ORDER_STATUS_LABELS = {
+  [ORDER_STATUSES.NEW]: 'Новый',
+  [ORDER_STATUSES.CONFIRMED]: 'Подтвержден',
+  [ORDER_STATUSES.PROCESSING]: 'В обработке',
+  [ORDER_STATUSES.SHIPPED]: 'Отправлен',
+  [ORDER_STATUSES.DELIVERED]: 'Доставлен',
+  [ORDER_STATUSES.CANCELLED]: 'Отменен',
+  [ORDER_STATUSES.RETURNED]: 'Возвращен'
+};
+
+// =====================================
 // Маршруты
 // =====================================
 export const ROUTES = {
@@ -106,25 +241,25 @@ export const ROUTES = {
   LOGIN: '/login',
   REGISTER: '/register',
   DASHBOARD: '/dashboard',
-  
+
   // Основные страницы
   PRODUCTS: '/products',
   PRODUCTS_CREATE: '/products/new',
   PRODUCTS_EDIT: '/products/:id/edit',
-  
+
   ORDERS: '/orders',
   ORDERS_DETAILS: '/orders/:id',
-  
+
   WAREHOUSES: '/warehouses',
   WAREHOUSES_CREATE: '/warehouses/new',
   WAREHOUSES_EDIT: '/warehouses/:id/edit',
-  
+
   MARKETPLACES: '/marketplaces',
   SUPPLIERS: '/suppliers',
   USERS: '/users',
   ANALYTICS: '/analytics',
   SYNC: '/sync',
-  
+
   // Настройки
   SETTINGS: '/settings',
   SETTINGS_PROFILE: '/settings/profile',
@@ -377,10 +512,10 @@ export const PRODUCT_STATUS_COLORS = {
  */
 export const hasPermission = (userRole, permission) => {
   if (!userRole || !permission) return false;
-  
+
   // Администраторы имеют все права
   if (userRole === USER_ROLES.ADMIN) return true;
-  
+
   const rolePermissions = ROLE_PERMISSIONS[userRole] || [];
   return rolePermissions.includes(permission);
 };
@@ -394,7 +529,7 @@ export const hasPermission = (userRole, permission) => {
  */
 export const hasPermissions = (userRole, permissions, requireAll = true) => {
   if (!userRole || !permissions || !Array.isArray(permissions)) return false;
-  
+
   if (requireAll) {
     return permissions.every(permission => hasPermission(userRole, permission));
   } else {
@@ -428,11 +563,11 @@ export const isSuperAdmin = (userRole) => {
  */
 export const getRolePermissions = (userRole) => {
   if (!userRole) return [];
-  
+
   // Администраторы имеют все права
   if (userRole === USER_ROLES.ADMIN) {
     return Object.values(PERMISSIONS);
   }
-  
+
   return ROLE_PERMISSIONS[userRole] || [];
 };

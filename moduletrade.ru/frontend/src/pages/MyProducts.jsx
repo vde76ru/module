@@ -54,11 +54,11 @@ const MyProducts = () => {
   const fetchDictionaries = async () => {
     try {
       const [brandsRes, categoriesRes] = await Promise.all([
-        axios.get('/dictionaries/brands'),
-        axios.get('/dictionaries/categories')
+        axios.get('/api/brands'),
+        axios.get('/api/categories')
       ]);
-      setBrands(brandsRes.data.data);
-      setCategories(categoriesRes.data.data);
+      setBrands(brandsRes.data);
+      setCategories(categoriesRes.data);
     } catch (error) {
       console.error('Error loading dictionaries:', error);
     }
@@ -143,7 +143,7 @@ const MyProducts = () => {
 
   const columns = [
     {
-      title: 'Артикул',
+      title: 'Внутренний код',
       dataIndex: 'internal_code',
       key: 'internal_code',
       width: 120,
@@ -191,18 +191,35 @@ const MyProducts = () => {
       render: (price) => `${price.toLocaleString()} ₽`
     },
     {
-      title: 'Источник',
+      title: 'Тип источника',
       dataIndex: 'source_type',
       key: 'source_type',
       width: 100,
-      render: (type) => (
-        <Tag color={type === 'internal' ? 'green' : 'orange'}>
-          {type === 'internal' ? 'Внутренний' : 'Поставщик'}
-        </Tag>
-      )
+      render: (type) => {
+        const labels = {
+          manual: 'Ручной',
+          import: 'Импорт',
+          api: 'API'
+        };
+        return <Tag color="blue">{labels[type] || type}</Tag>;
+      }
     },
     {
-      title: 'Статус',
+      title: 'Статус товара',
+      dataIndex: 'status',
+      key: 'status',
+      width: 100,
+      render: (status) => {
+        const colors = {
+          draft: 'default',
+          active: 'green',
+          discontinued: 'red'
+        };
+        return <Tag color={colors[status]}>{status}</Tag>;
+      }
+    },
+    {
+      title: 'Активен',
       dataIndex: 'is_active',
       key: 'is_active',
       width: 100,

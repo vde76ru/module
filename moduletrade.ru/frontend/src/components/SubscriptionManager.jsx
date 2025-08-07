@@ -31,14 +31,20 @@ const SubscriptionManager = () => {
 
   const fetchUserData = async () => {
     try {
-      const response = await axios.get('/auth/me');
+      const response = await axios.get('/billing/subscription-info');
       setCurrentTariff({
-        name: response.data.data.tariff_name,
-        limits: response.data.data.tariff_limits,
-        features: response.data.data.tariff_features
+        id: response.data.tariff_id,
+        name: response.data.tariff_name,
+        limits: response.data.tariff_limits,
+        features: response.data.tariff_features,
+        price: response.data.tariff_price,
+        description: response.data.tariff_description,
+        trial_days: response.data.trial_days,
+        days_left_in_trial: response.data.days_left_in_trial,
+        days_left_in_subscription: response.data.days_left_in_subscription
       });
     } catch (error) {
-      message.error('Ошибка загрузки данных пользователя');
+      message.error('Ошибка загрузки данных подписки');
     }
   };
 
