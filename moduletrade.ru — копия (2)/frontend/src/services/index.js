@@ -528,6 +528,41 @@ class OrdersAPI extends BaseAPIService {
       throw this.handleError(error);
     }
   }
+
+  async createOrder(orderData) {
+    try {
+      const response = await axios.post(API_ENDPOINTS.ORDERS, orderData);
+      const result = this.handleResponse(response);
+      if (result.success) return result.data;
+      throw new Error(result.error || 'Failed to create order');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async updateOrder(id, orderData) {
+    try {
+      const url = this.replaceUrlParams(API_ENDPOINTS.ORDER_DETAILS, { id });
+      const response = await axios.put(url, orderData);
+      const result = this.handleResponse(response);
+      if (result.success) return result.data;
+      throw new Error(result.error || 'Failed to update order');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async deleteOrder(id) {
+    try {
+      const url = this.replaceUrlParams(API_ENDPOINTS.ORDER_DETAILS, { id });
+      const response = await axios.delete(url);
+      const result = this.handleResponse(response);
+      if (result.success) return result;
+      throw new Error(result.error || 'Failed to delete order');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
 }
 
 // =====================================
@@ -540,10 +575,62 @@ class WarehousesAPI extends BaseAPIService {
       const result = this.handleResponse(response);
 
       if (result.success) {
-        return result.data;
+        return {
+          warehouses: Array.isArray(result.data) ? result.data : [],
+          pagination: result.pagination || {},
+          total: result.pagination?.total || (Array.isArray(result.data) ? result.data.length : 0),
+          stats: result.stats || undefined,
+        };
       }
 
       throw new Error(result.error || 'Failed to fetch warehouses');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async getWarehouse(id) {
+    try {
+      const url = this.replaceUrlParams(API_ENDPOINTS.WAREHOUSE_DETAILS, { id });
+      const response = await axios.get(url);
+      const result = this.handleResponse(response);
+      if (result.success) return result.data;
+      throw new Error(result.error || 'Failed to fetch warehouse');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async createWarehouse(data) {
+    try {
+      const response = await axios.post(API_ENDPOINTS.WAREHOUSES, data);
+      const result = this.handleResponse(response);
+      if (result.success) return result.data;
+      throw new Error(result.error || 'Failed to create warehouse');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async updateWarehouse(id, data) {
+    try {
+      const url = this.replaceUrlParams(API_ENDPOINTS.WAREHOUSE_DETAILS, { id });
+      const response = await axios.put(url, data);
+      const result = this.handleResponse(response);
+      if (result.success) return result.data;
+      throw new Error(result.error || 'Failed to update warehouse');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async deleteWarehouse(id) {
+    try {
+      const url = this.replaceUrlParams(API_ENDPOINTS.WAREHOUSE_DETAILS, { id });
+      const response = await axios.delete(url);
+      const result = this.handleResponse(response);
+      if (result.success) return result;
+      throw new Error(result.error || 'Failed to delete warehouse');
     } catch (error) {
       throw this.handleError(error);
     }
@@ -666,6 +753,41 @@ class SuppliersAPI extends BaseAPIService {
       throw this.handleError(error);
     }
   }
+
+  async createSupplier(data) {
+    try {
+      const response = await axios.post(API_ENDPOINTS.SUPPLIERS, data);
+      const result = this.handleResponse(response);
+      if (result.success) return result.data;
+      throw new Error(result.error || 'Failed to create supplier');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async updateSupplier(id, data) {
+    try {
+      const url = this.replaceUrlParams(API_ENDPOINTS.SUPPLIER_DETAILS, { id });
+      const response = await axios.put(url, data);
+      const result = this.handleResponse(response);
+      if (result.success) return result.data;
+      throw new Error(result.error || 'Failed to update supplier');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async deleteSupplier(id) {
+    try {
+      const url = this.replaceUrlParams(API_ENDPOINTS.SUPPLIER_DETAILS, { id });
+      const response = await axios.delete(url);
+      const result = this.handleResponse(response);
+      if (result.success) return result;
+      throw new Error(result.error || 'Failed to delete supplier');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
 }
 
 // =====================================
@@ -729,6 +851,49 @@ class MarketplacesAPI extends BaseAPIService {
       }
 
       throw new Error(result.error || 'Failed to test marketplace');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async createMarketplace(data) {
+    // Alias для connectMarketplace, для единообразия
+    return this.connectMarketplace(data);
+  }
+
+  async updateMarketplace(id, data) {
+    try {
+      const url = this.replaceUrlParams(API_ENDPOINTS.MARKETPLACE_DETAILS, { id });
+      const response = await axios.put(url, data);
+      const result = this.handleResponse(response);
+      if (result.success) return result.data;
+      throw new Error(result.error || 'Failed to update marketplace');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async deleteMarketplace(id) {
+    try {
+      const url = this.replaceUrlParams(API_ENDPOINTS.MARKETPLACE_DETAILS, { id });
+      const response = await axios.delete(url);
+      const result = this.handleResponse(response);
+      if (result.success) return result;
+      throw new Error(result.error || 'Failed to delete marketplace');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async syncMarketplace(id, payload = { sync_type: 'full' }) {
+    try {
+      // Конструируем URL на основе DETAILS
+      const base = this.replaceUrlParams(API_ENDPOINTS.MARKETPLACE_DETAILS, { id });
+      const url = `${base}/sync`;
+      const response = await axios.post(url, payload);
+      const result = this.handleResponse(response);
+      if (result.success) return result.data || result;
+      throw new Error(result.error || 'Failed to sync marketplace');
     } catch (error) {
       throw this.handleError(error);
     }

@@ -44,6 +44,9 @@ const { Title } = Typography;
 const MarketplacesPage = () => {
   const [marketplaces, setMarketplaces] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [syncingId, setSyncingId] = useState(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingMarketplace, setEditingMarketplace] = useState(null);
   const [form] = Form.useForm();
@@ -95,35 +98,61 @@ const MarketplacesPage = () => {
   };
 
   const handleSubmit = async (values) => {
+    setSubmitting(true);
     try {
-      message.success(editingMarketplace ? 'Маркетплейс обновлен' : 'Маркетплейс подключен');
+      const payload = {
+        name: values.name,
+        type: values.name, // для простоты соответствуем выбранному пункту
+        credentials: {
+          api_key: values.api_key,
+          client_id: values.client_id,
+          warehouse_id: values.warehouse_id,
+        },
+        commission_info: {},
+      };
+
+      if (editingMarketplace) {
+        await api.marketplaces.updateMarketplace(editingMarketplace.id, payload);
+        message.success('Маркетплейс обновлен');
+      } else {
+        await api.marketplaces.createMarketplace(payload);
+        message.success('Маркетплейс подключен');
+      }
+
       setIsModalVisible(false);
-      fetchMarketplaces();
+      await fetchMarketplaces();
     } catch (error) {
-      message.error('Ошибка сохранения маркетплейса');
+      message.error(error?.message || 'Ошибка сохранения маркетплейса');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleDelete = async (marketplaceId) => {
+    setDeletingId(marketplaceId);
     try {
+      await api.marketplaces.deleteMarketplace(marketplaceId);
       message.success('Маркетплейс удален');
-      fetchMarketplaces();
+      await fetchMarketplaces();
     } catch (error) {
-      message.error('Ошибка удаления маркетплейса');
+      message.error(error?.message || 'Ошибка удаления маркетплейса');
+    } finally {
+      setDeletingId(null);
     }
   };
 
   const handleSync = async (marketplaceId) => {
+    setSyncingId(marketplaceId);
     try {
+      await api.marketplaces.syncMarketplace(marketplaceId, { sync_type: 'full' });
       message.success('Синхронизация запущена');
-      // Обновляем статус синхронизации
       setMarketplaces(prev => prev.map(mp =>
-        mp.id === marketplaceId
-          ? { ...mp, sync_status: 'syncing' }
-          : mp
+        mp.id === marketplaceId ? { ...mp, sync_status: 'syncing' } : mp
       ));
     } catch (error) {
-      message.error('Ошибка синхронизации');
+      message.error(error?.message || 'Ошибка синхронизации');
+    } finally {
+      setSyncingId(null);
     }
   };
 
@@ -225,6 +254,7 @@ const MarketplacesPage = () => {
                 icon={<SyncOutlined />}
                 onClick={() => handleSync(record.id)}
                 disabled={record.sync_status === 'syncing'}
+                loading={syncingId === record.id}
               />
             </Tooltip>
           );

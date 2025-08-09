@@ -41,6 +41,9 @@ const { Title } = Typography;
 const SuppliersPage = () => {
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
+  const [syncingId, setSyncingId] = useState(null);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState(null);
   const [form] = Form.useForm();
@@ -82,29 +85,56 @@ const SuppliersPage = () => {
   };
 
   const handleSubmit = async (values) => {
+    setSubmitting(true);
     try {
-      message.success(editingSupplier ? 'Поставщик обновлен' : 'Поставщик создан');
+      const payload = {
+        code: values.code,
+        name: values.name,
+        api_type: values.type,
+        api_config: values.api_config,
+        is_main: values.is_main || false,
+        priority: values.priority || 0,
+      };
+
+      if (editingSupplier) {
+        await api.suppliers.updateSupplier(editingSupplier.id, payload);
+        message.success('Поставщик обновлен');
+      } else {
+        await api.suppliers.createSupplier(payload);
+        message.success('Поставщик создан');
+      }
+
       setIsModalVisible(false);
-      fetchSuppliers();
+      await fetchSuppliers();
     } catch (error) {
-      message.error('Ошибка сохранения поставщика');
+      message.error(error?.message || 'Ошибка сохранения поставщика');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const handleDelete = async (supplierId) => {
+    setDeletingId(supplierId);
     try {
+      await api.suppliers.deleteSupplier(supplierId);
       message.success('Поставщик удален');
-      fetchSuppliers();
+      await fetchSuppliers();
     } catch (error) {
-      message.error('Ошибка удаления поставщика');
+      message.error(error?.message || 'Ошибка удаления поставщика');
+    } finally {
+      setDeletingId(null);
     }
   };
 
   const handleSync = async (supplierId) => {
+    setSyncingId(supplierId);
     try {
+      await api.suppliers.syncSupplier(supplierId);
       message.success('Синхронизация запущена');
     } catch (error) {
-      message.error('Ошибка синхронизации');
+      message.error(error?.message || 'Ошибка синхронизации');
+    } finally {
+      setSyncingId(null);
     }
   };
 
@@ -121,15 +151,12 @@ const SuppliersPage = () => {
     },
     {
       title: 'Тип',
-      dataIndex: 'type',
-      key: 'type',
-      render: (type) => {
-        const typeLabels = {
-          api: 'API',
-          manual: 'Ручной',
-          file: 'Файл',
-        };
-        return <Tag>{typeLabels[type] || type}</Tag>;
+      dataIndex: 'api_type',
+      key: 'api_type',
+      render: (_val, record) => {
+        const type = record.type || record.api_type;
+        const typeLabels = { api: 'API', manual: 'Ручной', file: 'Файл' };
+        return <Tag>{typeLabels[type] || type || '-'}</Tag>;
       },
     },
     {
@@ -146,7 +173,10 @@ const SuppliersPage = () => {
       title: 'Товары',
       dataIndex: 'total_products',
       key: 'total_products',
-      render: (count) => count ? count.toLocaleString('ru-RU') : '0',
+      render: (_count, record) => {
+        const count = record.total_products ?? record.connected_products ?? 0;
+        return count ? count.toLocaleString('ru-RU') : '0';
+      },
     },
     {
       title: 'Последняя синхронизация',
@@ -179,6 +209,7 @@ const SuppliersPage = () => {
               key="sync"
               type="link"
               icon={<SyncOutlined />}
+              loading={syncingId === record.id}
               onClick={() => handleSync(record.id)}
             >
               Синхронизировать
@@ -216,7 +247,7 @@ const SuppliersPage = () => {
                 });
               }}
             >
-              Удалить
+              {deletingId === record.id ? 'Удаление...' : 'Удалить'}
             </Button>
           );
         }
@@ -393,7 +424,7 @@ const SuppliersPage = () => {
               <Button onClick={() => setIsModalVisible(false)}>
                 Отмена
               </Button>
-              <Button type="primary" htmlType="submit">
+              <Button type="primary" htmlType="submit" loading={submitting}>
                 {editingSupplier ? 'Сохранить' : 'Создать'}
               </Button>
             </Space>
