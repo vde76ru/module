@@ -1,0 +1,372 @@
+/* ===================================================
+ * ФАЙЛ: frontend/src/styles/register.css
+ * Стили для страницы регистрации
+ * =================================================== */
+
+/* Контейнер страницы регистрации */
+.register-container {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Анимированные фоновые элементы */
+.register-container::before {
+  content: '';
+  position: absolute;
+  top: 10%;
+  left: 10%;
+  width: 100px;
+  height: 100px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  animation: float 6s ease-in-out infinite;
+}
+
+.register-container::after {
+  content: '';
+  position: absolute;
+  bottom: 15%;
+  right: 15%;
+  width: 150px;
+  height: 150px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 50%;
+  animation: float 8s ease-in-out infinite reverse;
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+}
+
+/* Карточка регистрации */
+.register-card {
+  width: 100%;
+  max-width: 600px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+  border: none;
+  backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.95);
+  z-index: 10;
+  position: relative;
+}
+
+/* Заголовок */
+.register-header {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.register-header .ant-typography {
+  margin-bottom: 8px;
+}
+
+/* Демо тариф баннер */
+.demo-tariff-banner {
+  background: linear-gradient(90deg, #52c41a, #389e0d);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 20px 0;
+  color: white;
+  text-align: center;
+  box-shadow: 0 2px 8px rgba(82, 196, 26, 0.3);
+}
+
+.demo-tariff-banner .anticon {
+  font-size: 18px;
+  margin-right: 8px;
+}
+
+.demo-tariff-title {
+  color: white !important;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.demo-tariff-description {
+  font-size: 12px;
+  margin-top: 4px;
+  opacity: 0.9;
+}
+
+/* Список преимуществ */
+.benefits-list {
+  background: #f6ffed;
+  border: 1px solid #b7eb8f;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.benefits-title {
+  color: #389e0d !important;
+  display: block;
+  margin-bottom: 8px;
+  font-weight: bold;
+}
+
+.benefits-list ul {
+  margin: 0;
+  padding-left: 20px;
+  color: #52c41a;
+}
+
+.benefits-list li {
+  margin-bottom: 4px;
+  font-size: 14px;
+}
+
+/* Форма */
+.register-form .ant-form-item {
+  margin-bottom: 20px;
+}
+
+.register-form .ant-input,
+.register-form .ant-input-password {
+  height: 40px;
+  border-radius: 6px;
+  border: 1px solid #d9d9d9;
+  transition: all 0.3s;
+}
+
+.register-form .ant-input:focus,
+.register-form .ant-input-password:focus {
+  border-color: #1890ff;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2);
+}
+
+.register-form .ant-form-item-label > label {
+  font-weight: 500;
+  color: #262626;
+}
+
+.register-form .ant-form-item-explain {
+  font-size: 12px;
+  color: #8c8c8c;
+}
+
+/* Кнопка регистрации */
+.register-button {
+  height: 50px !important;
+  font-size: 16px !important;
+  font-weight: bold !important;
+  border-radius: 8px !important;
+  background: linear-gradient(90deg, #1890ff, #096dd9) !important;
+  border: none !important;
+  box-shadow: 0 4px 12px rgba(24, 144, 255, 0.3) !important;
+  transition: all 0.3s !important;
+}
+
+.register-button:hover {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 6px 16px rgba(24, 144, 255, 0.4) !important;
+}
+
+.register-button:disabled {
+  background: #f5f5f5 !important;
+  color: #bfbfbf !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+/* Чекбокс соглашения */
+.agreement-checkbox {
+  margin-bottom: 24px;
+}
+
+.agreement-checkbox .ant-checkbox-wrapper {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.agreement-checkbox a {
+  color: #1890ff;
+  font-weight: 500;
+}
+
+.agreement-checkbox a:hover {
+  color: #096dd9;
+  text-decoration: underline;
+}
+
+/* Разделитель */
+.register-divider {
+  margin: 24px 0;
+  border-color: #f0f0f0;
+}
+
+/* Футер */
+.register-footer {
+  text-align: center;
+  margin-top: 20px;
+}
+
+.register-footer a {
+  color: #1890ff;
+  font-weight: bold;
+  text-decoration: none;
+}
+
+.register-footer a:hover {
+  color: #096dd9;
+  text-decoration: underline;
+}
+
+/* Дополнительная информация */
+.register-info {
+  text-align: center;
+  margin-top: 20px;
+  padding: 16px;
+  background: rgba(24, 144, 255, 0.05);
+  border-radius: 6px;
+  border: 1px solid rgba(24, 144, 255, 0.1);
+}
+
+.register-info .ant-typography {
+  font-size: 12px !important;
+  color: #595959 !important;
+  margin: 0 !important;
+  line-height: 1.6 !important;
+}
+
+/* Адаптивность */
+@media (max-width: 768px) {
+  .register-container {
+    padding: 10px;
+  }
+
+  .register-card {
+    max-width: 100%;
+    margin: 0 10px;
+  }
+
+  .register-card .ant-card-body {
+    padding: 24px 20px !important;
+  }
+
+  .demo-tariff-banner {
+    padding: 10px 12px;
+  }
+
+  .benefits-list {
+    padding: 12px;
+  }
+
+  .register-button {
+    height: 45px !important;
+    font-size: 15px !important;
+  }
+
+  .register-container::before,
+  .register-container::after {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .register-header h2 {
+    font-size: 24px !important;
+  }
+
+  .demo-tariff-title {
+    font-size: 13px;
+  }
+
+  .demo-tariff-description {
+    font-size: 11px;
+  }
+
+  .benefits-list li {
+    font-size: 13px;
+  }
+}
+
+/* Анимации появления */
+.register-card {
+  animation: slideUp 0.6s ease-out;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Состояния загрузки */
+.register-form .ant-spin-nested-loading > .ant-spin {
+  max-height: none;
+}
+
+.register-form .ant-spin-container {
+  transition: opacity 0.3s;
+}
+
+.register-form .ant-spin-blur {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* Дополнительные эффекты для input */
+.register-form .ant-input:hover,
+.register-form .ant-input-password:hover {
+  border-color: #40a9ff;
+}
+
+.register-form .ant-form-item-has-error .ant-input,
+.register-form .ant-form-item-has-error .ant-input-password {
+  border-color: #ff4d4f;
+}
+
+.register-form .ant-form-item-has-error .ant-input:focus,
+.register-form .ant-form-item-has-error .ant-input-password:focus {
+  box-shadow: 0 0 0 2px rgba(255, 77, 79, 0.2);
+}
+
+/* Стили для alert */
+.register-form .ant-alert {
+  margin-bottom: 24px;
+  border-radius: 6px;
+}
+
+.register-form .ant-alert-error {
+  background-color: #fff2f0;
+  border: 1px solid #ffccc7;
+}
+
+/* Успешная регистрация */
+.register-success {
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.register-success .anticon {
+  font-size: 64px;
+  color: #52c41a;
+  margin-bottom: 16px;
+}
+
+.register-success h3 {
+  color: #52c41a;
+  margin-bottom: 8px;
+}
+
+.register-success p {
+  color: #595959;
+  font-size: 14px;
+}
