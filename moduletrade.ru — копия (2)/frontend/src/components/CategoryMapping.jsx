@@ -9,6 +9,7 @@ import {
     PlusOutlined, SearchOutlined
 } from '@ant-design/icons';
 import axios from 'utils/axios';
+import { API_ENDPOINTS } from 'utils/constants';
 
 const { Search } = Input;
 
@@ -40,7 +41,7 @@ const CategoryMapping = () => {
 
     const loadSuppliers = async () => {
         try {
-            const response = await api.get('/suppliers');
+            const response = await api.get(API_ENDPOINTS.SUPPLIERS);
             setSuppliers(response.data.data);
         } catch (error) {
             message.error('Ошибка загрузки поставщиков');
@@ -49,7 +50,7 @@ const CategoryMapping = () => {
 
     const loadSystemCategories = async () => {
         try {
-            const response = await api.get('/categories/tree');
+            const response = await api.get(API_ENDPOINTS.DICTIONARIES_CATEGORIES);
             setSystemCategories(transformToTreeData(response.data.data));
         } catch (error) {
             message.error('Ошибка загрузки системных категорий');
@@ -59,7 +60,7 @@ const CategoryMapping = () => {
     const loadSupplierCategories = async (supplierId) => {
         setLoading(true);
         try {
-            const response = await api.get(`/product-import/supplier-categories/${supplierId}`);
+            const response = await api.get(`/api/product-import/supplier-categories/${supplierId}`);
             setSupplierCategories(response.data.data || response.data);
         } catch (error) {
             message.error('Ошибка загрузки категорий поставщика');
@@ -70,7 +71,7 @@ const CategoryMapping = () => {
 
     const loadMappings = async (supplierId) => {
         try {
-            const response = await api.get(`/product-import/mapping/categories?supplier_id=${supplierId}`);
+            const response = await api.get(`/api/product-import/mapping/categories?supplier_id=${supplierId}`);
             const mappingsObj = {};
             response.data.data.forEach(mapping => {
                 mappingsObj[mapping.supplier_category_id] = mapping.system_category_id;
@@ -210,8 +211,7 @@ const CategoryMapping = () => {
         const systemCategoryId = over.data.current.key;
 
         try {
-            await api.post('/product-import/mapping/categories', {
-                company_id: localStorage.getItem('companyId'),
+            await api.post('/api/product-import/mapping/categories', {
                 supplier_id: selectedSupplier,
                 external_category_id: supplierCategoryId,
                 internal_category_id: systemCategoryId
@@ -231,7 +231,7 @@ const CategoryMapping = () => {
     // Удаление маппинга
     const removeMapping = async (supplierCategoryId) => {
         try {
-            await api.delete(`/product-import/mapping/categories/${supplierCategoryId}`, {
+            await api.delete(`/api/product-import/mapping/categories/${supplierCategoryId}`, {
                 params: { supplier_id: selectedSupplier }
             });
 
@@ -255,12 +255,12 @@ const CategoryMapping = () => {
             onOk: async () => {
                 setLoading(true);
                 try {
-                    const response = await api.post('/mapping/categories/auto', {
-                        supplier_id: selectedSupplier
+                    const response = await api.get('/api/product-import/mapping/categories', {
+                        params: { supplier_id: selectedSupplier }
                     });
 
                     const newMappings = {};
-                    response.data.data.forEach(mapping => {
+                    (response.data.data || []).forEach(mapping => {
                         newMappings[mapping.supplier_category_id] = mapping.system_category_id;
                     });
 
@@ -293,8 +293,7 @@ const CategoryMapping = () => {
                     }))}
                     onSelect={async (value) => {
                         try {
-                            await api.post('/mapping/categories', {
-                                company_id: localStorage.getItem('companyId'),
+                            await api.post('/api/product-import/mapping/categories', {
                                 supplier_id: selectedSupplier,
                                 external_category_id: value,
                                 internal_category_id: systemCategory.key

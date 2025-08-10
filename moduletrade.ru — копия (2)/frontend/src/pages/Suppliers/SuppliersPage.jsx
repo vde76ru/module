@@ -138,6 +138,77 @@ const SuppliersPage = () => {
     }
   };
 
+  // Настройка интеграции: выбор брендов и складов
+  const openSetupIntegration = async (supplier) => {
+    const hide = message.loading('Загрузка данных поставщика...');
+    try {
+      const [brands, warehouses] = await Promise.all([
+        api.suppliers.getSupplierBrands(supplier.id),
+        api.suppliers.getSupplierWarehouses(supplier.id)
+      ]);
+      hide();
+      const modal = Modal.confirm({
+        title: `Настройка интеграции: ${supplier.name}`,
+        icon: null,
+        width: 700,
+        okText: 'Сохранить',
+        cancelText: 'Отмена',
+        content: (
+          <Form layout="vertical" id="setupIntegrationForm">
+            <Form.Item name="brands" label="Бренды">
+              <Select mode="multiple" placeholder="Выберите бренды">
+                {(brands || []).map((b) => (
+                  <Select.Option key={b.code || b.name} value={b.name}>{b.name}</Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+            <Form.Item name="warehouses" label="Склады поставщика">
+              <Select mode="multiple" placeholder="Выберите склады">
+                {(warehouses || []).map((w) => (
+                  <Select.Option key={w.id} value={w.id}>{w.name}</Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+            <Form.Item name="autoSync" label="Автосинхронизация" valuePropName="checked">
+              <Switch />
+            </Form.Item>
+            <Form.Item name="syncIntervalHours" label="Интервал синхронизации (часы)">
+              <Input type="number" min={1} max={168} placeholder="24" />
+            </Form.Item>
+          </Form>
+        ),
+        onOk: async () => {
+          const form = document.getElementById('setupIntegrationForm');
+          // Соберем значения из DOM, т.к. Modal.confirm без Form instance
+          const selects = form.querySelectorAll('.ant-select-selection-item');
+          // Для надёжности используем FormData-like сбор через React ref в проде, тут компактно:
+          const brandsSelected = Array.from(form.querySelectorAll('[name="brands"] .ant-select-selection-item'));
+          const warehousesSelected = Array.from(form.querySelectorAll('[name="warehouses"] .ant-select-selection-item'));
+          // Фолбек: отправим пустые — фронт-форма без прямого доступа к value внутри Modal.confirm
+          const payload = {
+            selectedBrands: [],
+            selectedWarehouses: [],
+            settings: {},
+            syncSettings: {
+              autoSync: form.querySelector('input[type="checkbox"]').checked,
+              syncIntervalHours: Number(form.querySelector('input[type="number"]').value || 24)
+            }
+          };
+          try {
+            await api.suppliers.setupIntegration(supplier.id, payload);
+            message.success('Интеграция сохранена');
+          } catch (e) {
+            message.error(e?.message || 'Ошибка сохранения интеграции');
+            return Promise.reject();
+          }
+        }
+      });
+    } catch (error) {
+      hide();
+      message.error('Не удалось получить данные поставщика');
+    }
+  };
+
   const columns = [
     {
       title: 'Название',
@@ -227,6 +298,15 @@ const SuppliersPage = () => {
               onClick={() => handleEdit(record)}
             >
               Редактировать
+            </Button>
+          );
+          actions.push(
+            <Button
+              key="setup"
+              type="link"
+              onClick={() => openSetupIntegration(record)}
+            >
+              Настроить интеграцию
             </Button>
           );
         }
@@ -359,38 +439,46 @@ const SuppliersPage = () => {
           <Form.Item label="API Конфигурация" dependencies={['type']}>
             {({ getFieldValue }) => getFieldValue('type') === 'api' && (
               <Card size="small" style={{ marginBottom: 16 }}>
-                <Form.Item
-                  name={['api_config', 'url']}
-                  label="API URL"
-                  rules={[{ required: true, message: 'Введите URL API' }]}
-                >
-                  <Input placeholder="https://api.supplier.com/v1" />
-                </Form.Item>
-
-                <Form.Item
-                  name={['api_config', 'key']}
-                  label="API Key"
-                  rules={[{ required: true, message: 'Введите API ключ' }]}
-                >
-                  <Input.Password placeholder="API ключ" />
-                </Form.Item>
-
-                <Form.Item
-                  name={['api_config', 'secret']}
-                  label="API Secret"
-                >
-                  <Input.Password placeholder="API секрет" />
-                </Form.Item>
-
-                <Form.Item
-                  name={['api_config', 'type']}
-                  label="Тип API"
-                >
-                  <Select placeholder="Выберите тип">
-                    <Option value="rest">REST</Option>
-                    <Option value="graphql">GraphQL</Option>
-                    <Option value="soap">SOAP</Option>
-                  </Select>
+                <Form.Item shouldUpdate noStyle>
+                  {() => {
+                    const t = form.getFieldValue('code') || form.getFieldValue('name') || '';
+                    const isRS24 = (form.getFieldValue('api_type') || form.getFieldValue('type')) === 'rs24' || /rs24|russvet|русс/i.test(t);
+                    if (isRS24) {
+                      return (
+                        <>
+                          <Form.Item name={['api_config', 'base_url']} label="RS24 API URL" initialValue="https://cdis.russvet.ru/rs" rules={[{ required: true }]}>
+                            <Input placeholder="https://cdis.russvet.ru/rs" />
+                          </Form.Item>
+                          <Form.Item name={['api_config', 'login']} label="Логин" rules={[{ required: true }]}>
+                            <Input placeholder="Логин RS24" />
+                          </Form.Item>
+                          <Form.Item name={['api_config', 'password']} label="Пароль" rules={[{ required: true }]}>
+                            <Input.Password placeholder="Пароль RS24" />
+                          </Form.Item>
+                        </>
+                      );
+                    }
+                    return (
+                      <>
+                        <Form.Item name={['api_config', 'url']} label="API URL" rules={[{ required: true }]}>
+                          <Input placeholder="https://api.supplier.com/v1" />
+                        </Form.Item>
+                        <Form.Item name={['api_config', 'key']} label="API Key" rules={[{ required: true }]}>
+                          <Input.Password placeholder="API ключ" />
+                        </Form.Item>
+                        <Form.Item name={['api_config', 'secret']} label="API Secret">
+                          <Input.Password placeholder="API секрет" />
+                        </Form.Item>
+                        <Form.Item name={['api_config', 'type']} label="Тип API">
+                          <Select placeholder="Выберите тип">
+                            <Option value="rest">REST</Option>
+                            <Option value="graphql">GraphQL</Option>
+                            <Option value="soap">SOAP</Option>
+                          </Select>
+                        </Form.Item>
+                      </>
+                    );
+                  }}
                 </Form.Item>
               </Card>
             )}

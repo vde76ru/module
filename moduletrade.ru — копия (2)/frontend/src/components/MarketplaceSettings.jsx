@@ -10,6 +10,7 @@ import {
     CloseCircleOutlined, InfoCircleOutlined
 } from '@ant-design/icons';
 import axios from 'utils/axios';
+import { API_ENDPOINTS } from 'utils/constants';
 
 const { TabPane } = Tabs;
 const { Panel } = Collapse;
@@ -33,7 +34,7 @@ const MarketplaceSettings = () => {
     const loadMarketplaces = async () => {
         setLoading(true);
         try {
-            const response = await api.get('/marketplaces');
+            const response = await api.get(API_ENDPOINTS.MARKETPLACES);
             setMarketplaces(response.data.data);
         } catch (error) {
             message.error('Ошибка загрузки маркетплейсов');
@@ -46,7 +47,7 @@ const MarketplaceSettings = () => {
     const testConnection = async (marketplaceId) => {
         setTestingConnection({ ...testingConnection, [marketplaceId]: true });
         try {
-            const response = await api.post(`/marketplaces/${marketplaceId}/test`);
+            const response = await api.post(`${API_ENDPOINTS.MARKETPLACES}/${marketplaceId}/test`);
             if (response.data.success) {
                 message.success('Подключение успешно установлено');
             } else {
@@ -182,7 +183,7 @@ const MarketplaceSettings = () => {
 
         const toggleWarehouse = async (warehouseId, enabled) => {
             try {
-                await api.put(`/marketplaces/${marketplace.id}/warehouses/${warehouseId}`, {
+                await api.put(`${API_ENDPOINTS.MARKETPLACES}/${marketplace.id}/warehouses/${warehouseId}`, {
                     enabled
                 });
                 message.success('Настройки склада обновлены');
@@ -268,10 +269,10 @@ const MarketplaceSettings = () => {
                 onFinish={async (values) => {
                     try {
                         if (editingMarketplace) {
-                            await api.put(`/marketplaces/${editingMarketplace.id}`, values);
+                            await api.put(`${API_ENDPOINTS.MARKETPLACES}/${editingMarketplace.id}`, values);
                             message.success('Маркетплейс обновлен');
                         } else {
-                            await api.post('/marketplaces', values);
+                            await api.post(API_ENDPOINTS.MARKETPLACES, values);
                             message.success('Маркетплейс добавлен');
                         }
                         setModalVisible(false);
@@ -460,7 +461,7 @@ const MarketplaceSettings = () => {
                         title="Удалить маркетплейс?"
                         onConfirm={async () => {
                             try {
-                                await api.delete(`/marketplaces/${record.id}`);
+                                await api.delete(`${API_ENDPOINTS.MARKETPLACES}/${record.id}`);
                                 message.success('Маркетплейс удален');
                                 loadMarketplaces();
                             } catch (error) {

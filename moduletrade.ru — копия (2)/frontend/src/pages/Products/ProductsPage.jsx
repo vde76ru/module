@@ -30,11 +30,14 @@ import {
   ShoppingOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 
 // ✅ ИСПРАВЛЕНО: Правильные импорты
 import { usePermissions } from '../../hooks/usePermissions';
 import { PERMISSIONS, PRODUCT_STATUS_COLORS } from '../../utils/constants';
 import { api } from 'services'; // Импорт из правильного места
+import ProductForm from '../../components/Products/ProductForm';
+import ProductImport from '../../components/Products/ProductImport';
 
 const { Search } = Input;
 const { Option } = Select;
@@ -42,6 +45,7 @@ const { Title } = Typography;
 
 const ProductsPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState('');
@@ -74,6 +78,39 @@ const ProductsPage = () => {
   useEffect(() => {
     fetchStats();
   }, []);
+
+  // Управление модалками создания/редактирования и импорта
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
+
+  // Открытие форм по URL (/products/new, /products/:id/edit)
+  useEffect(() => {
+    const path = location.pathname || '';
+    const newMatch = /\/products\/new$/i.test(path);
+    const editMatch = path.match(/\/products\/(\d+)\/edit$/i);
+
+    if (newMatch && canCreate) {
+      setEditingProduct(null);
+      setIsFormOpen(true);
+    } else if (editMatch && canUpdate) {
+      const productId = editMatch[1];
+      (async () => {
+        try {
+          const data = await api.products.getProduct(productId);
+          setEditingProduct(data);
+          setIsFormOpen(true);
+        } catch (_) {
+          message.error('Не удалось загрузить товар');
+          navigate('/products', { replace: true });
+        }
+      })();
+    } else {
+      setIsFormOpen(false);
+      setEditingProduct(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname, canCreate, canUpdate]);
 
   // ✅ ИСПРАВЛЕНО: Используем новую структуру API
   const fetchProducts = async () => {
@@ -415,7 +452,7 @@ const ProductsPage = () => {
                 {canImport && (
                   <Button
                     icon={<UploadOutlined />}
-                    onClick={() => {/* Открыть модал импорта */}}
+                    onClick={() => setIsImportOpen(true)}
                   >
                     Импорт
                   </Button>
@@ -511,6 +548,31 @@ const ProductsPage = () => {
           scroll={{ x: 1200 }}
         />
       </Card>
+
+      {/* Модал формы товара */}
+      {isFormOpen && (
+        <ProductForm
+          visible={isFormOpen}
+          product={editingProduct}
+          onClose={() => {
+            setIsFormOpen(false);
+            setEditingProduct(null);
+            navigate('/products', { replace: true });
+          }}
+          onSuccess={() => {
+            fetchProducts();
+            fetchStats();
+          }}
+        />
+      )}
+
+      {/* Модал импорта */}
+      {isImportOpen && (
+        <ProductImport
+          visible={isImportOpen}
+          onClose={() => setIsImportOpen(false)}
+        />
+      )}
     </div>
   );
 };

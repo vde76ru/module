@@ -6,7 +6,7 @@ import axios from '../utils/axios';
 import { API_ENDPOINTS } from 'utils/constants';
 
 class ProductsService {
-  
+
   /**
    * Получение списка товаров с фильтрацией и пагинацией
    */
@@ -117,7 +117,7 @@ class ProductsService {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      
+
       // Добавляем дополнительные опции
       Object.keys(options).forEach(key => {
         formData.append(key, options[key]);
@@ -129,7 +129,7 @@ class ProductsService {
         },
         timeout: 120000, // Увеличиваем timeout для импорта
       });
-      
+
       return response.data;
     } catch (error) {
       throw this.handleError(error);
@@ -146,7 +146,7 @@ class ProductsService {
         responseType: 'blob', // Важно для скачивания файлов
         timeout: 120000, // Увеличиваем timeout для экспорта
       });
-      
+
       return response;
     } catch (error) {
       throw this.handleError(error);
@@ -170,7 +170,7 @@ class ProductsService {
    */
   async getCategories() {
     try {
-      const response = await axios.get(`${API_ENDPOINTS.PRODUCTS}/categories`);
+      const response = await axios.get(API_ENDPOINTS.PRODUCTS_CATEGORIES);
       return response.data;
     } catch (error) {
       throw this.handleError(error);
@@ -207,7 +207,7 @@ class ProductsService {
   async addProductSupplier(productId, supplierData) {
     try {
       const response = await axios.post(
-        `${API_ENDPOINTS.PRODUCTS}/${productId}/suppliers`, 
+        `${API_ENDPOINTS.PRODUCTS}/${productId}/suppliers`,
         supplierData
       );
       return response.data;
@@ -222,7 +222,7 @@ class ProductsService {
   async updateProductSupplier(productId, supplierId, supplierData) {
     try {
       const response = await axios.put(
-        `${API_ENDPOINTS.PRODUCTS}/${productId}/suppliers/${supplierId}`, 
+        `${API_ENDPOINTS.PRODUCTS}/${productId}/suppliers/${supplierId}`,
         supplierData
       );
       return response.data;
@@ -251,7 +251,7 @@ class ProductsService {
   async getProductHistory(productId, params = {}) {
     try {
       const response = await axios.get(
-        `${API_ENDPOINTS.PRODUCTS}/${productId}/history`, 
+        `${API_ENDPOINTS.PRODUCTS}/${productId}/history`,
         { params }
       );
       return response.data;
@@ -278,7 +278,7 @@ class ProductsService {
   async updateProductStock(productId, stockData) {
     try {
       const response = await axios.put(
-        `${API_ENDPOINTS.PRODUCTS}/${productId}/stock`, 
+        `${API_ENDPOINTS.PRODUCTS}/${productId}/stock`,
         stockData
       );
       return response.data;
@@ -319,7 +319,7 @@ class ProductsService {
   async duplicateProduct(productId, duplicateData = {}) {
     try {
       const response = await axios.post(
-        `${API_ENDPOINTS.PRODUCTS}/${productId}/duplicate`, 
+        `${API_ENDPOINTS.PRODUCTS}/${productId}/duplicate`,
         duplicateData
       );
       return response.data;
@@ -358,7 +358,7 @@ class ProductsService {
   async uploadProductImages(productId, images) {
     try {
       const formData = new FormData();
-      
+
       // Добавляем файлы изображений
       if (Array.isArray(images)) {
         images.forEach((image, index) => {
@@ -369,7 +369,7 @@ class ProductsService {
       }
 
       const response = await axios.post(
-        `${API_ENDPOINTS.PRODUCTS}/${productId}/images`, 
+        `${API_ENDPOINTS.PRODUCTS}/${productId}/images`,
         formData,
         {
           headers: {
@@ -377,7 +377,7 @@ class ProductsService {
           },
         }
       );
-      
+
       return response.data;
     } catch (error) {
       throw this.handleError(error);
@@ -449,7 +449,7 @@ class ProductsService {
       if (excludeProductId) {
         params.exclude_id = excludeProductId;
       }
-      
+
       const response = await axios.get(`${API_ENDPOINTS.PRODUCTS}/check-sku`, { params });
       return response.data;
     } catch (error) {
@@ -473,11 +473,11 @@ class ProductsService {
    * Обработка ошибок API
    */
   handleError(error) {
-    const errorMessage = error.response?.data?.message || 
-                        error.response?.data?.error || 
-                        error.message || 
+    const errorMessage = error.response?.data?.message ||
+                        error.response?.data?.error ||
+                        error.message ||
                         'Произошла неизвестная ошибка';
-    
+
     // В development режиме выводим подробную информацию об ошибке
     if (process.env.NODE_ENV === 'development') {
       console.error('Products Service Error:', {
@@ -486,7 +486,7 @@ class ProductsService {
         data: error.response?.data,
       });
     }
-    
+
     return new Error(errorMessage);
   }
 
@@ -502,7 +502,7 @@ class ProductsService {
    */
   buildFilterParams(filters) {
     const params = {};
-    
+
     if (filters.search) params.search = filters.search;
     if (filters.category) params.category = filters.category;
     if (filters.brand) params.brand = filters.brand;
@@ -515,7 +515,7 @@ class ProductsService {
     if (filters.sortOrder) params.sort_order = filters.sortOrder;
     if (filters.page) params.page = filters.page;
     if (filters.limit) params.limit = filters.limit;
-    
+
     return params;
   }
 }

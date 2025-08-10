@@ -157,6 +157,7 @@ const ProductForm = ({ product, visible, onClose, onSuccess }) => {
   const handleImageUpload = {
     name: 'images',
     action: product ? `/api/products/${product.id}/images` : undefined,
+    beforeUpload: () => false,
     listType: 'picture-card',
     fileList,
     onChange: (info) => {

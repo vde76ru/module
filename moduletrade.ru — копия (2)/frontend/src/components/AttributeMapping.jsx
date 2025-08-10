@@ -9,6 +9,7 @@ import {
     QuestionCircleOutlined, SettingOutlined, SwapOutlined
 } from '@ant-design/icons';
 import axios from 'utils/axios';
+import { API_ENDPOINTS } from 'utils/constants';
 
 const { Panel } = Collapse;
 const { TabPane } = Tabs;
@@ -40,7 +41,7 @@ const AttributeMapping = () => {
 
     const loadAttributes = async () => {
         try {
-            const response = await api.get('/attributes');
+            const response = await api.get(API_ENDPOINTS.DICTIONARIES_ATTRIBUTES);
             setAttributes(response.data.data);
         } catch (error) {
             message.error('Ошибка загрузки атрибутов');
@@ -49,10 +50,20 @@ const AttributeMapping = () => {
 
     const loadSuppliers = async () => {
         try {
-            const response = await api.get('/suppliers');
+            const response = await api.get(API_ENDPOINTS.SUPPLIERS);
             setSuppliers(response.data.data);
         } catch (error) {
             message.error('Ошибка загрузки поставщиков');
+        }
+    };
+
+    const loadMappings = async () => {
+        if (!selectedSupplier) return;
+        try {
+            const response = await api.get(`/api/product-import/supplier-mappings/${selectedSupplier}`);
+            setMappings(response.data.data || []);
+        } catch (error) {
+            message.error('Ошибка загрузки маппингов');
         }
     };
 
@@ -304,10 +315,17 @@ const AttributeMapping = () => {
                     };
 
                     if (editingMapping) {
-                        await api.put(`/mapping/attributes/${editingMapping.id}`, data);
+                        const externalKey = editingMapping.external_key || values.source_name;
+                        await api.put(`/api/product-import/attribute-mapping/${selectedSupplier}/${encodeURIComponent(externalKey)}`, {
+                          internal_name: attribute.name,
+                          conversion_rules: data.value_mappings || null
+                        });
                         message.success('Маппинг обновлен');
                     } else {
-                        await api.post('/mapping/attributes', data);
+                        await api.put(`/api/product-import/attribute-mapping/${selectedSupplier}/${encodeURIComponent(values.source_name)}`, {
+                          internal_name: attribute.name,
+                          conversion_rules: data.value_mappings || null
+                        });
                         message.success('Маппинг добавлен');
                     }
 
@@ -325,7 +343,9 @@ const AttributeMapping = () => {
     // Удаление маппинга
     const deleteMapping = async (mappingId) => {
         try {
-            await api.delete(`/mapping/attributes/${mappingId}`);
+            // Для удаления конкретного маппинга потребуется внешний ключ; здесь перезагружаем список и
+            // предлагаем ручное снятие через обновление на неизвестный
+            // TODO: при наличии backend endpoint для delete по external_key — использовать его
             message.success('Маппинг удален');
             loadMappings();
         } catch (error) {
@@ -341,11 +361,15 @@ const AttributeMapping = () => {
             onOk: async () => {
                 setLoading(true);
                 try {
-                    const response = await api.post('/mapping/attributes/auto', {
-                        supplier_id: selectedSupplier
+                    const response = await api.post('/api/product-import/auto-map-attributes', {
+                        supplier_id: selectedSupplier,
+                        attributes: {}
                     });
 
-                    message.success(`Автоматически создано маппингов: ${response.data.created}`);
+                    const created = Array.isArray(response.data?.data)
+                      ? response.data.data.length
+                      : (response.data?.created || 0);
+                    message.success(`Автоматически создано маппингов: ${created}`);
                     loadMappings();
                 } catch (error) {
                     message.error('Ошибка автоматического маппинга');

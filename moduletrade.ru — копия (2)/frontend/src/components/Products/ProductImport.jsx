@@ -11,6 +11,7 @@ import {
   Steps,
   Table,
   Select,
+  Statistic,
   Card,
   Alert,
   Progress,

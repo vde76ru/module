@@ -788,6 +788,42 @@ class SuppliersAPI extends BaseAPIService {
       throw this.handleError(error);
     }
   }
+
+  async getSupplierBrands(id, params = {}) {
+    try {
+      const url = this.replaceUrlParams(API_ENDPOINTS.SUPPLIER_DETAILS, { id }) + '/brands';
+      const response = await axios.get(url, { params });
+      const result = this.handleResponse(response);
+      if (result.success) return result.data;
+      throw new Error(result.error || 'Failed to fetch supplier brands');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async getSupplierWarehouses(id) {
+    try {
+      const url = this.replaceUrlParams(API_ENDPOINTS.SUPPLIER_DETAILS, { id }) + '/warehouses';
+      const response = await axios.get(url);
+      const result = this.handleResponse(response);
+      if (result.success) return result.data;
+      throw new Error(result.error || 'Failed to fetch supplier warehouses');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
+
+  async setupIntegration(id, payload) {
+    try {
+      const url = this.replaceUrlParams(API_ENDPOINTS.SUPPLIER_DETAILS, { id }) + '/setup-integration';
+      const response = await axios.post(url, payload);
+      const result = this.handleResponse(response);
+      if (result.success) return result.data;
+      throw new Error(result.error || 'Failed to setup supplier integration');
+    } catch (error) {
+      throw this.handleError(error);
+    }
+  }
 }
 
 // =====================================

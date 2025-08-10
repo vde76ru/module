@@ -125,19 +125,28 @@ const UsersPage = () => {
 
   const handlePasswordSubmit = async (values) => {
     try {
+      // Если пользователь меняет свой пароль — используем auth.changePassword
+      if (editingUser && currentUser && editingUser.id === currentUser.id) {
+        await api.auth.changePassword(values.current_password || '', values.new_password);
+      } else if (editingUser) {
+        // Админ меняет пароль другого пользователя
+        await api.users.updateUser(editingUser.id, { password: values.new_password });
+      }
       message.success('Пароль изменен');
       setIsPasswordModalVisible(false);
+      await fetchUsers();
     } catch (error) {
-      message.error('Ошибка изменения пароля');
+      message.error(error?.message || 'Ошибка изменения пароля');
     }
   };
 
   const handleDelete = async (userId) => {
     try {
+      await api.users.deleteUser(userId);
       message.success('Пользователь удален');
       fetchUsers();
     } catch (error) {
-      message.error('Ошибка удаления пользователя');
+      message.error(error?.message || 'Ошибка удаления пользователя');
     }
   };
 
