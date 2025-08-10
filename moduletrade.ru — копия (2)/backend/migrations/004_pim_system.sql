@@ -233,6 +233,35 @@ CREATE INDEX IF NOT EXISTS idx_marketplace_settings_is_active ON marketplace_set
 CREATE INDEX IF NOT EXISTS idx_marketplace_settings_sync_status ON marketplace_settings (sync_status);
 CREATE INDEX IF NOT EXISTS idx_marketplace_settings_last_sync_at ON marketplace_settings (last_sync_at);
 
+-- Гарантируем уникальность записи на продукт в рамках компании и маркетплейса
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'marketplace_settings_unique'
+      AND conrelid = 'public.marketplace_settings'::regclass
+  ) THEN
+    ALTER TABLE marketplace_settings
+      ADD CONSTRAINT marketplace_settings_unique
+      UNIQUE (company_id, marketplace_id, product_id);
+  END IF;
+END $$;
+
+-- Триггер обновления updated_at
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'update_marketplace_settings_updated_at'
+      AND tgrelid = 'public.marketplace_settings'::regclass
+  ) THEN
+    CREATE TRIGGER update_marketplace_settings_updated_at
+        BEFORE UPDATE ON marketplace_settings
+        FOR EACH ROW
+        EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END $$;
+
 -- Procurement Overrides
 CREATE TABLE IF NOT EXISTS procurement_overrides (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -263,6 +292,21 @@ CREATE INDEX IF NOT EXISTS idx_procurement_overrides_product_id ON procurement_o
 CREATE INDEX IF NOT EXISTS idx_procurement_overrides_supplier_id ON procurement_overrides (supplier_id);
 CREATE INDEX IF NOT EXISTS idx_procurement_overrides_type ON procurement_overrides (override_type);
 CREATE INDEX IF NOT EXISTS idx_procurement_overrides_is_active ON procurement_overrides (is_active);
+
+-- Триггер обновления updated_at
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+    WHERE tgname = 'update_procurement_overrides_updated_at'
+      AND tgrelid = 'public.procurement_overrides'::regclass
+  ) THEN
+    CREATE TRIGGER update_procurement_overrides_updated_at
+        BEFORE UPDATE ON procurement_overrides
+        FOR EACH ROW
+        EXECUTE FUNCTION update_updated_at_column();
+  END IF;
+END $$;
 
 -- ================================================================
 -- ТАБЛИЦА: Product_Images - Изображения товаров

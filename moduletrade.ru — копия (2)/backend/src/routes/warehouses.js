@@ -611,3 +611,58 @@ router.put('/:id/public-id', authenticate, checkPermission('warehouses.update'),
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
+
+// Управление интеграцией склада с поставщиком (привязка виртуальных складов поставщиков)
+router.post('/:id/suppliers/:supplierId', authenticate, checkPermission('warehouses.update'), async (req, res) => {
+  try {
+    const { id, supplierId } = req.params;
+    const { external_warehouse_id, is_active = true, settings = {} } = req.body || {};
+    // Проверим доступ
+    const check = await db.query('SELECT id FROM warehouses WHERE id = $1 AND company_id = $2', [id, req.user.companyId]);
+    if (check.rows.length === 0) return res.status(404).json({ success: false, error: 'Warehouse not found' });
+    if (!external_warehouse_id) return res.status(400).json({ success: false, error: 'external_warehouse_id is required' });
+
+    // Сохраним связку в settings склада (массив источников)
+    const wh = await db.query('SELECT settings FROM warehouses WHERE id = $1', [id]);
+    const current = wh.rows[0]?.settings || {};
+    const sources = Array.isArray(current.supplier_sources) ? current.supplier_sources : [];
+    const filtered = sources.filter(s => !(s && s.supplier_id === supplierId && s.external_warehouse_id === String(external_warehouse_id)));
+    filtered.push({ supplier_id: supplierId, external_warehouse_id: String(external_warehouse_id), is_active, settings });
+    current.supplier_sources = filtered;
+    await db.query('UPDATE warehouses SET settings = $2, updated_at = NOW() WHERE id = $1', [id, current]);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error('Warehouse-supplier link error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// Экспорт склада: JSON/XML (простая версия)
+router.get('/:id/export', authenticate, checkPermission('warehouses.view'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { format = 'json' } = req.query;
+    const check = await db.query('SELECT id, name FROM warehouses WHERE id = $1 AND company_id = $2', [id, req.user.companyId]);
+    if (check.rows.length === 0) return res.status(404).json({ success: false, error: 'Warehouse not found' });
+
+    const dataRes = await db.query(`
+      SELECT p.sku, p.name, COALESCE(wpl.available_quantity, 0) as available_quantity, COALESCE(wpl.price, 0) as price, wpl.currency
+      FROM warehouse_product_links wpl
+      JOIN products p ON p.id = wpl.product_id
+      WHERE wpl.warehouse_id = $1
+      ORDER BY p.name
+    `, [id]);
+    const rows = dataRes.rows;
+
+    if (format === 'xml') {
+      const items = rows.map(r => `  <item>\n    <sku>${r.sku || ''}</sku>\n    <name>${(r.name || '').replace(/&/g,'&amp;')}</name>\n    <qty>${r.available_quantity}</qty>\n    <price>${r.price}</price>\n    <currency>${r.currency || 'RUB'}</currency>\n  </item>`).join('\n');
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<warehouse id="${id}">\n${items}\n</warehouse>`;
+      res.set('Content-Type', 'application/xml');
+      return res.send(xml);
+    }
+    return res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error('Export warehouse error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});

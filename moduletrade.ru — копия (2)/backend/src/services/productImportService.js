@@ -51,7 +51,65 @@ class ProductImportService {
       let updated = 0;
       const errors = [];
 
-      // Сохраняем товары (упрощенно: по SKU и externalId)
+      // Сохраняем товары (по SKU и externalId), создаем маппинги и связи с поставщиком, обновляем складские остатки
+      async function ensureSupplierWarehouse(client, companyId, supplierId, externalWarehouseId, name) {
+        if (!externalWarehouseId) return null;
+        const code = `rs24_${externalWarehouseId}`;
+        const existing = await client.query(
+          `SELECT id FROM warehouses WHERE company_id = $1 AND code = $2 LIMIT 1`,
+          [companyId, code]
+        );
+        if (existing.rows.length > 0) return existing.rows[0].id;
+        const insert = await client.query(
+          `INSERT INTO warehouses (company_id, name, code, type, description, settings, is_active)
+           VALUES ($1, $2, $3, 'warehouse', $4, $5, true) RETURNING id`,
+          [companyId, `RS24 - ${name || externalWarehouseId}`, code, 'Virtual warehouse for RS24', { supplier_id: supplierId, external_warehouse_id: String(externalWarehouseId) }]
+        );
+        return insert.rows[0].id;
+      }
+
+      async function upsertProductSupplier(client, companyId, productId, supplierId, payload) {
+        // Try update first
+        const upd = await client.query(
+          `UPDATE product_suppliers SET
+             external_product_id = COALESCE($4, external_product_id),
+             original_price = COALESCE($5, original_price),
+             currency = COALESCE($6, currency),
+             mrc_price = COALESCE($7, mrc_price),
+             enforce_mrc = COALESCE($8, enforce_mrc),
+             is_available = COALESCE($9, is_available),
+             stock_quantity = COALESCE($10, stock_quantity),
+             last_updated = NOW()
+           WHERE company_id = $1 AND product_id = $2 AND supplier_id = $3`,
+          [companyId, productId, supplierId, payload.external_product_id, payload.original_price, payload.currency || 'RUB', payload.mrc_price, payload.enforce_mrc, payload.is_available, payload.stock_quantity]
+        );
+        if (upd.rowCount > 0) return;
+        await client.query(
+          `INSERT INTO product_suppliers (company_id, product_id, supplier_id, external_product_id, original_price, currency, mrc_price, enforce_mrc, is_available, stock_quantity, last_updated)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+          [companyId, productId, supplierId, payload.external_product_id, payload.original_price || 0, payload.currency || 'RUB', payload.mrc_price || null, payload.enforce_mrc || false, payload.is_available !== false, payload.stock_quantity || 0]
+        );
+      }
+
+      async function upsertProductMapping(client, companyId, productId, supplierId, externalId, sku, name) {
+        // Try update
+        const upd = await client.query(
+          `UPDATE product_mappings SET external_sku = $6, external_name = $7, last_sync = NOW()
+           WHERE company_id = $1 AND product_id = $2 AND system_id = $3 AND external_id = $4`,
+          [companyId, productId, supplierId, String(externalId), sku || null, name || null]
+        );
+        if (upd.rowCount > 0) return;
+        // On conflict unique (system_id, external_id) requires product_id to match; we insert and rely on unique to avoid dup by different product
+        try {
+          await client.query(
+            `INSERT INTO product_mappings (company_id, product_id, system_id, external_id, external_sku, external_name, last_sync)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())
+             ON CONFLICT (system_id, external_id)
+             DO UPDATE SET product_id = EXCLUDED.product_id, external_sku = EXCLUDED.external_sku, external_name = EXCLUDED.external_name, last_sync = NOW()`,
+            [companyId, productId, supplierId, String(externalId), sku || null, name || null]
+          );
+        } catch (_) { /* ignore */ }
+      }
       for (const p of syncResult.products) {
         try {
           // Найдем бренд из переданных
@@ -87,11 +145,25 @@ class ProductImportService {
               );
             }
 
+            // связь с поставщиком
+            await upsertProductMapping(client, companyId, productId, supplierId, p.externalId, p.sku, p.name);
+            await upsertProductSupplier(client, companyId, productId, supplierId, {
+              external_product_id: p.externalId,
+              original_price: p.price,
+              currency: 'RUB',
+              mrc_price: p.mrcPrice || p.priceDetails?.mrc || null,
+              enforce_mrc: Boolean(p.priceDetails?.availabilityMRC),
+              is_available: (p.stock || 0) > 0,
+              stock_quantity: p.stock || 0
+            });
+
             // цена (supplier)
             if (p.price) {
               await client.query(
-                `INSERT INTO prices (product_id, price_type, value, currency, is_active) VALUES ($1, 'supplier', $2, 'RUB', true)
-                 ON CONFLICT (product_id, price_type) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+                `INSERT INTO prices (product_id, price_type_id, price_type, value, currency, is_active, created_at, updated_at)
+                 SELECT $1, pt.id, 'purchase', $2, 'RUB', true, NOW(), NOW()
+                 FROM price_types pt WHERE pt.code = 'purchase'
+                 ON CONFLICT (product_id, price_type) DO UPDATE SET value = EXCLUDED.value, price_type_id = EXCLUDED.price_type_id, updated_at = NOW()`,
                 [productId, p.price]
               );
             }
@@ -104,20 +176,95 @@ class ProductImportService {
               [productId, p.name, p.description || '', attributes]
             );
 
+            // связь с поставщиком
+            await upsertProductMapping(client, companyId, productId, supplierId, p.externalId, p.sku, p.name);
+            await upsertProductSupplier(client, companyId, productId, supplierId, {
+              external_product_id: p.externalId,
+              original_price: p.price,
+              currency: 'RUB',
+              mrc_price: p.mrcPrice || p.priceDetails?.mrc || null,
+              enforce_mrc: Boolean(p.priceDetails?.availabilityMRC),
+              is_available: (p.stock || 0) > 0,
+              stock_quantity: p.stock || 0
+            });
+
             // цена
             if (p.price) {
               await client.query(
-                `INSERT INTO prices (product_id, price_type, value, currency, is_active) VALUES ($1, 'supplier', $2, 'RUB', true)
-                 ON CONFLICT (product_id, price_type) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+                `INSERT INTO prices (product_id, price_type_id, price_type, value, currency, is_active, created_at, updated_at)
+                 SELECT $1, pt.id, 'purchase', $2, 'RUB', true, NOW(), NOW()
+                 FROM price_types pt WHERE pt.code = 'purchase'
+                 ON CONFLICT (product_id, price_type) DO UPDATE SET value = EXCLUDED.value, price_type_id = EXCLUDED.price_type_id, updated_at = NOW()`,
                 [productId, p.price]
               );
             }
             updated++;
           }
+
+          // Обновляем склад по данным поставщика
+          try {
+            const whId = await ensureSupplierWarehouse(client, companyId, supplierId, p.sourceWarehouse?.id || p.warehouseId, p.sourceWarehouse?.name || p.warehouseName);
+            if (whId) {
+              await client.query(
+                `INSERT INTO warehouse_product_links (warehouse_id, product_id, quantity, available_quantity, reserved_quantity, price, currency, last_updated, created_at, updated_at)
+                 VALUES ($1, $2, $3, $3, 0, $4, 'RUB', NOW(), NOW(), NOW())
+                 ON CONFLICT (warehouse_id, product_id)
+                 DO UPDATE SET quantity = EXCLUDED.quantity, available_quantity = EXCLUDED.available_quantity, price = EXCLUDED.price, updated_at = NOW(), last_updated = NOW()`,
+                [whId, existingRes.rows.length === 0 ? insertRes?.rows?.[0]?.id || null : existingRes.rows[0].id, (p.stock?.quantity || 0), p.price || 0]
+              );
+            }
+          } catch (stockErr) {
+            logger.warn('Stock update failed for product', { sku: p.sku, err: stockErr.message });
+          }
         } catch (e) {
           logger.error('Product import error:', e);
           errors.push({ sku: p.sku, error: e.message });
         }
+      }
+
+      // Обнуление остатков и доступности для товаров, исчезнувших из выгрузки поставщика (по выбранным брендам)
+      try {
+        const currentExternalIds = new Set(syncResult.products.map(p => String(p.externalId)));
+        // Обеспечим наличие виртуальных складов для всех складов RS24
+        try {
+          const warehouses = await adapter.getWarehouses();
+          for (const w of warehouses) {
+            await ensureSupplierWarehouse(client, companyId, supplierId, w.id, w.name);
+          }
+        } catch (_) {}
+
+        const missingRes = await client.query(
+          `SELECT pm.external_id, pm.product_id
+           FROM product_mappings pm
+           JOIN products pr ON pr.id = pm.product_id
+           WHERE pm.system_id = $1 AND pr.company_id = $2
+             ${brandIds.length > 0 ? 'AND pr.brand_id = ANY($3)' : ''}`,
+          brandIds.length > 0 ? [supplierId, companyId, brandIds] : [supplierId, companyId]
+        );
+        const missingProductIds = [];
+        for (const row of missingRes.rows) {
+          if (!currentExternalIds.has(String(row.external_id))) missingProductIds.push(row.product_id);
+        }
+        if (missingProductIds.length > 0) {
+          // Снимаем доступность у поставщика
+          await client.query(
+            `UPDATE product_suppliers SET is_available = false, stock_quantity = 0, last_updated = NOW()
+             WHERE company_id = $1 AND supplier_id = $2 AND product_id = ANY($3)`,
+            [companyId, supplierId, missingProductIds]
+          );
+          // Обнуляем остатки на всех виртуальных складах этого поставщика
+          await client.query(
+            `UPDATE warehouse_product_links SET quantity = 0, available_quantity = 0, updated_at = NOW()
+             WHERE product_id = ANY($1)
+               AND warehouse_id IN (
+                 SELECT id FROM warehouses
+                 WHERE company_id = $2 AND (settings->>'supplier_id') = $3
+               )`,
+            [missingProductIds, companyId, String(supplierId)]
+          );
+        }
+      } catch (reconcileErr) {
+        logger.warn('Reconciliation after RS24 import failed:', reconcileErr.message);
       }
 
       await client.query('COMMIT');

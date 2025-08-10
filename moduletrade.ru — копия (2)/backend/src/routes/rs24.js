@@ -50,7 +50,7 @@ router.post('/:supplierId/massprice', authenticate, async (req, res) => {
   try {
     const { items } = req.body;
     const adapter = await getRSAdapter(req.params.supplierId);
-    const prices = await adapter.getPrices(items || []);
+    const prices = await adapter.getProductPrices(items || []);
     res.json({ success: true, data: prices });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
@@ -60,8 +60,8 @@ router.post('/:supplierId/massprice', authenticate, async (req, res) => {
 router.get('/:supplierId/residue/:warehouseId/:code', authenticate, async (req, res) => {
   try {
     const adapter = await getRSAdapter(req.params.supplierId);
-    const stocks = await adapter.getStockLevels([req.params.code], req.params.warehouseId);
-    res.json({ success: true, data: stocks[0] || null });
+    const stock = await adapter.getProductStock(req.params.warehouseId, req.params.code);
+    res.json({ success: true, data: stock });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }
@@ -71,7 +71,7 @@ router.get('/:supplierId/residue/all/:warehouseId', authenticate, async (req, re
   try {
     const { page, rows, category, partnerstock } = req.query;
     const adapter = await getRSAdapter(req.params.supplierId);
-    const list = await adapter.getAllStocks(req.params.warehouseId, { page: Number(page) || 1, rows: Number(rows) || 200, category: category || 'skl', partnerstock: partnerstock || 'N' });
+    const list = await adapter.getWarehouseStocks(req.params.warehouseId, { page: Number(page) || 1, rows: Number(rows) || 200, category: category || 'all', partnerstock: partnerstock || 'N' });
     res.json({ success: true, data: list });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
@@ -82,7 +82,7 @@ router.get('/:supplierId/partnerwhstock/all/:warehouseId', authenticate, async (
   try {
     const { page, rows, availability } = req.query;
     const adapter = await getRSAdapter(req.params.supplierId);
-    const result = await adapter.getAllPartnerWarehouseStock(req.params.warehouseId, { page: Number(page) || 1, rows: Number(rows) || 500, availability: availability || 'instock' });
+    const result = await adapter.getPartnerWarehouseStocks(req.params.warehouseId, { page: Number(page) || 1, rows: Number(rows) || 500, availability: availability || 'instock' });
     res.json({ success: true, data: result });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
@@ -92,7 +92,7 @@ router.get('/:supplierId/partnerwhstock/all/:warehouseId', authenticate, async (
 router.get('/:supplierId/specs/:code', authenticate, async (req, res) => {
   try {
     const adapter = await getRSAdapter(req.params.supplierId);
-    const product = await adapter.getProductDetails(req.params.code);
+    const product = await adapter.getProductSpecs(req.params.code);
     res.json({ success: true, data: product });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });

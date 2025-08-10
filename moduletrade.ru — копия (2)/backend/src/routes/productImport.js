@@ -784,6 +784,37 @@ router.get('/brand-mappings',
 );
 
 /**
+ * POST /api/product-import/brand-mappings
+ * Создание/обновление маппинга бренда поставщика к нашему бренду
+ * body: { supplier_id, brand_id, supplier_brand_name }
+ */
+router.post('/brand-mappings',
+  authenticate,
+  checkRole(['Владелец','Администратор','Менеджер']),
+  async (req, res) => {
+    try {
+      const { supplier_id, brand_id, supplier_brand_name } = req.body || {};
+      const companyId = req.user.companyId;
+      if (!supplier_id || !brand_id || !supplier_brand_name) {
+        return res.status(400).json({ success: false, error: 'supplier_id, brand_id, supplier_brand_name are required' });
+      }
+
+      await db.query(`
+        INSERT INTO brand_supplier_mappings (company_id, brand_id, supplier_id, supplier_brand_name, is_active, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, true, NOW(), NOW())
+        ON CONFLICT (company_id, brand_id, supplier_id)
+        DO UPDATE SET supplier_brand_name = EXCLUDED.supplier_brand_name, is_active = true, updated_at = NOW()
+      `, [companyId, brand_id, supplier_id, supplier_brand_name]);
+
+      res.json({ success: true });
+    } catch (error) {
+      logger.error('Upsert brand mapping failed:', error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+/**
  * DELETE /api/product-import/brand-mappings/:brandId/:supplierId
  * Удаление маппинга бренда к поставщику
  */

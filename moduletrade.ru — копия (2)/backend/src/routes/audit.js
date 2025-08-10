@@ -162,11 +162,35 @@ router.get('/export/:format', authenticate, checkPermission('audit.export'), asy
       res.setHeader('Content-Type', 'text/csv');
       res.send(csvData);
     } else {
-      // XLSX потребует дополнительную библиотеку
-      res.status(501).json({
-        success: false,
-        error: 'XLSX export not implemented yet'
+      // XLSX экспорт через exceljs
+      const ExcelJS = require('exceljs');
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet('Audit Logs');
+
+      const headers = [
+        { header: 'ID', key: 'id' },
+        { header: 'Дата/Время', key: 'created_at' },
+        { header: 'Пользователь', key: 'user_name' },
+        { header: 'Действие', key: 'action_display' },
+        { header: 'Тип сущности', key: 'entity_type' },
+        { header: 'ID сущности', key: 'entity_id' },
+        { header: 'Название сущности', key: 'entity_name' },
+        { header: 'Описание', key: 'description' },
+        { header: 'Успешно', key: 'success' },
+        { header: 'IP адрес', key: 'ip_address' },
+      ];
+      sheet.columns = headers;
+      result.logs.forEach((log) => {
+        sheet.addRow({
+          ...log,
+          description: (log.description || '').toString(),
+          success: log.success ? 'Да' : 'Нет',
+        });
       });
+      res.setHeader('Content-Disposition', `attachment; filename=audit-logs-${Date.now()}.xlsx`);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      await workbook.xlsx.write(res);
+      res.end();
     }
 
   } catch (error) {
@@ -213,12 +237,12 @@ router.post('/cleanup', authenticate, checkPermission('audit.manage'), async (re
 router.get('/actions/types', authenticate, checkPermission('audit.view'), async (req, res) => {
   try {
     const db = require('../config/database');
-    
+
     const result = await db.query(`
-      SELECT 
+      SELECT
         name, display_name, description, category, severity
-      FROM audit_action_types 
-      WHERE is_active = true 
+      FROM audit_action_types
+      WHERE is_active = true
       ORDER BY category, display_name
     `);
 
@@ -256,7 +280,7 @@ function convertToCSV(logs) {
   }
 
   const headers = [
-    'ID', 'Дата/Время', 'Пользователь', 'Действие', 'Тип сущности', 
+    'ID', 'Дата/Время', 'Пользователь', 'Действие', 'Тип сущности',
     'ID сущности', 'Название сущности', 'Описание', 'Успешно', 'IP адрес'
   ];
 

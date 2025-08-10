@@ -431,14 +431,15 @@ class SyncService {
             if (stockItem.price && stockItem.price > 0) {
               await client.query(`
                 INSERT INTO prices (
-                  product_id, price_type, value, currency,
-                  is_active, created_at, updated_at
-                ) VALUES (
-                  $1, 'supplier', $2, $3, true, NOW(), NOW()
+                  product_id, price_type_id, price_type, value, currency, is_active, created_at, updated_at
                 )
+                SELECT $1, pt.id, 'purchase', $2, $3, true, NOW(), NOW()
+                FROM price_types pt
+                WHERE pt.code = 'purchase'
                 ON CONFLICT (product_id, price_type)
                 DO UPDATE SET
                   value = EXCLUDED.value,
+                  price_type_id = EXCLUDED.price_type_id,
                   updated_at = NOW()
               `, [
                 productId,

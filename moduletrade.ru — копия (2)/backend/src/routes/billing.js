@@ -4,6 +4,60 @@ const { authenticate, checkPermission } = require('../middleware/auth');
 const db = require('../config/database');
 
 const router = express.Router();
+/**
+ * Подсчет использованного хранилища компании в байтах
+ * На основе размеров файлов в `uploads/` и количества изображений товара.
+ * Если размер файлов недоступен (например, внешние URL), учитываем только локальные файлы.
+ */
+async function calculateStorageUsedBytes(companyId) {
+  const fs = require('fs');
+  const path = require('path');
+  const uploadDir = path.join(process.cwd(), 'uploads');
+
+  let total = 0;
+  try {
+    // Суммируем размеры локальных файлов в каталоге uploads
+    const stack = [uploadDir];
+    while (stack.length) {
+      const current = stack.pop();
+      if (!fs.existsSync(current)) continue;
+      const entries = fs.readdirSync(current, { withFileTypes: true });
+      for (const entry of entries) {
+        const full = path.join(current, entry.name);
+        try {
+          if (entry.isDirectory()) {
+            stack.push(full);
+          } else if (entry.isFile()) {
+            const stat = fs.statSync(full);
+            total += stat.size || 0;
+          }
+        } catch (_) {
+          // ignore file access errors
+        }
+      }
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  try {
+    // Дополнительно считаем кол-во записей изображений, когда файлы внешние
+    const res = await db.query(
+      `SELECT COUNT(*)::int AS cnt
+       FROM product_images pi
+       JOIN products p ON p.id = pi.product_id
+       WHERE p.company_id = $1`,
+      [companyId]
+    );
+    const imageCount = res.rows[0]?.cnt || 0;
+    // Грубая оценка 30KB на запись для метаданных/кешей
+    total += imageCount * 30 * 1024;
+  } catch (_) {
+    // ignore
+  }
+
+  return total;
+}
 
 // Безопасная инициализация BillingService
 let BillingService, billingService;
@@ -239,8 +293,8 @@ router.get('/usage', authenticate, async (req, res) => {
           limit: limits.users || null
         },
         storage: {
-          used: 0, // TODO: Implement storage calculation
-          limit: limits.storage_gb ? limits.storage_gb * 1024 * 1024 * 1024 : 1024 * 1024 * 1024
+          used: await calculateStorageUsedBytes(req.user.companyId),
+          limit: limits.storage_gb ? limits.storage_gb * 1024 * 1024 * 1024 : null
         }
       }
     });
@@ -426,10 +480,10 @@ router.post('/create-payment-intent', authenticate, async (req, res) => {
     }
 
     // Получаем информацию о тарифе
-    const tariffResult = await db.query(`
+  const tariffResult = await db.query(`
       SELECT id, name, price
       FROM tariffs
-      WHERE id = $1 AND active = true
+      WHERE id = $1 AND is_active = true
     `, [tariff_id]);
 
     if (tariffResult.rows.length === 0) {
@@ -442,7 +496,7 @@ router.post('/create-payment-intent', authenticate, async (req, res) => {
     const tariff = tariffResult.rows[0];
 
     // Создаем Payment Intent через Stripe (если подключен)
-    if (!billingService.stripe) {
+  if (!billingService || !billingService.stripe) {
       return res.status(503).json({
         success: false,
         error: 'Billing is not configured'
@@ -506,7 +560,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         await handlePaymentFailed(event.data.object);
         break;
       default:
-        console.log(`Unhandled event type: ${event.type}`);
+        require('../utils/logger').info(`Unhandled Stripe webhook event type: ${event.type}`);
     }
 
     res.json({ received: true });

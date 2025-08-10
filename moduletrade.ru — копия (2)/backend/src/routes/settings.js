@@ -282,15 +282,15 @@ router.get('/api-keys', authenticate, checkRole(['admin']), async (req, res) => 
   try {
     const companyId = req.user.companyId;
 
-    // В будущем здесь будет логика работы с API ключами
-    // Пока возвращаем заглушку
-    res.json({
-      success: true,
-      data: {
-        keys: [],
-        webhooks: []
-      }
-    });
+    const result = await db.query(
+      `SELECT public_id, name, permissions, is_active, expires_at, last_used, last_ip_address, created_at, updated_at
+       FROM api_keys
+       WHERE company_id = $1
+       ORDER BY created_at DESC`,
+      [companyId]
+    );
+
+    res.json({ success: true, data: { keys: result.rows } });
 
   } catch (error) {
     console.error('Get API keys error:', error);
@@ -298,6 +298,38 @@ router.get('/api-keys', authenticate, checkRole(['admin']), async (req, res) => 
       success: false,
       error: 'Internal server error'
     });
+  }
+});
+
+/**
+ * POST /api/settings/api-keys
+ * Создание API ключа (возвращает материализованный ключ один раз)
+ */
+router.post('/api-keys', authenticate, checkRole(['admin']), async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const { name, permissions = {}, user_id = null, expires_at = null } = req.body || {};
+
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'Name is required' });
+    }
+
+    const createRes = await db.query(
+      `SELECT key_id, api_key FROM create_api_key($1, $2, $3, $4, $5)`,
+      [companyId, name, permissions, user_id, expires_at]
+    );
+    const { key_id, api_key } = createRes.rows[0];
+
+    const infoRes = await db.query(
+      `SELECT public_id, name, permissions, is_active, expires_at, created_at, updated_at
+       FROM api_keys WHERE id = $1`,
+      [key_id]
+    );
+
+    return res.json({ success: true, data: { api_key, info: infoRes.rows[0] } });
+  } catch (error) {
+    console.error('Create API key error:', error);
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 

@@ -539,23 +539,37 @@ router.post('/forgot-password', async (req, res) => {
 
         const user = result.rows[0];
 
-        // Генерируем токен для сброса пароля
-        const resetToken = require('crypto').randomBytes(32).toString('hex');
-        const resetExpires = new Date(Date.now() + 3600000); // 1 час
+        // Создаем запись токена в password_reset_tokens (см. миграцию 007)
+        const crypto = require('crypto');
+        const rawToken = crypto.randomBytes(32).toString('hex');
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 час
 
-        // Сохраняем токен в БД
         await db.query(
-            'UPDATE users SET password_reset_token = $1, password_reset_expires_at = $2, updated_at = NOW() WHERE id = $3',
-            [resetToken, resetExpires, user.id]
+          `INSERT INTO password_reset_tokens (user_id, token, ip_address, user_agent, expires_at, is_active)
+           VALUES ($1, $2, $3, $4, $5, true)`,
+          [user.id, rawToken, req.ip || null, req.headers['user-agent'] || null, expiresAt]
         );
 
-        // TODO: Отправить email с ссылкой для сброса пароля
-        // В реальном проекте здесь должна быть отправка email
+        // Отправляем письмо
+        const MailService = require('../services/MailService');
+        const mailer = new MailService();
+        const baseUrl = process.env.FRONTEND_URL || process.env.SITE_BASE_URL || 'https://moduletrade.ru';
+        const resetUrl = `${baseUrl}/reset-password?token=${encodeURIComponent(rawToken)}`;
 
-        res.json({
-            success: true,
-            message: 'If the email exists, a password reset link has been sent'
-        });
+        if (mailer.enabled) {
+          await mailer.send({
+            to: email,
+            subject: 'Сброс пароля в ModuleTrade',
+            html: `
+              <p>Здравствуйте${user.name ? ', ' + user.name : ''}!</p>
+              <p>Вы запросили сброс пароля. Перейдите по ссылке ниже, чтобы задать новый пароль. Ссылка действует 1 час.</p>
+              <p><a href="${resetUrl}">${resetUrl}</a></p>
+              <p>Если вы не запрашивали сброс, просто игнорируйте это письмо.</p>
+            `,
+          });
+        }
+
+        res.json({ success: true, message: 'If the email exists, a password reset link has been sent' });
 
     } catch (error) {
         console.error('Forgot password error:', error);
@@ -578,30 +592,31 @@ router.post('/reset-password', async (req, res) => {
             });
         }
 
-        // Проверяем токен
-        const result = await db.query(
-            'SELECT id FROM users WHERE password_reset_token = $1 AND password_reset_expires_at > NOW() AND is_active = true',
-            [token]
+        // Проверяем токен (таблица password_reset_tokens)
+        const tokenRes = await db.query(
+          `SELECT prt.user_id
+           FROM password_reset_tokens prt
+           JOIN users u ON u.id = prt.user_id AND u.is_active = true
+           WHERE prt.token = $1 AND prt.is_active = true AND prt.expires_at > NOW()
+           LIMIT 1`,
+          [token]
         );
 
-        if (result.rows.length === 0) {
-            return res.status(400).json({
-                success: false,
-                error: 'Invalid or expired reset token'
-            });
+        if (tokenRes.rows.length === 0) {
+          return res.status(400).json({ success: false, error: 'Invalid or expired reset token' });
         }
 
-        const user = result.rows[0];
+        const userId = tokenRes.rows[0].user_id;
 
         // Хешируем новый пароль
         const saltRounds = 10;
         const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
 
         // Обновляем пароль и очищаем токен
-        await db.query(
-            'UPDATE users SET password_hash = $1, password_reset_token = NULL, password_reset_expires_at = NULL, updated_at = NOW() WHERE id = $2',
-            [hashedPassword, user.id]
-        );
+        await db.query('BEGIN');
+        await db.query('UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2', [hashedPassword, userId]);
+        await db.query('UPDATE password_reset_tokens SET is_active = false, used_at = NOW() WHERE token = $1', [token]);
+        await db.query('COMMIT');
 
         res.json({
             success: true,
@@ -609,6 +624,7 @@ router.post('/reset-password', async (req, res) => {
         });
 
     } catch (error) {
+        try { await db.query('ROLLBACK'); } catch (_) {}
         console.error('Reset password error:', error);
         res.status(500).json({
             success: false,

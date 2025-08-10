@@ -173,13 +173,7 @@ app.use(cors({
 // Сжатие ответов
 app.use(compression());
 
-// Stripe webhook must receive raw body before any JSON parser
-try {
-  app.use('/api/billing/webhook', express.raw({ type: 'application/json' }));
-  logger.info('Stripe webhook raw body parser mounted');
-} catch (e) {
-  logger.warn('Failed to mount raw body for Stripe webhook:', e.message);
-}
+// Stripe webhook парсится внутри роутера; здесь не дублируем raw body parser
 
 // Парсинг JSON (after webhook raw)
 app.use(express.json({

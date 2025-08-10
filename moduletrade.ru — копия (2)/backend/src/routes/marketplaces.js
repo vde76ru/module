@@ -5,6 +5,7 @@ const db = require('../config/database'); // ✅ ДОБАВЛЕН ИМПОРТ D
 const { authenticate, checkPermission } = require('../middleware/auth');
 const cryptoUtils = require('../utils/crypto');
 const MarketplaceFactory = require('../adapters/MarketplaceFactory');
+const MarketplaceMappingService = require('../services/MarketplaceMappingService');
 
 // Получение списка маркетплейсов
 router.get('/', authenticate, async (req, res) => {
@@ -488,5 +489,107 @@ router.put('/:id/public-id', authenticate, checkPermission('marketplaces.update'
   } catch (error) {
     console.error('Update marketplace public_id error:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// =============================
+// МАППИНГИ ДЛЯ МАРКЕТПЛЕЙСОВ
+// =============================
+
+// Подсказки по бренду по внешнему имени (например, ИЭК/IEK)
+router.get('/:id/brand-mapping/suggest', authenticate, async (req, res) => {
+  try {
+    const marketplaceId = req.params.id;
+    const { q } = req.query;
+    if (!q) return res.status(400).json({ success: false, error: 'Query param q is required' });
+    const data = await MarketplaceMappingService.suggestBrand(req.user.companyId, marketplaceId, q);
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Marketplace brand mapping suggest error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
+  }
+});
+
+// Подтверждение синонима бренда для маркетплейса
+router.post('/:id/brand-mapping/confirm', authenticate, checkPermission('marketplaces.update'), async (req, res) => {
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const marketplaceId = req.params.id;
+    const { brand_id, external_brand_name, settings, sync_enabled, external_brand_code } = req.body || {};
+    if (!brand_id || !external_brand_name) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: 'brand_id and external_brand_name are required' });
+    }
+    await MarketplaceMappingService.confirmBrandSynonym(
+      client, req.user.companyId, marketplaceId, brand_id, external_brand_name,
+      { settings: settings || {}, syncEnabled: sync_enabled, external_brand_code }
+    );
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    console.error('Marketplace brand mapping confirm error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// Автомаппинг атрибутов маркетплейса (по внешним ключам МП -> внутренние имена)
+router.post('/:id/attribute-mapping/auto', authenticate, checkPermission('marketplaces.update'), async (req, res) => {
+  try {
+    const marketplaceId = req.params.id;
+    const { attributes } = req.body || {};
+    const data = await MarketplaceMappingService.autoMapAttributes(req.user.companyId, marketplaceId, attributes || {});
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Marketplace attribute auto-mapping error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
+  }
+});
+
+// Обновление/создание маппинга категории МП -> внутренняя
+router.post('/:id/category-mapping', authenticate, checkPermission('marketplaces.update'), async (req, res) => {
+  try {
+    const marketplaceId = req.params.id;
+    const { external_category, internal_category_id, auto = false } = req.body || {};
+    if (!external_category || !internal_category_id) {
+      return res.status(400).json({ success: false, error: 'external_category and internal_category_id are required' });
+    }
+    await MarketplaceMappingService.upsertCategoryMapping(
+      req.user.companyId,
+      marketplaceId,
+      external_category,
+      internal_category_id,
+      { is_auto_mapped: Boolean(auto) }
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Marketplace category mapping upsert error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
+  }
+});
+
+// Получение дерева категорий Я.М через адаптер (для выбора уровня/пути)
+router.get('/:id/yandex/categories', authenticate, async (req, res) => {
+  try {
+    const marketplaceId = req.params.id;
+    const result = await db.query('SELECT type, credentials FROM marketplaces WHERE id = $1 AND company_id = $2', [marketplaceId, req.user.companyId]);
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'Marketplace not found' });
+
+    let credentials = result.rows[0].credentials;
+    if (credentials && typeof credentials === 'string' && require('../utils/crypto').isEncrypted(credentials)) {
+      try { credentials = require('../utils/crypto').decrypt(credentials); } catch (e) { return res.status(400).json({ success: false, error: 'Failed to decrypt marketplace credentials' }); }
+    }
+
+    const factory = new MarketplaceFactory();
+    const adapter = factory.createAdapter(result.rows[0].type, credentials || {});
+    if (typeof adapter.getCategories !== 'function') return res.json({ success: true, data: [] });
+    const categories = await adapter.getCategories();
+    res.json({ success: true, data: categories });
+  } catch (error) {
+    console.error('Yandex categories fetch error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
   }
 });

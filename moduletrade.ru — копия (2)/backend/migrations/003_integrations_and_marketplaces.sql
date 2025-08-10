@@ -92,37 +92,7 @@ CREATE TRIGGER assign_suppliers_public_id
     FOR EACH ROW
     EXECUTE FUNCTION assign_public_id_with_company();
 
--- ================================================================
--- ДОБАВЛЕНИЕ ПОЛЯ main_supplier_id В ТАБЛИЦЕ products (выполняем только если таблица уже существует, иначе будет создано в 004)
-DO $$
-BEGIN
-    IF to_regclass('public.products') IS NOT NULL THEN
-        IF NOT EXISTS (
-            SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'products' AND column_name = 'main_supplier_id'
-        ) THEN
-            ALTER TABLE products ADD COLUMN main_supplier_id UUID;
-        END IF;
-
-        IF NOT EXISTS (
-            SELECT 1 FROM information_schema.table_constraints
-            WHERE table_name = 'products' AND constraint_name = 'fk_products_main_supplier_id'
-        ) THEN
-            ALTER TABLE products ADD CONSTRAINT fk_products_main_supplier_id
-                FOREIGN KEY (main_supplier_id) REFERENCES suppliers(id)
-                ON DELETE SET NULL ON UPDATE CASCADE;
-        END IF;
-
-        IF NOT EXISTS (
-            SELECT 1 FROM pg_indexes
-            WHERE tablename = 'products' AND indexname = 'idx_products_main_supplier_id'
-        ) THEN
-            CREATE INDEX idx_products_main_supplier_id ON products (main_supplier_id);
-        END IF;
-
-        COMMENT ON COLUMN products.main_supplier_id IS 'Основной поставщик товара';
-    END IF;
-END $$;
+-- Примечание: добавление products.main_supplier_id выполняется в миграции 004
 
 -- ================================================================
 -- ТАБЛИЦА: Marketplaces - Маркетплейсы для продаж
@@ -209,77 +179,7 @@ CREATE TRIGGER assign_marketplaces_public_id
     FOR EACH ROW
     EXECUTE FUNCTION assign_public_id_with_company();
 
--- ================================================================
--- ТАБЛИЦА: Marketplace_Settings - Настройки товаров для маркетплейсов
--- ================================================================
--- Создаем таблицу marketplace_settings только если products уже существует (иначе она будет создана в 004)
-DO $$
-BEGIN
-  IF to_regclass('public.products') IS NOT NULL THEN
-    CREATE TABLE IF NOT EXISTS marketplace_settings (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    company_id UUID NOT NULL,
-    marketplace_id UUID NOT NULL,
-    product_id UUID NOT NULL,
-    external_product_id VARCHAR(255),
-    external_category_id VARCHAR(255),
-    title VARCHAR(500),
-    description TEXT,
-    price DECIMAL(12,2),
-    sale_price DECIMAL(12,2),
-    currency VARCHAR(3) DEFAULT 'RUB',
-    stock_quantity INTEGER,
-    api_credentials JSONB DEFAULT '{}'::jsonb,
-    is_active BOOLEAN DEFAULT TRUE,
-    sync_status VARCHAR(20) DEFAULT 'pending',
-    last_sync_at TIMESTAMP WITH TIME ZONE,
-    sync_error TEXT,
-    marketplace_data JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-
-    CONSTRAINT fk_marketplace_settings_company_id
-        FOREIGN KEY (company_id) REFERENCES companies(id)
-        ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_marketplace_settings_marketplace_id
-        FOREIGN KEY (marketplace_id) REFERENCES marketplaces(id)
-        ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT fk_marketplace_settings_product_id
-        FOREIGN KEY (product_id) REFERENCES products(id)
-        ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-COMMENT ON TABLE marketplace_settings IS 'Настройки товаров для конкретных маркетплейсов';
-COMMENT ON COLUMN marketplace_settings.company_id IS 'Компания';
-COMMENT ON COLUMN marketplace_settings.marketplace_id IS 'Маркетплейс';
-COMMENT ON COLUMN marketplace_settings.product_id IS 'Товар';
-COMMENT ON COLUMN marketplace_settings.external_product_id IS 'ID товара на маркетплейсе';
-COMMENT ON COLUMN marketplace_settings.external_category_id IS 'ID категории на маркетплейсе';
-COMMENT ON COLUMN marketplace_settings.title IS 'Название товара для маркетплейса';
-COMMENT ON COLUMN marketplace_settings.description IS 'Описание товара для маркетплейса';
-COMMENT ON COLUMN marketplace_settings.price IS 'Цена товара на маркетплейсе';
-COMMENT ON COLUMN marketplace_settings.sale_price IS 'Цена со скидкой';
-COMMENT ON COLUMN marketplace_settings.currency IS 'Валюта цены';
-COMMENT ON COLUMN marketplace_settings.stock_quantity IS 'Количество товара на маркетплейсе';
-COMMENT ON COLUMN marketplace_settings.api_credentials IS 'API учетные данные';
-COMMENT ON COLUMN marketplace_settings.is_active IS 'Активна ли настройка';
-COMMENT ON COLUMN marketplace_settings.sync_status IS 'Статус синхронизации';
-COMMENT ON COLUMN marketplace_settings.last_sync_at IS 'Дата последней синхронизации';
-COMMENT ON COLUMN marketplace_settings.sync_error IS 'Ошибка синхронизации';
-COMMENT ON COLUMN marketplace_settings.marketplace_data IS 'Дополнительные данные маркетплейса';
-
-ALTER TABLE marketplace_settings ADD CONSTRAINT marketplace_settings_unique
-    UNIQUE (company_id, marketplace_id, product_id);
-
-    CREATE INDEX IF NOT EXISTS idx_marketplace_settings_company_id ON marketplace_settings (company_id);
-    CREATE INDEX IF NOT EXISTS idx_marketplace_settings_marketplace_id ON marketplace_settings (marketplace_id);
-    CREATE INDEX IF NOT EXISTS idx_marketplace_settings_product_id ON marketplace_settings (product_id);
-    CREATE INDEX IF NOT EXISTS idx_marketplace_settings_external_product_id ON marketplace_settings (external_product_id);
-    CREATE INDEX IF NOT EXISTS idx_marketplace_settings_is_active ON marketplace_settings (is_active);
-    CREATE INDEX IF NOT EXISTS idx_marketplace_settings_sync_status ON marketplace_settings (sync_status);
-    CREATE INDEX IF NOT EXISTS idx_marketplace_settings_last_sync_at ON marketplace_settings (last_sync_at);
-  END IF;
-END $$;
+ -- Примечание: marketplace_settings создается в миграции 004 (удалено из 003)
 
 -- ================================================================
 -- ТАБЛИЦА: Marketplace_Integration_Settings - Настройки интеграций с маркетплейсами
@@ -686,50 +586,7 @@ CREATE TRIGGER assign_sales_channels_public_id
     FOR EACH ROW
     EXECUTE FUNCTION assign_public_id_with_company();
 
--- ================================================================
--- ТАБЛИЦА: Procurement_Overrides - Переопределения закупок
--- ================================================================
--- Создаем таблицу procurement_overrides только если products уже существует (иначе она будет создана в 004)
-DO $$
-BEGIN
-  IF to_regclass('public.products') IS NOT NULL THEN
-    CREATE TABLE IF NOT EXISTS procurement_overrides (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    company_id UUID NOT NULL,
-    product_id UUID NOT NULL,
-    supplier_id UUID NOT NULL,
-    override_type VARCHAR(50) NOT NULL,
-    override_value JSONB DEFAULT '{}'::jsonb,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
-
-    CONSTRAINT fk_procurement_overrides_company_id
-        FOREIGN KEY (company_id) REFERENCES companies(id)
-        ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_procurement_overrides_product_id
-        FOREIGN KEY (product_id) REFERENCES products(id)
-        ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT fk_procurement_overrides_supplier_id
-        FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
-        ON DELETE CASCADE ON UPDATE CASCADE
-    );
-
-COMMENT ON TABLE procurement_overrides IS 'Переопределения правил закупок';
-COMMENT ON COLUMN procurement_overrides.company_id IS 'Компания';
-COMMENT ON COLUMN procurement_overrides.product_id IS 'Товар';
-COMMENT ON COLUMN procurement_overrides.supplier_id IS 'Поставщик';
-COMMENT ON COLUMN procurement_overrides.override_type IS 'Тип переопределения: price, quantity, priority';
-COMMENT ON COLUMN procurement_overrides.override_value IS 'Значение переопределения';
-COMMENT ON COLUMN procurement_overrides.is_active IS 'Активно ли переопределение';
-
-    CREATE INDEX IF NOT EXISTS idx_procurement_overrides_company_id ON procurement_overrides (company_id);
-    CREATE INDEX IF NOT EXISTS idx_procurement_overrides_product_id ON procurement_overrides (product_id);
-    CREATE INDEX IF NOT EXISTS idx_procurement_overrides_supplier_id ON procurement_overrides (supplier_id);
-    CREATE INDEX IF NOT EXISTS idx_procurement_overrides_type ON procurement_overrides (override_type);
-    CREATE INDEX IF NOT EXISTS idx_procurement_overrides_is_active ON procurement_overrides (is_active);
-  END IF;
-END $$;
+ -- Примечание: procurement_overrides создается в миграции 004 (удалено из 003)
 
 -- ================================================================
 -- ТАБЛИЦА: Permissions - Разрешения
@@ -833,15 +690,7 @@ CREATE TRIGGER update_marketplaces_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-DO $$
-BEGIN
-  IF to_regclass('public.marketplace_settings') IS NOT NULL THEN
-    CREATE TRIGGER update_marketplace_settings_updated_at
-        BEFORE UPDATE ON marketplace_settings
-        FOR EACH ROW
-        EXECUTE FUNCTION update_updated_at_column();
-  END IF;
-END $$;
+-- Примечание: триггер update_marketplace_settings_updated_at создается в миграции 004
 
 CREATE TRIGGER update_marketplace_integration_settings_updated_at
     BEFORE UPDATE ON marketplace_integration_settings
@@ -888,15 +737,7 @@ CREATE TRIGGER update_sales_channels_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-DO $$
-BEGIN
-  IF to_regclass('public.procurement_overrides') IS NOT NULL THEN
-    CREATE TRIGGER update_procurement_overrides_updated_at
-        BEFORE UPDATE ON procurement_overrides
-        FOR EACH ROW
-        EXECUTE FUNCTION update_updated_at_column();
-  END IF;
-END $$;
+-- Примечание: триггер update_procurement_overrides_updated_at создается в миграции 004
 
 CREATE TRIGGER update_permissions_updated_at
     BEFORE UPDATE ON permissions
@@ -985,5 +826,5 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- ================================================================
--- ЗАВЕРШЕНИЕ МИГРАЦИИ 004
+-- ЗАВЕРШЕНИЕ МИГРАЦИИ 003
 -- ================================================================

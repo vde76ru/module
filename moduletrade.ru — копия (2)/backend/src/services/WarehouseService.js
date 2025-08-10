@@ -31,6 +31,52 @@ class WarehouseService {
   }
 
   /**
+   * Пересчет агрегирующих складов: суммирование остатков из компонент
+   */
+  static async recalculateAggregatedWarehouses(companyId) {
+    const client = await db.getClient();
+    try {
+      await client.query('BEGIN');
+      const mwRes = await client.query(`
+        SELECT DISTINCT mwc.multi_warehouse_id AS warehouse_id
+        FROM multi_warehouse_components mwc
+        JOIN warehouses w ON w.id = mwc.multi_warehouse_id
+        WHERE w.company_id = $1 AND mwc.is_active = true
+      `, [companyId]);
+
+      for (const row of mwRes.rows) {
+        const warehouseId = row.warehouse_id;
+        // Суммируем по продуктам из компонент
+        const sumRes = await client.query(`
+          SELECT wpl.product_id,
+                 SUM(wpl.available_quantity * COALESCE(mwc.weight, 1)) AS total_qty
+          FROM multi_warehouse_components mwc
+          JOIN warehouse_product_links wpl ON wpl.warehouse_id = mwc.component_warehouse_id
+          WHERE mwc.multi_warehouse_id = $1
+          GROUP BY wpl.product_id
+        `, [warehouseId]);
+
+        for (const p of sumRes.rows) {
+          await client.query(`
+            INSERT INTO warehouse_product_links (warehouse_id, product_id, quantity, available_quantity, last_updated, is_active, created_at, updated_at)
+            VALUES ($1, $2, $3, $3, NOW(), true, NOW(), NOW())
+            ON CONFLICT (warehouse_id, product_id)
+            DO UPDATE SET quantity = EXCLUDED.quantity, available_quantity = EXCLUDED.available_quantity, last_updated = NOW(), updated_at = NOW()
+          `, [warehouseId, p.product_id, Number(p.total_qty) || 0]);
+        }
+      }
+
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      logger.error('Failed to recalculate aggregated warehouses:', e);
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
    * Получение всех складов компании
    */
   static async getWarehouses(companyId, filters = {}) {

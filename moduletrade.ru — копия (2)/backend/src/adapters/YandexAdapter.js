@@ -2,92 +2,158 @@ const axios = require('axios');
 
 class YandexAdapter {
   constructor(config) {
-    this.campaignId = config.campaign_id;
+    // Новая конфигурация по рекомендациям Яндекс.Маркет
+    this.businessId = config.business_id || config.businessId;
+    this.campaignId = config.campaign_id || config.campaignId;
+    this.apiKey = config.api_key || config.apiKey;
+    this.integrationName = config.integration_name || config.integrationName || 'ModuleTrade/1.0';
+    this.baseURL = 'https://api.partner.market.yandex.ru';
+
+    // Обратная совместимость (устаревший OAuth)
     this.oauthToken = config.oauth_token;
-    this.baseURL = 'https://api.partner.market.yandex.ru/v2';
+
+    if (!this.apiKey && !this.oauthToken) {
+      throw new Error('YandexAdapter: api_key (рекомендуется) или oauth_token (устаревший) обязателен');
+    }
+
     this.client = axios.create({
       baseURL: this.baseURL,
       headers: {
-        'Authorization': `OAuth ${this.oauthToken}`,
+        ...(this.apiKey ? { 'Api-Key': this.apiKey } : { 'Authorization': `OAuth ${this.oauthToken}` }),
+        'X-Market-Integration': this.integrationName,
         'Content-Type': 'application/json'
       },
-      timeout: 30000
+      timeout: 45000
+    });
+
+    // Очередь запросов с экспоненциальным backoff под 429/420
+    this.queue = Promise.resolve();
+    this.backoffMs = 0;
+    this.maxBackoffMs = 60_000;
+  }
+
+  enqueue(executor) {
+    this.queue = this.queue.then(async () => {
+      let attempt = 0;
+      // эксп. backoff на уровне одного элемента очереди при ответе 429/420
+      while (true) {
+        try {
+          const res = await executor();
+          // сбрасываем backoff на успешном ответе
+          this.backoffMs = Math.max(0, Math.floor(this.backoffMs / 2));
+          return res;
+        } catch (error) {
+          const status = error?.response?.status;
+          if (status === 429 || status === 420) {
+            attempt += 1;
+            this.backoffMs = Math.min(this.maxBackoffMs, (this.backoffMs || 1000) * 2);
+            const wait = this.backoffMs + Math.floor(Math.random() * 500);
+            await new Promise(r => setTimeout(r, wait));
+            continue;
+          }
+          throw error;
+        }
+      }
+    });
+    return this.queue;
+  }
+
+  // Получение кампаний для businessId
+  async getCampaigns() {
+    if (!this.businessId) {
+      throw new Error('YandexAdapter.getCampaigns: business_id is required');
+    }
+    return this.enqueue(async () => {
+      const res = await this.client.get(`/businesses/${this.businessId}/campaigns`);
+      return res.data?.campaigns || [];
     });
   }
 
-  // Обновление остатков
-  async updateStock(stockUpdates) {
-    try {
-      const skus = stockUpdates.map(update => ({
-        sku: update.productId,
-        warehouseId: update.warehouseId || 1,
-        items: [{
-          type: 'FIT',
-          count: update.quantity,
-          updatedAt: new Date().toISOString()
-        }]
-      }));
-
-      const response = await this.client.put(
-        `/campaigns/${this.campaignId}/offers/stocks`,
-        { skus }
-      );
-
-      return response.data;
-    } catch (error) {
-      console.error('Yandex updateStock error:', error);
-      throw new Error(`Failed to update stock on Yandex: ${error.message}`);
-    }
+  // Обновление остатков FBS: PUT /campaigns/{campaignId}/warehouses/{warehouseId}/stocks
+  async updateStockFbs({ campaignId, warehouseId, items }) {
+    const cid = campaignId || this.campaignId;
+    if (!cid || !warehouseId) throw new Error('YandexAdapter.updateStockFbs: campaignId and warehouseId are required');
+    const payload = {
+      items: items.map(it => ({
+        sku: it.sku,
+        type: it.type || 'FIT',
+        count: it.count,
+        updatedAt: new Date().toISOString()
+      }))
+    };
+    return this.enqueue(async () => {
+      const res = await this.client.put(`/campaigns/${cid}/warehouses/${warehouseId}/stocks`, payload);
+      return res.data;
+    });
   }
 
-  // Обновление цен
-  async updatePrices(priceUpdates) {
-    try {
-      const offers = priceUpdates.map(update => ({
-        offerId: update.productId,
+  // Получение остатков: POST /campaigns/{campaignId}/offers/stocks
+  async getStocks({ campaignId, skus = [] }) {
+    const cid = campaignId || this.campaignId;
+    if (!cid) throw new Error('YandexAdapter.getStocks: campaignId is required');
+    const payload = { offerIds: skus };
+    return this.enqueue(async () => {
+      const res = await this.client.post(`/campaigns/${cid}/offers/stocks`, payload);
+      return res.data;
+    });
+  }
+
+  // Обновление цен на уровне Бизнеса (рекомендуется): POST /businesses/{businessId}/offer-prices/updates
+  async updatePricesBusiness(offers, { autoConfirmQuarantine = false } = {}) {
+    if (!this.businessId) throw new Error('YandexAdapter.updatePricesBusiness: business_id is required');
+    const payload = {
+      offers: offers.map(u => ({
+        offerId: u.offerId || u.productId,
         price: {
-          value: update.price,
-          currencyId: 'RUR',
-          discountBase: update.oldPrice
+          value: u.price,
+          currencyId: u.currencyId || 'RUR',
+          discountBase: u.oldPrice || undefined
         }
-      }));
+      }))
+    };
+    const result = await this.enqueue(async () => {
+      const res = await this.client.post(`/businesses/${this.businessId}/offer-prices/updates`, payload);
+      return res.data;
+    });
 
-      const response = await this.client.post(
-        `/campaigns/${this.campaignId}/offer-prices/updates`,
-        { offers }
-      );
-
-      return response.data;
-    } catch (error) {
-      console.error('Yandex updatePrices error:', error);
-      throw new Error(`Failed to update prices on Yandex: ${error.message}`);
+    if (autoConfirmQuarantine) {
+      try {
+        const q = await this.enqueue(async () => {
+          const res = await this.client.post(`/businesses/${this.businessId}/price-quarantine`, {});
+          return res.data;
+        });
+        const quarantined = q?.offers || [];
+        if (quarantined.length > 0) {
+          await this.enqueue(async () => {
+            await this.client.post(`/businesses/${this.businessId}/price-quarantine/confirm`, {
+              offers: quarantined.map(o => ({ offerId: o.offerId }))
+            });
+          });
+        }
+      } catch (_) { /* ignore quarantine errors */ }
     }
+    return result;
   }
 
-  // Получение заказов
+  // Получение заказов (по кампании)
   async getOrders(params = {}) {
-    try {
-      const queryParams = new URLSearchParams({
-        status: params.status || 'PROCESSING',
-        substatus: params.substatus || '',
-        fromDate: params.fromDate || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-        toDate: params.toDate || new Date().toISOString(),
-        page: params.page || 1,
-        pageSize: params.pageSize || 50
-      });
-
-      const response = await this.client.get(
-        `/campaigns/${this.campaignId}/orders?${queryParams}`
-      );
-
+    const cid = params.campaignId || this.campaignId;
+    if (!cid) throw new Error('YandexAdapter.getOrders: campaignId is required');
+    const queryParams = new URLSearchParams({
+      status: params.status || 'PROCESSING',
+      substatus: params.substatus || '',
+      fromDate: params.fromDate || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+      toDate: params.toDate || new Date().toISOString(),
+      page: params.page || 1,
+      pageSize: params.pageSize || 50
+    });
+    return this.enqueue(async () => {
+      const response = await this.client.get(`/campaigns/${cid}/orders?${queryParams}`);
       return {
         orders: response.data.orders,
         paging: response.data.paging
       };
-    } catch (error) {
-      console.error('Yandex getOrders error:', error);
-      throw new Error(`Failed to fetch orders from Yandex: ${error.message}`);
-    }
+    });
   }
 
   // Обновление статуса заказа
@@ -122,88 +188,70 @@ class YandexAdapter {
     }
   }
 
-  // Получение товаров
+  // Получение товаров (устар. кампания) — совместимость
   async getProducts(params = {}) {
-    try {
-      const queryParams = new URLSearchParams({
-        page: params.page || 1,
-        pageSize: params.pageSize || 200,
-        shopSku: params.shopSku || ''
-      });
-
-      const response = await this.client.get(
-        `/campaigns/${this.campaignId}/offer-mappings?${queryParams}`
-      );
-
+    const cid = params.campaignId || this.campaignId;
+    if (!cid) throw new Error('YandexAdapter.getProducts: campaignId is required');
+    const queryParams = new URLSearchParams({
+      page: params.page || 1,
+      pageSize: params.pageSize || 200,
+      shopSku: params.shopSku || ''
+    });
+    return this.enqueue(async () => {
+      const response = await this.client.get(`/campaigns/${cid}/offer-mappings?${queryParams}`);
       return {
         products: response.data.offerMappings,
         paging: response.data.paging
       };
-    } catch (error) {
-      console.error('Yandex getProducts error:', error);
-      throw new Error(`Failed to fetch products from Yandex: ${error.message}`);
-    }
+    });
   }
 
-  // Добавление/обновление товаров
-  async updateProducts(products) {
-    try {
-      const offerMappings = products.map(product => ({
-        offer: {
-          shopSku: product.offer_id,
-          name: product.name,
-          category: product.category,
-          manufacturer: product.manufacturer || '',
-          vendorCode: product.vendorCode || product.offer_id,
-          description: product.description || '',
-          barcode: product.barcode || [],
-          urls: product.images || [],
-          weight: {
-            value: product.weight || 0.1,
-            unit: 'KG'
-          },
-          dimensions: {
-            length: product.length || 10,
-            width: product.width || 10,
-            height: product.height || 10,
-            unit: 'CM'
-          }
+  // Добавление/обновление товаров (бизнес-уровень)
+  async updateProductsBusiness(products) {
+    if (!this.businessId) throw new Error('YandexAdapter.updateProductsBusiness: business_id is required');
+    const offerMappings = products.map(product => ({
+      offer: {
+        shopSku: product.offer_id || product.shopSku,
+        name: product.name,
+        category: product.category,
+        manufacturer: product.manufacturer || '',
+        vendorCode: product.vendorCode || product.offer_id || product.shopSku,
+        description: product.description || '',
+        barcode: Array.isArray(product.barcode) ? product.barcode : (product.barcode ? [product.barcode] : []),
+        urls: product.images || [],
+        weight: {
+          value: product.weight || 0.1,
+          unit: 'KG'
         },
-        mapping: {
-          marketSku: product.marketSku || null
+        dimensions: {
+          length: product.length || 10,
+          width: product.width || 10,
+          height: product.height || 10,
+          unit: 'CM'
         }
-      }));
-
+      },
+      mapping: {
+        marketSku: product.marketSku || null
+      }
+    }));
+    return this.enqueue(async () => {
       const response = await this.client.post(
-        `/campaigns/${this.campaignId}/offer-mappings/update`,
+        `/businesses/${this.businessId}/offer-mappings/update`,
         { offerMappings }
       );
-
       return response.data;
-    } catch (error) {
-      console.error('Yandex updateProducts error:', error);
-      throw new Error(`Failed to update products on Yandex: ${error.message}`);
-    }
+    });
   }
 
   // Скрытие/показ товаров
   async hideProducts(productIds, hide = true) {
-    try {
-      const hiddenOffers = productIds.map(id => ({
-        offerId: id,
-        hidden: hide
-      }));
-
-      const response = await this.client.post(
-        `/campaigns/${this.campaignId}/hidden-offers`,
-        { hiddenOffers }
-      );
-
+    const cid = this.campaignId;
+    if (!cid) throw new Error('YandexAdapter.hideProducts: campaignId is required');
+    const hiddenOffers = productIds.map(id => ({ offerId: id, hidden: hide }));
+    return this.enqueue(async () => {
+      const response = await this.client.post(`/campaigns/${cid}/hidden-offers`, { hiddenOffers });
       return response.data;
-    } catch (error) {
-      console.error('Yandex hideProducts error:', error);
-      throw new Error(`Failed to hide/show products on Yandex: ${error.message}`);
-    }
+    });
   }
 
   // Получение категорий
@@ -219,15 +267,12 @@ class YandexAdapter {
 
   // Получение складов
   async getWarehouses() {
-    try {
-      const response = await this.client.get(
-        `/campaigns/${this.campaignId}/warehouses`
-      );
+    const cid = this.campaignId;
+    if (!cid) throw new Error('YandexAdapter.getWarehouses: campaignId is required');
+    return this.enqueue(async () => {
+      const response = await this.client.get(`/campaigns/${cid}/warehouses`);
       return response.data.warehouses;
-    } catch (error) {
-      console.error('Yandex getWarehouses error:', error);
-      throw new Error(`Failed to fetch warehouses from Yandex: ${error.message}`);
-    }
+    });
   }
 
   // Получение отчета о продажах
@@ -251,18 +296,28 @@ class YandexAdapter {
 
   // Тестирование подключения
   async testConnection() {
+    // Проверяем как бизнес, так и кампанию при наличии
     try {
-      const response = await this.client.get(`/campaigns/${this.campaignId}`);
-      return { 
-        success: true, 
+      let campaignInfo = null;
+      if (this.campaignId) {
+        const response = await this.client.get(`/campaigns/${this.campaignId}`);
+        campaignInfo = response.data.campaign;
+      }
+      let campaigns = null;
+      if (this.businessId) {
+        const res = await this.client.get(`/businesses/${this.businessId}/campaigns`);
+        campaigns = res.data?.campaigns || [];
+      }
+      return {
+        success: true,
         message: 'Connection successful',
-        campaignInfo: response.data.campaign
+        campaignInfo,
+        campaigns
       };
     } catch (error) {
-      return { 
-        success: false, 
-        message: error.response?.data?.error?.message || error.message 
-      };
+      const status = error.response?.status;
+      const errMsg = error.response?.data?.error?.message || error.message;
+      return { success: false, message: errMsg, status };
     }
   }
 }

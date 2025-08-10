@@ -5,6 +5,8 @@ const { authenticate, checkPermission } = require('../middleware/auth');
 const db = require('../config/database');
 const supplierFactory = require('../adapters/SupplierFactory');
 const cryptoUtils = require('../utils/crypto');
+const SupplierIntegrationService = require('../services/SupplierIntegrationService');
+const BrandMappingService = require('../services/BrandMappingService');
 
 // Получение списка поставщиков
 router.get('/', authenticate, async (req, res) => {
@@ -326,7 +328,7 @@ router.post('/:id/search', authenticate, async (req, res) => {
 // Синхронизация товаров с поставщиком
 router.post('/:id/sync', authenticate, checkPermission('suppliers.sync'), async (req, res) => {
   try {
-    const { categories, brands, update_existing } = req.body;
+    const { categories, brands, update_existing, warehouse_ids } = req.body;
 
     const supplierResult = await db.query(
       'SELECT * FROM suppliers WHERE id = $1',
@@ -356,7 +358,8 @@ router.post('/:id/sync', authenticate, checkPermission('suppliers.sync'), async 
       const syncResult = await adapter.syncProducts({
         categories,
         brands,
-        update_existing: update_existing || false
+        updateExisting: update_existing || false,
+        warehouseIds: warehouse_ids || []
       });
 
       res.json({
@@ -471,5 +474,97 @@ router.put('/:id/public-id', authenticate, checkPermission('suppliers.update'), 
   } catch (error) {
     console.error('Update supplier public_id error:', error);
     res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+// Получение брендов поставщика (RS24 и др.)
+router.get('/:id/brands', authenticate, async (req, res) => {
+  try {
+    const data = await SupplierIntegrationService.getSupplierBrands(req.user.companyId, req.params.id, {});
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Get supplier brands error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
+  }
+});
+
+// Получение складов поставщика
+router.get('/:id/warehouses', authenticate, async (req, res) => {
+  try {
+    const data = await SupplierIntegrationService.getSupplierWarehouses(req.user.companyId, req.params.id);
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Get supplier warehouses error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
+  }
+});
+
+// Настройка интеграции поставщика (бренды/склады/расписание)
+router.post('/:id/setup-integration', authenticate, checkPermission('suppliers.update'), async (req, res) => {
+  try {
+    const companyId = req.user.companyId;
+    const supplierId = req.params.id;
+    const { selectedBrands = [], selectedWarehouses = [], settings = {}, syncSettings = {} } = req.body || {};
+
+    const integrationData = {
+      supplierId,
+      apiType: undefined, // возьмется из существующего поставщика в сервисе
+      apiConfig: undefined,
+      credentials: undefined,
+      settings,
+      selectedBrands,
+      selectedWarehouses,
+      syncSettings
+    };
+
+    const result = await SupplierIntegrationService.setupIntegration(companyId, integrationData);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    console.error('Setup supplier integration error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
+  }
+});
+
+// Предложения по маппингу бренда по внешнему названию
+router.get('/:id/brand-mapping/suggest', authenticate, async (req, res) => {
+  try {
+    const supplierId = req.params.id;
+    const { q } = req.query;
+    if (!q) return res.status(400).json({ success: false, error: 'Query param q is required' });
+    const data = await BrandMappingService.suggest(req.user.companyId, supplierId, q);
+    res.json({ success: true, data });
+  } catch (error) {
+    console.error('Brand mapping suggest error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
+  }
+});
+
+// Подтверждение синонима (внешнего названия) для бренда
+router.post('/:id/brand-mapping/confirm', authenticate, checkPermission('suppliers.update'), async (req, res) => {
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const supplierId = req.params.id;
+    const { brand_id, external_brand_name, settings, sync_enabled } = req.body || {};
+    if (!brand_id || !external_brand_name) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: 'brand_id and external_brand_name are required' });
+    }
+    await (require('../services/BrandMappingService')).addSynonym(
+      client,
+      req.user.companyId,
+      supplierId,
+      brand_id,
+      external_brand_name,
+      { settings: settings || {}, syncEnabled: sync_enabled }
+    );
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    console.error('Brand mapping confirm error:', error);
+    res.status(500).json({ success: false, error: error.message || 'Internal server error' });
+  } finally {
+    client.release();
   }
 });

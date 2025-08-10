@@ -1,28 +1,49 @@
 const crypto = require('crypto');
 
+/**
+ * Безопасные утилиты шифрования.
+ *
+ * Новая схема: AES-256-GCM, формат: ivHex:tagHex:cipherHex
+ * Backward-compat: поддержка legacy AES-256-CBC формата ivHex:cipherHex
+ */
 class CryptoUtils {
   constructor() {
-    // Используем переменную окружения или fallback ключ для разработки
-    this.secretKey = process.env.ENCRYPTION_KEY || 'defaultkey123456789012345678901234567890'; // 32 символа
-    this.algorithm = 'aes-256-cbc';
+    this.algorithm = 'aes-256-gcm';
+
+    const rawKey = process.env.ENCRYPTION_KEY;
+    if (!rawKey) {
+      // В production ключ обязателен
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('ENCRYPTION_KEY is required in production');
+      }
+      // В dev — используем предупреждение и временный ключ из DEV seed
+      // ВНИМАНИЕ: немедленно задайте ENCRYPTION_KEY в окружении
+      // Используем стабильный derivation, чтобы не ломать перезапуски
+      this.key = crypto.scryptSync('dev-insecure-key', 'moduletrade.salt', 32);
+    } else {
+      // Приводим любой ввод к 32 байтам с помощью scrypt
+      this.key = crypto.scryptSync(String(rawKey), 'moduletrade.salt', 32);
+    }
   }
 
   /**
-   * Шифрование данных
-   * @param {string|object} data - данные для шифрования
-   * @returns {string} - зашифрованная строка в формате iv:encrypted
+   * Шифрование (AES-256-GCM)
+   * @param {string|object} data
+   * @returns {string} формат ivHex:tagHex:cipherHex
    */
   encrypt(data) {
     try {
-      const text = typeof data === 'string' ? data : JSON.stringify(data);
-      const iv = crypto.randomBytes(16);
-      const cipher = crypto.createCipher(this.algorithm, this.secretKey);
-      cipher.setAutoPadding(true);
-      
-      let encrypted = cipher.update(text, 'utf8', 'hex');
-      encrypted += cipher.final('hex');
-      
-      return iv.toString('hex') + ':' + encrypted;
+      const plainText = typeof data === 'string' ? data : JSON.stringify(data);
+      const iv = crypto.randomBytes(12); // 96-bit IV для GCM
+      const cipher = crypto.createCipheriv(this.algorithm, this.key, iv);
+
+      const encrypted = Buffer.concat([
+        cipher.update(plainText, 'utf8'),
+        cipher.final()
+      ]);
+      const authTag = cipher.getAuthTag();
+
+      return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted.toString('hex')}`;
     } catch (error) {
       console.error('Encryption error:', error);
       throw new Error('Failed to encrypt data');
@@ -30,36 +51,53 @@ class CryptoUtils {
   }
 
   /**
-   * Дешифрование данных
-   * @param {string} encryptedData - зашифрованные данные в формате iv:encrypted
-   * @returns {object|string} - расшифрованные данные
+   * Дешифрование. Поддерживает:
+   *  - Новую схему AES-256-GCM: iv:tag:cipher
+   *  - Legacy AES-256-CBC: iv:cipher
+   * @param {string} payload
+   * @returns {object|string}
    */
-  decrypt(encryptedData) {
+  decrypt(payload) {
     try {
-      if (!encryptedData || typeof encryptedData !== 'string') {
+      if (!payload || typeof payload !== 'string') {
         throw new Error('Invalid encrypted data format');
       }
 
-      const parts = encryptedData.split(':');
-      if (parts.length !== 2) {
-        throw new Error('Invalid encrypted data format');
+      const parts = payload.split(':');
+
+      if (parts.length === 3) {
+        // Новая схема: iv:tag:cipher
+        const [ivHex, tagHex, cipherHex] = parts;
+        const iv = Buffer.from(ivHex, 'hex');
+        const authTag = Buffer.from(tagHex, 'hex');
+        const ciphertext = Buffer.from(cipherHex, 'hex');
+
+        const decipher = crypto.createDecipheriv(this.algorithm, this.key, iv);
+        decipher.setAuthTag(authTag);
+
+        const decrypted = Buffer.concat([
+          decipher.update(ciphertext),
+          decipher.final()
+        ]).toString('utf8');
+        return this.#tryParseJson(decrypted);
       }
 
-      const iv = Buffer.from(parts[0], 'hex');
-      const encrypted = parts[1];
-      
-      const decipher = crypto.createDecipher(this.algorithm, this.secretKey);
-      decipher.setAutoPadding(true);
-      
-      let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-      decrypted += decipher.final('utf8');
-      
-      // Пытаемся распарсить как JSON, если не получается - возвращаем как строку
-      try {
-        return JSON.parse(decrypted);
-      } catch {
-        return decrypted;
+      if (parts.length === 2) {
+        // Legacy CBC: iv:cipher (для обратной совместимости)
+        const [ivHex, cipherHex] = parts;
+        const iv = Buffer.from(ivHex, 'hex');
+        const ciphertext = Buffer.from(cipherHex, 'hex');
+
+        const legacyKey = this.key; // используем тот же derive
+        const decipher = crypto.createDecipheriv('aes-256-cbc', legacyKey, iv);
+        const decrypted = Buffer.concat([
+          decipher.update(ciphertext),
+          decipher.final()
+        ]).toString('utf8');
+        return this.#tryParseJson(decrypted);
       }
+
+      throw new Error('Invalid encrypted data format');
     } catch (error) {
       console.error('Decryption error:', error);
       throw new Error('Failed to decrypt data');
@@ -67,17 +105,28 @@ class CryptoUtils {
   }
 
   /**
-   * Проверка, зашифрованы ли данные
-   * @param {string} data - данные для проверки
-   * @returns {boolean} - true если данные зашифрованы
+   * Проверка, похоже ли значение на шифртекст, который мы поддерживаем
    */
-  isEncrypted(data) {
-    if (!data || typeof data !== 'string') {
-      return false;
+  isEncrypted(value) {
+    if (!value || typeof value !== 'string') return false;
+    const parts = value.split(':');
+    // Новая схема: 3 части hex
+    if (parts.length === 3) {
+      return parts.every(p => /^[0-9a-f]+$/i.test(p));
     }
-    
-    const parts = data.split(':');
-    return parts.length === 2 && /^[0-9a-f]+$/i.test(parts[0]) && /^[0-9a-f]+$/i.test(parts[1]);
+    // Legacy схема: 2 части hex
+    if (parts.length === 2) {
+      return parts.every(p => /^[0-9a-f]+$/i.test(p));
+    }
+    return false;
+  }
+
+  #tryParseJson(text) {
+    try {
+      return JSON.parse(text);
+    } catch (_) {
+      return text;
+    }
   }
 }
 

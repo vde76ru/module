@@ -25,11 +25,11 @@ class OzonAdapter {
           stock: quantity
         }]
       });
-      
+
       if (response.data.result[0].errors.length > 0) {
         throw new Error(response.data.result[0].errors[0].message);
       }
-      
+
       return response.data.result[0];
     } catch (error) {
       console.error('Ozon updateStock error:', error);
@@ -58,56 +58,81 @@ class OzonAdapter {
     }
   }
 
-  // Получение заказов
+  // Получение заказов (с поддержкой постраничной выборки при params.all === true)
   async getOrders(params = {}) {
     try {
-      const defaultParams = {
+      const limit = params.limit || 100;
+      let offset = params.offset || 0;
+      const base = {
         dir: 'DESC',
         filter: {
           since: params.since || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
           to: params.to || new Date().toISOString(),
           status: params.status || ''
         },
-        limit: params.limit || 100,
-        offset: params.offset || 0,
         with: {
           analytics_data: true,
           financial_data: true
         }
       };
 
-      const response = await this.client.post('/v3/posting/fbs/list', defaultParams);
-      
-      return {
-        orders: response.data.result.postings,
-        hasMore: response.data.result.has_next
-      };
+      if (!params.all) {
+        const response = await this.client.post('/v3/posting/fbs/list', { ...base, limit, offset });
+        return {
+          orders: response.data.result.postings,
+          hasMore: response.data.result.has_next
+        };
+      }
+
+      const allOrders = [];
+      let hasNext = true;
+      while (hasNext) {
+        const response = await this.client.post('/v3/posting/fbs/list', { ...base, limit, offset });
+        const chunk = response.data?.result?.postings || [];
+        allOrders.push(...chunk);
+        hasNext = Boolean(response.data?.result?.has_next);
+        offset += limit;
+        if (chunk.length === 0) break;
+      }
+      return { orders: allOrders, hasMore: false };
     } catch (error) {
       console.error('Ozon getOrders error:', error);
       throw new Error(`Failed to fetch orders from Ozon: ${error.message}`);
     }
   }
 
-  // Получение информации о товарах
+  // Получение информации о товарах (при params.all === true — чтение всех страниц через last_id)
   async getProducts(params = {}) {
     try {
-      const defaultParams = {
-        filter: {
-          visibility: 'ALL'
-        },
-        limit: params.limit || 100,
-        last_id: params.lastId || '',
+      const limit = params.limit || 100;
+      const base = {
+        filter: { visibility: 'ALL' },
         sort_by: params.sortBy || 'updated_at',
         sort_dir: params.sortDir || 'DESC'
       };
 
-      const response = await this.client.post('/v2/product/list', defaultParams);
-      
-      return {
-        products: response.data.result.items,
-        total: response.data.result.total,
-        lastId: response.data.result.last_id
-      };
+      if (!params.all) {
+        const response = await this.client.post('/v2/product/list', { ...base, limit, last_id: params.lastId || '' });
+        return {
+          products: response.data.result.items,
+          total: response.data.result.total,
+          lastId: response.data.result.last_id
+        };
+      }
+
+      const allProducts = [];
+      let lastId = '';
+      // Первоначальное значение может быть передано извне
+      if (params.lastId) lastId = params.lastId;
+      while (true) {
+        const response = await this.client.post('/v2/product/list', { ...base, limit, last_id: lastId });
+        const result = response.data?.result || {};
+        const items = result.items || [];
+        allProducts.push(...items);
+        if (!result.last_id || items.length === 0) break;
+        lastId = result.last_id;
+      }
+      return { products: allProducts, total: allProducts.length, lastId: null };
     } catch (error) {
       console.error('Ozon getProducts error:', error);
       throw new Error(`Failed to fetch products from Ozon: ${error.message}`);

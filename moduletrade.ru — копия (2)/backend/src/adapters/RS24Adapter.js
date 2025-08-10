@@ -1,10 +1,13 @@
+// ================================================================
+// ФАЙЛ: backend/src/adapters/RS24Adapter.js
+// Полный адаптер для работы с API Русский Свет (RS24)
+// Реализует все методы согласно документации: cdis.russvet.ru/rs
+// ================================================================
+
 const axios = require('axios');
 const logger = require('../utils/logger');
 const BaseSupplierAdapter = require('./BaseSupplierAdapter');
 
-/**
- * Адаптер для работы с API Русский Свет (RS24) по документации cdis.russvet.ru/rs
- */
 class RS24Adapter extends BaseSupplierAdapter {
   constructor(config) {
     super(config);
@@ -12,367 +15,801 @@ class RS24Adapter extends BaseSupplierAdapter {
     this.baseURL = config.base_url || 'https://cdis.russvet.ru/rs';
     this.login = config.login || config.username;
     this.password = config.password;
+
+    if (!this.login || !this.password) {
+      throw new Error('RS24: login and password are required');
+    }
+
     this.basicToken = Buffer.from(`${this.login}:${this.password}`).toString('base64');
+
+    // Настройки лимитов согласно документации
+    this.rateLimits = {
+      maxRequestsPerPeriod: 150,
+      periodSeconds: 30,
+      blockDurationHours: 1
+    };
 
     this.client = axios.create({
       baseURL: this.baseURL,
-      timeout: config.timeout || 30000,
+      timeout: config.timeout || 60000,
       headers: {
         'Content-Type': 'application/json',
         'User-Agent': 'ModuleTrade/1.0',
-        Authorization: `Basic ${this.basicToken}`
+        'Authorization': `Basic ${this.basicToken}`
       }
     });
 
+    // Система отслеживания запросов для соблюдения лимитов
+    this.requestHistory = [];
+    this.lastRequestTime = 0;
+    this.isBlocked = false;
+    this.blockUntil = null;
+
+    this.setupInterceptors();
+  }
+
+  setupInterceptors() {
+    // Перед запросом проверяем лимиты
+    this.client.interceptors.request.use(async (config) => {
+      await this.checkRateLimit();
+      return config;
+    });
+
+    // Обработка ответов и ошибок
     this.client.interceptors.response.use(
-      (response) => response,
+      (response) => {
+        this.recordRequest();
+        return response;
+      },
       (error) => {
+        this.recordRequest();
         this.handleApiError(error);
         return Promise.reject(error);
       }
     );
   }
 
-  async authenticate() {
-    // Basic auth is static; test by fetching stocks
-    const response = await this.client.get('/stocks');
-    if (response.status === 200) return true;
-    throw new Error('Authentication failed');
+  async checkRateLimit() {
+    const now = Date.now();
+
+    // Проверяем блокировку
+    if (this.isBlocked && this.blockUntil && now < this.blockUntil) {
+      const waitTime = Math.ceil((this.blockUntil - now) / 60000);
+      throw new Error(`RS24 API blocked. Wait ${waitTime} minutes.`);
+    }
+
+    // Очищаем старые запросы
+    const cutoff = now - (this.rateLimits.periodSeconds * 1000);
+    this.requestHistory = this.requestHistory.filter(time => time > cutoff);
+
+    // Проверяем лимит
+    if (this.requestHistory.length >= this.rateLimits.maxRequestsPerPeriod) {
+      const oldestRequest = Math.min(...this.requestHistory);
+      const waitTime = Math.ceil((this.rateLimits.periodSeconds * 1000 - (now - oldestRequest)) / 1000);
+
+      logger.warn(`RS24 rate limit reached. Waiting ${waitTime} seconds.`);
+      await this.sleep(waitTime * 1000);
+    }
+
+    // Минимальная задержка между запросами
+    const timeSinceLastRequest = now - this.lastRequestTime;
+    if (timeSinceLastRequest < 200) {
+      await this.sleep(200 - timeSinceLastRequest);
+    }
   }
 
+  recordRequest() {
+    const now = Date.now();
+    this.requestHistory.push(now);
+    this.lastRequestTime = now;
+  }
+
+  handleApiError(error) {
+    if (error.response?.status === 403) {
+      logger.error('RS24 API access blocked - rate limit exceeded');
+      this.isBlocked = true;
+      this.blockUntil = Date.now() + (this.rateLimits.blockDurationHours * 60 * 60 * 1000);
+      throw new Error('RS24 API access blocked due to rate limit. Try again in 1 hour.');
+    }
+
+    if (error.response?.status === 401) {
+      throw new Error('RS24 authentication failed. Check login and password.');
+    }
+
+    logger.error('RS24 API error:', {
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      data: error.response?.data
+    });
+  }
+
+  // ================================================================
+  // ОСНОВНЫЕ МЕТОДЫ API СОГЛАСНО ДОКУМЕНТАЦИИ
+  // ================================================================
+
+  /**
+   * 2. API Склады - GET /stocks
+   */
   async getWarehouses() {
     try {
       const response = await this.client.get('/stocks');
       const stocks = response.data?.Stocks || [];
-      return stocks.map((s) => ({ id: s.ORGANIZATION_ID, code: String(s.ORGANIZATION_ID), name: s.NAME, isActive: true }));
+
+      return stocks.map(stock => ({
+        id: stock.ORGANIZATION_ID,
+        code: String(stock.ORGANIZATION_ID),
+        name: stock.NAME,
+        type: 'supplier_warehouse',
+        isActive: true,
+        externalData: stock
+      }));
     } catch (error) {
       logger.error('RS24 getWarehouses error:', error);
       throw new Error(`Failed to fetch warehouses: ${error.message}`);
     }
   }
 
+  /**
+   * 3. API Список позиций - GET /position/{warehouseId}/{category}
+   */
   async getProducts(params = {}) {
     try {
-      const warehouseId = params.warehouseId;
-      const category = params.category || 'instock'; // instock|custom|partnerwhstock|all|custcode
-      const page = params.page || 1;
-      const rows = params.rows || Math.min(params.limit || 1000, 1000);
-      if (!warehouseId) throw new Error('warehouseId is required');
-      const response = await this.client.get(`/position/${warehouseId}/${category}`, { params: { page, rows } });
+      const {
+        warehouseId,
+        category = 'all', // instock|custom|partnerwhstock|all|custcode
+        page = 1,
+        rows = 1000,
+        brands = [],
+        withStocks = false,
+        withPrices = false,
+        withSpecs = false
+      } = params;
+
+      if (!warehouseId) {
+        throw new Error('warehouseId is required');
+      }
+
+      const requestParams = {
+        page: Math.max(1, page),
+        rows: Math.min(rows, 1000)
+      };
+
+      const response = await this.client.get(`/position/${warehouseId}/${category}`, {
+        params: requestParams
+      });
+
       const items = response.data?.items || [];
-      return this.transformProducts(items);
+      const meta = response.data?.meta || {};
+
+      let products = this.transformProducts(items);
+
+      // Фильтруем по брендам если указаны
+      if (brands.length > 0) {
+        products = products.filter(product =>
+          brands.some(brand =>
+            product.brand && product.brand.toLowerCase().includes(brand.toLowerCase())
+          )
+        );
+      }
+
+      // Дополнительные данные если запрошены
+      if (withStocks || withPrices || withSpecs) {
+        products = await this.enrichProductData(products, warehouseId, {
+          withStocks,
+          withPrices,
+          withSpecs
+        });
+      }
+
+      return {
+        products,
+        pagination: {
+          page: page,
+          totalPages: meta.last_page || 1,
+          totalItems: meta.rows_count || products.length,
+          hasNextPage: page < (meta.last_page || 1)
+        }
+      };
     } catch (error) {
       logger.error('RS24 getProducts error:', error);
       throw new Error(`Failed to fetch products: ${error.message}`);
     }
   }
 
-  async getProductDetails(productCode /* RSCode */) {
+  /**
+   * 4. API Поиск товара по артикулу - POST /finditem
+   */
+  async findProductByVendorCode(vendorCode) {
     try {
-      const response = await this.client.get(`/specs/${productCode}`);
-      // specs structure is extensive; map core fields
-      const info = (response.data?.INFO || [])[0] || {};
-      const images = response.data?.IMG?.map((i) => ({ url: i.URL })) || [];
-      return this.transformProduct({
-        CODE: productCode,
-        NAME: info.DESCRIPTION,
-        BRAND: info.BRAND,
-        VENDOR_CODE: info.VENDOR_CODE,
-        UOM: info.PRIMARY_UOM,
-        UOM_OKEI: info.UOM_OKEI,
-        MULTIPLICITY: info.MULTIPLICITY,
-        IMG: images
+      const response = await this.client.post('/finditem', {
+        vendorCode: vendorCode
       });
+
+      const items = response.data?.items || [];
+      return this.transformProducts(items);
     } catch (error) {
-      logger.error('RS24 getProductDetails error:', error);
-      throw new Error(`Failed to fetch product details: ${error.message}`);
+      logger.error('RS24 findProductByVendorCode error:', error);
+      throw new Error(`Failed to find product: ${error.message}`);
     }
   }
 
-  async getPrices(productCodes = []) {
+  /**
+   * 5.1 Попозиционная выгрузка цен - GET /price/{productCode}
+   */
+  async getProductPrice(productCode) {
     try {
-      if (!Array.isArray(productCodes)) productCodes = [productCodes];
-      const chunks = (arr, size) => arr.reduce((acc, _, i) => (i % size ? acc : [...acc, arr.slice(i, i + size)]), []);
-      const results = [];
-      for (const group of chunks(productCodes, 50)) {
-        const response = await this.client.post('/massprice', { items: group });
-        for (const item of response.data || []) {
-          const priceObj = item.Price || {};
-          results.push({
-            productId: item.RSCode,
-            externalProductId: item.RSCode,
-            price: this.parsePrice(priceObj.Personal ?? priceObj.Retail),
-            oldPrice: null,
-            currency: 'RUB',
-            minQuantity: 1,
-            discounts: []
-          });
+      const response = await this.client.get(`/price/${productCode}`);
+      return this.transformPrice(response.data?.Price);
+    } catch (error) {
+      logger.error('RS24 getProductPrice error:', error);
+      throw new Error(`Failed to get price: ${error.message}`);
+    }
+  }
+
+  /**
+   * 5.2 Массовая выгрузка цен - POST /massprice
+   */
+  async getProductPrices(productCodes) {
+    try {
+      const chunks = this.chunkArray(productCodes, 50);
+      const allPrices = [];
+
+      for (const chunk of chunks) {
+        const response = await this.client.post('/massprice', {
+          items: chunk.map(code => parseInt(code, 10) || code)
+        });
+
+        if (Array.isArray(response.data)) {
+          const prices = response.data.map(item => ({
+            productCode: item.RSCode,
+            ...this.transformPrice(item.Price)
+          }));
+          allPrices.push(...prices);
+        }
+
+        if (chunks.length > 1) {
+          await this.sleep(300);
         }
       }
-      return results;
+
+      return allPrices;
     } catch (error) {
-      logger.error('RS24 getPrices error:', error);
-      throw new Error(`Failed to fetch prices: ${error.message}`);
+      logger.error('RS24 getProductPrices error:', error);
+      throw new Error(`Failed to get prices: ${error.message}`);
     }
   }
 
-  async getStockLevels(productCodes = [], warehouseId) {
+  /**
+   * 6.1 Попозиционная выгрузка остатков - GET /residue/{warehouseId}/{productCode}
+   */
+  async getProductStock(warehouseId, productCode) {
     try {
-      if (!warehouseId) throw new Error('warehouseId is required for stock levels');
-      if (!Array.isArray(productCodes)) productCodes = [productCodes];
-      const results = [];
-      for (const code of productCodes) {
-        const response = await this.client.get(`/residue/${warehouseId}/${code}`);
-        const body = response.data || {};
-        results.push({
-          productId: code,
-          externalProductId: code,
-          warehouseId,
-          quantity: this.parseQuantity(body.Residue),
-          reserved: 0,
-          available: this.parseQuantity(body.Residue),
-          inTransit: 0,
-          partnerQuantity: body.partnerQuantityInfo?.partnerQuantity || 0,
-          estimatedArrivalDate: body.partnerQuantityInfo?.estimatedArrivalDate || null
-        });
-        // To respect rate limits: slight delay
-        await this.sleep(50);
-      }
-      return results;
+      const response = await this.client.get(`/residue/${warehouseId}/${productCode}`);
+      return this.transformStock(response.data);
     } catch (error) {
-      logger.error('RS24 getStockLevels error:', error);
-      throw new Error(`Failed to fetch stock levels: ${error.message}`);
+      logger.error('RS24 getProductStock error:', error);
+      throw new Error(`Failed to get stock: ${error.message}`);
     }
   }
 
-  // Массовая выгрузка остатков: /residue/all/{warehouseId}
-  async getAllStocks(warehouseId, options = {}) {
-    const { page = 1, rows = 200, category = 'skl', partnerstock = 'N' } = options;
-    const response = await this.client.get(`/residue/all/${warehouseId}`, { params: { page, rows, category, partnerstock } });
-    const residues = response.data?.residues || [];
-    return residues.map((r) => ({
-      productId: r.CODE,
-      externalProductId: r.CODE,
-      warehouseId,
-      quantity: this.parseQuantity(r.RESIDUE),
-      available: this.parseQuantity(r.RESIDUE),
-      unit: r.UOM,
-      unitOkei: r.UOM_OKEI,
-      category: r.CATEGORY,
-      partnerQuantityInfo: r.partnerQuantityInfo || null
-    }));
-  }
-
-  // Массовая выгрузка остатков производителя: /partnerwhstock/all/{warehouseId}
-  async getAllPartnerWarehouseStock(warehouseId, options = {}) {
-    const { page = 1, rows = 500, availability = 'instock' } = options;
-    const response = await this.client.get(`/partnerwhstock/all/${warehouseId}`, { params: { page, rows, availability } });
-    const items = response.data?.partnerWarehouseStock || [];
-    const meta = response.data?.meta || {};
-    return {
-      items: items.map((i) => ({
-        productId: i.RSCode,
-        partnerQuantity: this.parseQuantity(i.partnerQuantity),
-        partnerUOM: i.partnerUOM,
-        partnerUOMOKEI: i.partnerUOMOKEI,
-        estimatedArrivalDate: i.estimatedArrivalDate,
-        partnerQuantityDate: i.partnerQuantityDate
-      })),
-      meta
-    };
-  }
-
-  async createOrder(orderData) {
+  /**
+   * 6.2 Массовая выгрузка остатков - GET /residue/all/{warehouseId}
+   */
+  async getWarehouseStocks(warehouseId, options = {}) {
     try {
-      const order = {
-        external_order_id: orderData.externalOrderId,
-        warehouse_id: orderData.warehouseId,
-        delivery_type: orderData.deliveryType || 'pickup',
-        delivery_address: orderData.deliveryAddress,
-        comment: orderData.comment,
-        items: orderData.items.map((item) => ({
-          product_id: item.productId,
-          quantity: item.quantity,
-          price: item.price
-        }))
+      const {
+        page = 1,
+        rows = 200,
+        category = 'all',
+        partnerstock = 'Y'
+      } = options;
+
+      const maxRows = partnerstock === 'Y' ? 90 : 200;
+      const requestParams = {
+        page: Math.max(1, page),
+        rows: Math.min(rows, maxRows),
+        category,
+        partnerstock
       };
-      const response = await this.client.post('/orders', order);
+
+      const response = await this.client.get(`/residue/all/${warehouseId}`, {
+        params: requestParams
+      });
+
+      const residues = response.data?.residues || [];
+      const stocks = residues.map(residue => this.transformStock(residue));
+
+      const totalPages = parseInt(response.headers['x-pagination-page-count'] || '1');
+      const totalCount = parseInt(response.headers['x-pagination-total-count'] || stocks.length);
+
       return {
-        success: true,
-        orderId: response.data.order.id,
-        externalOrderId: response.data.order.external_id,
-        status: response.data.order.status,
-        totalAmount: response.data.order.total_amount,
-        items: response.data.order.items
+        stocks,
+        pagination: {
+          page,
+          totalPages,
+          totalItems: totalCount,
+          hasNextPage: page < totalPages
+        }
       };
     } catch (error) {
-      logger.error('RS24 createOrder error:', error);
-      throw new Error(`Failed to create order: ${error.message}`);
+      logger.error('RS24 getWarehouseStocks error:', error);
+      throw new Error(`Failed to get warehouse stocks: ${error.message}`);
     }
   }
 
-  async getOrderStatus(orderId) {
+  /**
+   * 6.3 Массовая выгрузка остатков производителя - GET /partnerwhstock/all/{warehouseId}
+   */
+  async getPartnerWarehouseStocks(warehouseId, options = {}) {
     try {
-      const response = await this.client.get(`/orders/${orderId}`);
+      const {
+        page = 1,
+        rows = 500,
+        availability = 'instock'
+      } = options;
+
+      const requestParams = {
+        page: Math.max(1, page),
+        rows: Math.min(rows, 500),
+        availability
+      };
+
+      const response = await this.client.get(`/partnerwhstock/all/${warehouseId}`, {
+        params: requestParams
+      });
+
+      const stocks = (response.data?.partnerWarehouseStock || []).map(stock => ({
+        productCode: stock.RSCode,
+        partnerQuantity: stock.partnerQuantity,
+        partnerUOM: stock.partnerUOM,
+        partnerUOMOKEI: stock.partnerUOMOKEI,
+        estimatedArrivalDate: stock.estimatedArrivalDate,
+        partnerQuantityDate: stock.partnerQuantityDate
+      }));
+
+      const meta = response.data?.meta || {};
+
       return {
-        orderId: response.data.order.id,
-        externalOrderId: response.data.order.external_id,
-        status: response.data.order.status,
-        statusText: this.mapOrderStatus(response.data.order.status),
-        totalAmount: response.data.order.total_amount,
-        createdAt: response.data.order.created_at,
-        updatedAt: response.data.order.updated_at,
-        items: response.data.order.items
+        stocks,
+        pagination: {
+          page,
+          totalPages: meta.lastPage || 1,
+          totalItems: meta.rowCount || stocks.length,
+          hasNextPage: page < (meta.lastPage || 1)
+        }
       };
     } catch (error) {
-      logger.error('RS24 getOrderStatus error:', error);
-      throw new Error(`Failed to get order status: ${error.message}`);
+      logger.error('RS24 getPartnerWarehouseStocks error:', error);
+      throw new Error(`Failed to get partner warehouse stocks: ${error.message}`);
     }
   }
 
-  async cancelOrder(orderId, reason = '') {
+  /**
+   * 7. API Характеристики - GET /specs/{productCode}
+   */
+  async getProductSpecs(productCode) {
     try {
-      const response = await this.client.post(`/orders/${orderId}/cancel`, { reason });
-      return { success: true, message: 'Order cancelled successfully', order: response.data.order };
+      const response = await this.client.get(`/specs/${productCode}`);
+      return this.transformSpecs(response.data);
     } catch (error) {
-      logger.error('RS24 cancelOrder error:', error);
-      throw new Error(`Failed to cancel order: ${error.message}`);
+      logger.error('RS24 getProductSpecs error:', error);
+      throw new Error(`Failed to get product specs: ${error.message}`);
     }
   }
 
+  // ================================================================
+  // МЕТОДЫ СИНХРОНИЗАЦИИ И МАССОВЫХ ОПЕРАЦИЙ
+  // ================================================================
+
+  /**
+   * Синхронизация всех товаров с указанными брендами
+   */
   async syncProducts(options = {}) {
     try {
       logger.info('Starting RS24 product sync', options);
-      const { brands = [], categories = [], updateExisting = false } = options;
+
+      const {
+        brands = [],
+        categories = [],
+        updateExisting = false,
+        warehouseIds = [],
+        withPrices = true,
+        withStocks = true,
+        withSpecs = false
+      } = options;
+
+      // Получаем склады
       const warehouses = await this.getWarehouses();
-      const activeWarehouses = warehouses.filter((w) => w.isActive);
-      const allProducts = [];
+      const activeWarehouses = warehouseIds.length > 0
+        ? warehouses.filter(w => warehouseIds.includes(w.id) || warehouseIds.includes(String(w.id)))
+        : warehouses.filter(w => w.isActive);
 
-      for (const warehouse of activeWarehouses) {
-        const products = await this.getProducts({
-          warehouseId: warehouse.id,
-          brands,
-          inStock: true,
-          limit: 5000
-        });
-
-        if (products.length > 0) {
-          const productIds = products.map((p) => p.externalId);
-          const [prices, stocks] = await Promise.all([
-            this.getPrices(productIds, warehouse.id),
-            this.getStockLevels(productIds, warehouse.id)
-          ]);
-
-          products.forEach((product) => {
-            const price = prices.find((p) => p.externalProductId === product.externalId);
-            const stock = stocks.find((s) => s.externalProductId === product.externalId);
-            product.price = price?.price || 0;
-            product.oldPrice = price?.oldPrice;
-            product.stock = stock?.available || 0;
-            product.warehouseId = warehouse.id;
-            product.warehouseName = warehouse.name;
-          });
-        }
-
-        allProducts.push(...products);
+      if (activeWarehouses.length === 0) {
+        throw new Error('No active warehouses found');
       }
 
-      logger.info(`Synced ${allProducts.length} products from RS24`);
-      return { success: true, totalProducts: allProducts.length, products: allProducts, warehouses: activeWarehouses };
+      const allProducts = [];
+      const syncStats = {
+        totalWarehouses: activeWarehouses.length,
+        processedWarehouses: 0,
+        totalProducts: 0,
+        processedProducts: 0,
+        errors: []
+      };
+
+      // Проходим по каждому складу
+      for (const warehouse of activeWarehouses) {
+        try {
+          logger.info(`Processing warehouse: ${warehouse.name} (${warehouse.id})`);
+
+          let currentPage = 1;
+          let hasNextPage = true;
+
+          while (hasNextPage) {
+            const result = await this.getProducts({
+              warehouseId: warehouse.id,
+              category: 'all',
+              page: currentPage,
+              rows: 1000,
+              brands,
+              withStocks,
+              withPrices,
+              withSpecs
+            });
+
+            // Добавляем информацию о складе к каждому товару
+            const warehouseProducts = result.products.map(product => ({
+              ...product,
+              sourceWarehouse: {
+                id: warehouse.id,
+                name: warehouse.name,
+                code: warehouse.code
+              }
+            }));
+
+            allProducts.push(...warehouseProducts);
+            syncStats.totalProducts += warehouseProducts.length;
+
+            hasNextPage = result.pagination.hasNextPage;
+            currentPage++;
+
+            await this.sleep(100);
+          }
+
+          syncStats.processedWarehouses++;
+
+        } catch (warehouseError) {
+          const error = `Warehouse ${warehouse.name}: ${warehouseError.message}`;
+          syncStats.errors.push(error);
+          logger.error(error);
+        }
+      }
+
+      logger.info(`RS24 sync completed: ${allProducts.length} products from ${syncStats.processedWarehouses} warehouses`);
+
+      return {
+        success: true,
+        products: allProducts,
+        warehouses: activeWarehouses,
+        stats: syncStats
+      };
+
     } catch (error) {
       logger.error('RS24 syncProducts error:', error);
       throw new Error(`Product sync failed: ${error.message}`);
     }
   }
 
+  /**
+   * Получение списка брендов (агрегация по товарам)
+   */
+  async getBrands(options = {}) {
+    try {
+      const { pages = 5, warehouseIds = [] } = options;
+      const unique = new Set();
+
+      const warehouses = await this.getWarehouses();
+      const targetWarehouses = warehouseIds.length > 0
+        ? warehouses.filter(w => warehouseIds.includes(w.id) || warehouseIds.includes(String(w.id)))
+        : warehouses.slice(0, 3);
+
+      for (const warehouse of targetWarehouses) {
+        logger.info(`Collecting brands from warehouse: ${warehouse.name}`);
+
+        for (let page = 1; page <= pages; page++) {
+          try {
+            const result = await this.getProducts({
+              warehouseId: warehouse.id,
+              category: 'all',
+              page,
+              rows: 1000
+            });
+
+            result.products.forEach(product => {
+              if (product.brand) {
+                unique.add(product.brand.trim());
+              }
+            });
+
+            if (!result.pagination.hasNextPage) break;
+
+            await this.sleep(100);
+          } catch (pageError) {
+            logger.warn(`Error on page ${page} for warehouse ${warehouse.name}:`, pageError.message);
+            break;
+          }
+        }
+      }
+
+      const brands = Array.from(unique).sort().map(name => ({
+        name,
+        code: name,
+        normalizedName: name.toLowerCase()
+      }));
+
+      logger.info(`Found ${brands.length} unique brands`);
+      return brands;
+
+    } catch (error) {
+      logger.error('RS24 getBrands error:', error);
+      throw new Error(`Failed to get brands: ${error.message}`);
+    }
+  }
+
+  /**
+   * Поиск товаров
+   */
   async searchProducts(query, options = {}) {
     try {
-      const response = await this.client.post('/finditem', { vendorCode: query });
-      const items = response.data?.items || [];
-      // Map to product structure
-      const mapped = items.map((i) => ({
-        CODE: i.code,
-        NAME: i.name,
-        BRAND: i.brand,
-        VENDOR_CODE: i.vendorCode,
-        UOM: i.uom,
-        UOM_OKEI: i.uomOkei
-      }));
-      return this.transformProducts(mapped);
+      return await this.findProductByVendorCode(query);
     } catch (error) {
       logger.error('RS24 searchProducts error:', error);
       throw new Error(`Product search failed: ${error.message}`);
     }
   }
 
+  // ================================================================
+  // ТРАНСФОРМАЦИЯ ДАННЫХ
+  // ================================================================
+
   transformProduct(data) {
     return {
-      externalId: data.CODE || data.id || data.external_id,
-      sku: data.VENDOR_CODE || data.article || data.sku,
+      externalId: data.CODE || data.code,
+      sku: data.VENDOR_CODE || data.vendorCode,
       name: data.NAME || data.name,
       brand: data.BRAND || data.brand,
       category: data.CATEGORY || data.category,
       description: data.description || '',
+      unit: data.UOM || data.uom || 'шт',
+      unitOKEI: data.UOM_OKEI || data.uomOkei,
+      multiplicity: data.MULTIPLICITY || data.multiplicity || 1,
+      minOrderQuantity: data.MIN_ORDER_QUANTITY || 1,
       barcode: data.barcode,
       weight: data.weight ? parseFloat(data.weight) : null,
-      length: data.length ? parseFloat(data.length) : null,
-      width: data.width ? parseFloat(data.width) : null,
-      height: data.height ? parseFloat(data.height) : null,
-      volume: data.volume ? parseFloat(data.volume) : null,
-      images: this.extractImages(data.IMG || data.images),
-      attributes: data.properties || {},
-      manufacturer: data.manufacturer,
-      countryOfOrigin: data.ORIGIN_COUNTRY || data.country_of_origin,
-      minOrderQuantity: data.MIN_ORDER_QUANTITY || 1,
-      multiplicity: data.MULTIPLICITY || 1,
-      unit: data.UOM || data.unit || 'шт'
+      externalData: {
+        originalData: data,
+        supplier: 'rs24'
+      }
     };
   }
 
   transformProducts(products) {
-    return products.map((product) => this.transformProduct(product));
+    if (!Array.isArray(products)) return [];
+    return products.map(product => this.transformProduct(product));
   }
 
-  extractImages(images) {
-    if (!images) return [];
-    if (Array.isArray(images)) {
-      return images.map((img) => ({ url: img.url || img, type: img.type || 'main', position: img.position || 0 }));
-    }
-    if (typeof images === 'string') {
-      return images.split(',').map((url) => ({ url: url.trim(), type: 'main', position: 0 }));
-    }
-    return [];
-  }
+  transformPrice(priceData) {
+    if (!priceData) return null;
 
-  mapOrderStatus(status) {
-    const statusMap = {
-      new: 'Новый',
-      confirmed: 'Подтвержден',
-      processing: 'В обработке',
-      ready: 'Готов к выдаче',
-      shipped: 'Отгружен',
-      delivered: 'Доставлен',
-      cancelled: 'Отменен',
-      returned: 'Возвращен'
+    return {
+      personal: priceData.Personal,
+      personalWithVAT: priceData.Personal_w_VAT,
+      retail: priceData.Retail,
+      retailWithVAT: priceData.Retail_w_VAT,
+      mrc: priceData.MRC,
+      mrcWithVAT: priceData.MRC_w_VAT,
+      hasMRC: priceData.AvailabilityMRC === 'Y',
+      currency: 'RUB'
     };
-    return statusMap[status] || status;
   }
+
+  transformStock(stockData) {
+    if (!stockData) return null;
+
+    const result = {
+      productCode: stockData.CODE || stockData.productCode,
+      quantity: stockData.Residue || stockData.RESIDUE || 0,
+      unit: stockData.UOM || stockData.uom,
+      unitOKEI: stockData.UOM_OKEI || stockData.uomOkei,
+      category: stockData.category || stockData.CATEGORY,
+      qtyLots: stockData.qtyLots ? stockData.qtyLots.split(';').map(Number) : []
+    };
+
+    // Информация о партнерских остатках
+    if (stockData.partnerQuantityInfo) {
+      result.partnerStock = {
+        quantity: stockData.partnerQuantityInfo.partnerQuantity,
+        unit: stockData.partnerQuantityInfo.partnerUOM,
+        unitOKEI: stockData.partnerQuantityInfo.partnerUOMOKEI,
+        estimatedArrivalDate: stockData.partnerQuantityInfo.estimatedArrivalDate,
+        lastUpdated: stockData.partnerQuantityInfo.partnerQuantityDate
+      };
+    }
+
+    return result;
+  }
+
+  transformSpecs(specsData) {
+    if (!specsData) return null;
+
+    const info = specsData.INFO?.[0] || {};
+    const specs = specsData.SPECS || [];
+    const images = specsData.IMG || [];
+    const videos = specsData.VIDEO || [];
+    const certificates = specsData.CERTIFICATE || [];
+    const barcodes = specsData.BARCODE || [];
+
+    return {
+      info: {
+        description: info.DESCRIPTION,
+        unit: info.PRIMARY_UOM,
+        unitOKEI: info.UOM_OKEI,
+        multiplicity: info.MULTIPLICITY,
+        itemsPerUnit: info.ITEMS_PER_UNIT,
+        etimClass: info.ETIM_CLASS,
+        etimClassName: info.ETIM_CLASS_NAME,
+        etimGroup: info.ETIM_GROUP,
+        etimGroupName: info.ETIM_GROUP_NAME,
+        vendorCode: info.VENDOR_CODE,
+        brand: info.BRAND,
+        itemId: info.ITEM_ID,
+        series: info.SERIES,
+        minpromtorgCode: info.MINPROMTORG_CODE,
+        originCountry: info.ORIGIN_COUNTRY,
+        warranty: info.WARRANTY,
+        longDescription: info.LONG_DESCRIPTION,
+        categories: info.RS_CATALOG || [],
+        logisticDetails: info.LOGISTIC_DETAILS?.[0] || {}
+      },
+      specifications: specs.map(spec => ({
+        code: spec.FEATURE_CODE,
+        name: spec.NAME,
+        value: spec.VALUE,
+        unit: spec.UOM
+      })),
+      media: {
+        images: images.map(img => ({ url: img.URL })),
+        videos: videos.map(video => ({ url: video.URL }))
+      },
+      documents: {
+        certificates: certificates.map(cert => ({
+          url: cert.URL,
+          number: cert.CERT_NUM
+        })),
+        catalogs: (specsData.CATALOG_BROCHURE || []).map(cat => ({ url: cat.URL })),
+        passports: (specsData.PASSPORT || []).map(pass => ({ url: pass.URL }))
+      },
+      barcodes: barcodes.map(bc => ({
+        ean: bc.EAN,
+        description: bc.DESCRIPTION
+      })),
+      relatedItems: {
+        related: (specsData.RELATED_ITEMS || []).map(item => item.RELATED_ITEM_CODE),
+        similar: (specsData.SIMILAR_ITEMS || []).map(item => item.SIMILAR_ITEM_CODE)
+      }
+    };
+  }
+
+  // ================================================================
+  // ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ
+  // ================================================================
+
+  async enrichProductData(products, warehouseId, options = {}) {
+    const { withStocks, withPrices, withSpecs } = options;
+    const enrichedProducts = [];
+
+    for (const product of products) {
+      const enriched = { ...product };
+
+      try {
+        if (withStocks) {
+          enriched.stock = await this.getProductStock(warehouseId, product.externalId);
+        }
+
+        if (withPrices) {
+          enriched.price = await this.getProductPrice(product.externalId);
+        }
+
+        if (withSpecs) {
+          enriched.specs = await this.getProductSpecs(product.externalId);
+        }
+
+        enrichedProducts.push(enriched);
+        await this.sleep(50);
+
+      } catch (error) {
+        logger.warn(`Failed to enrich product ${product.externalId}:`, error.message);
+        enrichedProducts.push(enriched);
+      }
+    }
+
+    return enrichedProducts;
+  }
+
+  chunkArray(array, size) {
+    const chunks = [];
+    for (let i = 0; i < array.length; i += size) {
+      chunks.push(array.slice(i, i + size));
+    }
+    return chunks;
+  }
+
+  sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // ================================================================
+  // ТЕСТИРОВАНИЕ ПОДКЛЮЧЕНИЯ
+  // ================================================================
 
   async testConnection() {
     try {
       const startTime = Date.now();
-      await this.authenticate();
+
       const warehouses = await this.getWarehouses();
+
+      let sampleProducts = [];
+      if (warehouses.length > 0) {
+        const sampleResult = await this.getProducts({
+          warehouseId: warehouses[0].id,
+          category: 'all',
+          page: 1,
+          rows: 10
+        });
+        sampleProducts = sampleResult.products;
+      }
+
       const responseTime = Date.now() - startTime;
+
       return {
         success: true,
-        message: 'Connection successful',
+        message: 'RS24 connection successful',
         responseTime,
-        data: { warehousesCount: warehouses.length, warehouses: warehouses.map((w) => ({ id: w.id, name: w.name })) }
+        data: {
+          warehousesCount: warehouses.length,
+          warehouses: warehouses.slice(0, 5).map(w => ({
+            id: w.id,
+            name: w.name
+          })),
+          sampleProductsCount: sampleProducts.length,
+          rateLimitsInfo: {
+            requestsInPeriod: this.requestHistory.length,
+            maxRequests: this.rateLimits.maxRequestsPerPeriod,
+            isBlocked: this.isBlocked
+          }
+        }
       };
+
     } catch (error) {
       logger.error('RS24 connection test failed:', error);
-      return { success: false, message: error.message, responseTime: null };
+      return {
+        success: false,
+        message: error.message,
+        responseTime: null
+      };
+    }
+  }
+
+  // ================================================================
+  // АУТЕНТИФИКАЦИЯ
+  // ================================================================
+
+  async authenticate() {
+    try {
+      await this.getWarehouses();
+      return true;
+    } catch (error) {
+      throw new Error(`RS24 authentication failed: ${error.message}`);
     }
   }
 }

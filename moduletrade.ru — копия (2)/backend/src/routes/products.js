@@ -916,14 +916,55 @@ router.get('/export', authenticate, checkPermission('products.export'), async (r
           return row;
         });
 
-        // TODO: Реализовать экспорт в различные форматы
-        // Пока возвращаем JSON
-        res.json({
-            success: true,
-            data: rows,
-            format: format,
-            total: rows.length
-        });
+        if (format === 'json') {
+          return res.json({ success: true, data: rows, format, total: rows.length });
+        }
+
+        if (format === 'csv') {
+          const stringify = require('csv-stringify').stringify;
+          const columns = [
+            'internal_code', 'name', 'description', 'sku', 'barcode',
+            'brand_name', 'category_name', 'weight', 'length', 'width', 'height',
+            'image_url', 'status', 'is_active', 'created_at', 'updated_at'
+          ];
+          return stringify(rows, { header: true, columns }, (err, output) => {
+            if (err) throw err;
+            res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+            res.setHeader('Content-Disposition', 'attachment; filename="products.csv"');
+            res.send(output);
+          });
+        }
+
+        if (format === 'xlsx') {
+          const ExcelJS = require('exceljs');
+          const workbook = new ExcelJS.Workbook();
+          const sheet = workbook.addWorksheet('Products');
+          sheet.columns = [
+            { header: 'Код', key: 'internal_code' },
+            { header: 'Название', key: 'name' },
+            { header: 'Описание', key: 'description' },
+            { header: 'SKU', key: 'sku' },
+            { header: 'Штрихкод', key: 'barcode' },
+            { header: 'Бренд', key: 'brand_name' },
+            { header: 'Категория', key: 'category_name' },
+            { header: 'Вес', key: 'weight' },
+            { header: 'Длина', key: 'length' },
+            { header: 'Ширина', key: 'width' },
+            { header: 'Высота', key: 'height' },
+            { header: 'Изображение', key: 'image_url' },
+            { header: 'Статус', key: 'status' },
+            { header: 'Активен', key: 'is_active' },
+            { header: 'Создан', key: 'created_at' },
+            { header: 'Обновлен', key: 'updated_at' },
+          ];
+          rows.forEach((r) => sheet.addRow(r));
+          res.setHeader('Content-Disposition', 'attachment; filename=products.xlsx');
+          res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+          await workbook.xlsx.write(res);
+          return res.end();
+        }
+
+        return res.status(400).json({ success: false, error: 'Unsupported format' });
 
     } catch (error) {
         console.error('Export products error:', error);

@@ -175,11 +175,28 @@ class JobScheduler {
           return ProductImportService.syncStocksFromSupplier(companyId, settings.supplier_id, settings?.product_ids || [], { warehouseId: settings?.warehouse_id });
         }
         return null;
+      case 'aggregate-warehouses':
+        if (companyId) {
+          const WarehouseService = require('../services/WarehouseService');
+          return WarehouseService.recalculateAggregatedWarehouses(companyId);
+        }
+        return null;
       case 'popularity':
         return (new PopularityUpdateJob()).run();
       case 'cache-cleanup':
         return (new CacheCleanupJob()).run();
       case 'log-cleanup':
+        // Каждый 5-й запуск — расширенная очистка импорт-логов
+        try {
+          const key = `job_counter:log-cleanup:${companyId || 'global'}`;
+          const { get, set } = require('../config/redis');
+          let counter = parseInt((await get(key)) || '0', 10) + 1;
+          await set(key, String(counter), 60 * 60 * 24 * 30);
+          if (counter % 5 === 0) {
+            // Очистка логов импорта старше 30 дней (в БД есть функция)
+            try { await require('../config/database').query('SELECT cleanup_old_import_logs()'); } catch (_) {}
+          }
+        } catch (_) {}
         return this.cleanupOldLogs();
       case 'export':
         if (companyId) {
